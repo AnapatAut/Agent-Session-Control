@@ -1,0 +1,10 @@
+:root { --bg: #fff; --fg: #1a1a1a; --muted: #666; --line: #ddd; --warn: #b3261e; }
+@media (prefers-color-scheme: dark) { :root { --bg: #141414; --fg: #eee; --muted: #999; --line: #333; --warn: #f2b8b5; } }
+body { background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif; margin: 0 16px; }
+table { border-collapse: collapse; width: 100%; }
+td, th { border-bottom: 1px solid var(--line); padding: 4px 6px; text-align: left; vertical-align: top; }
+td.path { color: var(--muted); word-break: break-all; }
+#banner { color: var(--warn); font-weight: 600; }
+#msg { white-space: pre-wrap; }
+button { margin-right: 4px; }
+section { overflow-x: auto; }

@@ -141,16 +141,38 @@ def children_map():
     return kids
 
 
-def busy_reason(session_name, lv):
+def rss_kb(pid):
+    try:
+        with open(f"/proc/{pid}/statm", encoding="ascii") as f:
+            return int(f.read().split()[1]) * (os.sysconf("SC_PAGE_SIZE") // 1024)
+    except (OSError, ValueError, IndexError):
+        return 0
+
+
+def tree_rss_kb(pid, kids):
+    """RSS of a process and all its descendants (a pane: claude, its MCP servers, a browser)."""
+    total, todo, seen = 0, [pid], set()
+    while todo:
+        p = todo.pop()
+        if p in seen:
+            continue
+        seen.add(p)
+        total += rss_kb(p)
+        todo += [c for c, _ in kids.get(p, [])]
+    return total
+
+
+def busy_reason(session_name, lv, kids=None, pane_list=None):
     """Why a tmux session is busy, or "" when it is not. Each pane's process tree is walked
     (tmux's pane_current_command names the process group, which for a claude under asctl-wrap
     is the wrapper's bash): shells are looked through; a claude counts by its session file
     (busy if working; one with no trusted file is unknown, so busy); anything else running
-    (a dev server, a build, an editor) makes the session busy. lv: the live claudes (live())."""
+    (a dev server, a build, an editor) makes the session busy. lv: the live claudes (live());
+    kids, pane_list: children_map() and that session's panes, when the caller has them."""
     from . import tmuxctl
     known = {s["pid"]: s for s in lv}
-    kids = children_map()
-    for p in tmuxctl.panes(session_name):
+    kids = children_map() if kids is None else kids
+    for p in tmuxctl.panes(session_name) if pane_list is None else pane_list:
         todo = [(p["pane_pid"], (proc_stat(p["pane_pid"]) or ("?",))[0])]
         while todo:
             pid, name = todo.pop()

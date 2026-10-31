@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="asctl-token" content="@TOKEN@">
+<title>Agent Sessions</title>
+<link rel="stylesheet" href="app.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+<header>
+  <h1>Agent Sessions</h1>
+  <div id="memory"></div>
+  <div id="banner" hidden></div>
+</header>
+<main>
+  <section><h2>Favorites</h2><table id="favorites"></table></section>
+  <section><h2>Running, not favorited</h2><table id="active"></table></section>
+  <section>
+    <h2>Past conversations</h2>
+    <input id="q" type="search" placeholder="Search titles and folders">
+    <table id="past"></table>
+  </section>
+  <section><h2>Biggest processes</h2><ul id="top"></ul></section>
+  <p id="msg" role="status"></p>
+</main>
+</body>
+</html>

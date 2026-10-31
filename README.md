@@ -32,6 +32,11 @@ phase adds `asctl-tmux.service` to own it. Every tmux target is exact (`=name`, 
 command an argument list (no shell), and a session counts as live only when its PID runs, is
 named `claude` and started when Claude Code's session file says. Tests: `tests/asc.sh`.
 
+`asctl dash` serves a dashboard of the same (favorites with On, Off, mode and Forget; running
+claudes not favorited; past conversations; memory) for one Tailscale login, on a unix socket
+only its user can open, meant to sit behind `tailscale serve`. Every request needs that login
+and host; every action the page's token and Origin. See `asc/dash.py`; tests: `tests/dash.sh`.
+
 ## tmux-claude-restore
 
 After the machine reboots or crashes, reopen the Claude Code conversation that was running in

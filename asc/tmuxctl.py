@@ -17,8 +17,14 @@ def run(*args, check=False):
     return subprocess.run(_base() + list(args), capture_output=True, text=True, check=check)
 
 
+def server_pid():
+    """The tmux server's PID, or None when none runs."""
+    r = run("display-message", "-p", "#{pid}")
+    return int(r.stdout) if r.returncode == 0 and r.stdout.strip().isdigit() else None
+
+
 def server_running():
-    return run("display-message", "-p", "#{pid}").returncode == 0
+    return server_pid() is not None
 
 
 def has_session(name):

@@ -1,11 +1,12 @@
 # Tests
 
-Six scripts. None touches your own tmux, `~/.tmux.conf` or systemd user units.
+Seven scripts. None touches your own tmux, `~/.tmux.conf` or systemd user units.
 
 | Script | Time | Needs | Checks |
 |---|---|---|---|
-| `tests/lint.sh` | seconds | bash; `shellcheck` if installed | bash syntax and shellcheck for every script; the privacy check of every tracked file |
+| `tests/lint.sh` | seconds | bash; `shellcheck` and `node` if installed | bash syntax and shellcheck for every script, Python compiles, app.js parses; the privacy check of every tracked file |
 | `tests/asc.sh` | about 30 s (`ASC_MUTANTS=1`: minutes) | bash, tmux, jq, python3 | `asctl`: live, fav, on, off, rename, mode, forget, with a fake claude on a tmux server of its own |
+| `tests/dash.sh` | about 30 s (`DASH_MUTANTS=1`: minutes) | bash, tmux, jq, curl, python3 | the dashboard server: socket and folder modes, the login, Host, Origin and token checks, one request per connection, the API and its actions, past conversations, idle and SIGTERM exit, systemd socket activation |
 | `tests/privacy.sh` | seconds (`PRIVACY_MUTANTS=1`: about a minute) | bash, git | the privacy check and its hooks catch each kind of leak and let the allowed cases through |
 | `tests/container.sh` | about 3 min | Docker, network (apt, GitHub) | everything below; each case in a throwaway systemd container of its own |
 | `tests/killsweep.sh` | about 3 min | Docker, network (apt, GitHub) | a kill before every step of install, upgrade and uninstall, and inside the writes |

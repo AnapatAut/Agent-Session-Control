@@ -10,6 +10,8 @@
   asctl rename ID NAME             a new name (the tmux session too, if it runs)
   asctl mode ID auto|manual|skip   permission mode for the next start (skip: no prompts)
   asctl forget ID                  drop the favorite; a running session is left alone
+  asctl dash [--socket P] [--idle S]
+                                   the dashboard server, on a unix socket (see asc/dash.py)
 ID is the 4-digit id or the full NAME-ID. Nothing here starts a tmux server: it would then
 belong to asctl's own process (a later phase adds asctl-tmux.service for that).
 """
@@ -107,9 +109,9 @@ def cmd_live(args):
     return 0
 
 
-def state_of(e, lv):
+def state_of(e, lv, up_sessions=None):
     s = live_for(e, lv)
-    up = tmuxctl.has_session(e["tmux"])
+    up = tmuxctl.has_session(e["tmux"]) if up_sessions is None else e["tmux"] in up_sessions
     if s and up:
         return "on", s
     if s:
@@ -222,7 +224,8 @@ def cmd_on(args):
     id4 = registry.find(registry.load(), args.id)["id4"]
     with registry.entry_lock(id4):
         e = registry.find(registry.load(), id4)
-        if not tmuxctl.server_running():
+        server = tmuxctl.server_pid()
+        if server is None:
             raise RegistryError("no tmux server is running; asctl does not start one (it would own it)")
         if tmuxctl.has_session(e["tmux"]):
             raise RegistryError(f"tmux session {e['tmux']!r} already exists")
@@ -247,6 +250,11 @@ def cmd_on(args):
         r = tmuxctl.new_session(e["tmux"], e["cwd"], [wrap, exit_file(e["id4"])] + argv)
         if r.returncode != 0:
             raise RegistryError(f"tmux new-session failed: {r.stderr.strip()}")
+        if tmuxctl.server_pid() != server:
+            # The server ended between the check and new-session, which then started one of its
+            # own under asctl. Close that session: the new server, empty, exits with it.
+            tmuxctl.kill_session(e["tmux"])
+            raise RegistryError("the tmux server ended while starting; nothing was started")
         s = wait_started(e)
         if not s:
             out(f"{e['tmux']}: tmux session started, but no claude came up (see: tmux attach -t ={e['tmux']})")
@@ -334,6 +342,11 @@ def cmd_forget(args):
     return 0
 
 
+def cmd_dash(args):
+    from . import dash
+    return dash.serve(args.socket, args.idle)
+
+
 def main(argv=None):
     import argparse
     p = argparse.ArgumentParser(prog="asctl", description=__doc__.split("\n")[0],
@@ -362,6 +375,10 @@ def main(argv=None):
     a.add_argument("id")
     a.add_argument("mode")
     a.set_defaults(f=cmd_mode)
+    a = sub.add_parser("dash")
+    a.add_argument("--socket")
+    a.add_argument("--idle", type=int, default=600, help="exit after this many idle seconds (0: never)")
+    a.set_defaults(f=cmd_dash)
     args = p.parse_args(argv)
     try:
         return args.f(args)

@@ -25,5 +25,10 @@ else
 fi
 python3 -I -m py_compile asc/*.py && echo "python: ok (asc/*.py compile)" || rc=1
 find asc -name __pycache__ -prune -exec rm -r {} + 2>/dev/null
+if command -v node >/dev/null; then
+	node --check asc/web/app.js && echo "js: ok (asc/web/app.js parses)" || rc=1
+else
+	echo "js: node not installed, skipped"
+fi
 tools/privacy-check.sh --tree && echo "privacy: ok (tracked files)" || rc=1
 exit $rc

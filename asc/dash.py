@@ -1,0 +1,413 @@
+"""asctl dash: the dashboard server, for one Linux user and one Tailscale login.
+
+It listens only on a unix socket, $XDG_RUNTIME_DIR/asctl/dash.sock (the folder 0700, the
+socket 0600), or on the socket systemd passes it (asctl-dash.socket): on a shared machine any
+local user could reach a localhost port and forge the login header, while only this user and
+root (tailscaled, for `tailscale serve unix:...`) can open the socket.
+
+Every request must carry exactly one Tailscale-User-Login equal to the configured login and a
+Host equal to the configured host; anything else gets 403. Every action is a POST with the
+page's token and a matching Origin. Actions run `asctl` itself (an argument list, no shell),
+so they take the same locks and checks as the CLI. From the web the permission mode can be
+set only to auto or manual; skip is set only with `asctl mode ID skip` (a favorite already in
+skip still starts with it).
+
+Config, ~/.config/agent-session-control/dash.json:
+  {"login": "<your Tailscale login>", "host": "<this machine's MagicDNS name>", "prefix": "/user"}
+prefix (optional) is the path `tailscale serve --set-path` mounts this user's dashboard on.
+Give each user's dashboard an origin of its own (its own serve port or host): paths of one
+host:port share one browser origin, so a page under another user's path could read this
+page's token and post actions with this login (the Origin header has no path).
+The server exits after --idle seconds without a request (systemd starts it again on the next).
+"""
+import hmac
+import http.server
+import json
+import os
+import re
+import secrets
+import signal
+import socket
+import socketserver
+import stat
+import subprocess
+import sys
+import threading
+import time
+import urllib.parse
+
+from . import cli, live, past, registry, tmuxctl
+from .registry import RegistryError
+
+WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+STATIC = {"/app.js": "application/javascript", "/app.css": "text/css"}
+MAX_BODY = 4096
+WEB_MODES = ("auto", "manual")
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; "
+       "frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+
+
+def config_path():
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.path.join(base, "agent-session-control", "dash.json")
+
+
+def load_config():
+    p = config_path()
+    try:
+        with open(p, encoding="utf-8") as f:
+            c = json.load(f)
+    except FileNotFoundError:
+        raise RegistryError(f"no {p}: it names the one Tailscale login and host allowed in "
+                            '({"login": "<your Tailscale login>", "host": "<this machine\'s MagicDNS name>"})')
+    except ValueError as e:
+        raise RegistryError(f"{p} is not valid JSON ({e})")
+    if not isinstance(c, dict) or not all(isinstance(c.get(k), str) and c[k] for k in ("login", "host")):
+        raise RegistryError(f"{p} needs \"login\" and \"host\" (non-empty strings)")
+    prefix = c.get("prefix") or ""
+    if prefix and (not isinstance(prefix, str) or not prefix.startswith("/") or prefix.endswith("/")):
+        raise RegistryError(f"{p}: prefix must start with / and not end with one (e.g. \"/user\")")
+    return {"login": c["login"], "host": c["host"], "prefix": prefix}
+
+
+def default_socket():
+    run = os.environ.get("XDG_RUNTIME_DIR")
+    if not run:
+        raise RegistryError("XDG_RUNTIME_DIR is not set; pass --socket PATH")
+    return os.path.join(run, "asctl", "dash.sock")
+
+
+def _private_dir(d):
+    """Create d as 0700, or check an existing one is ours and 0700 (never loosen or chown)."""
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    st = os.lstat(d)
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o700:
+        raise RegistryError(f"{d} must be a folder owned by you with mode 0700")
+
+
+# --- what the page shows -------------------------------------------------------------------
+
+def meminfo():
+    m = {}
+    try:
+        with open("/proc/meminfo", encoding="ascii") as f:
+            for line in f:
+                k, v = line.split(":", 1)
+                m[k] = int(v.split()[0])
+    except (OSError, ValueError):
+        pass
+    total, avail = m.get("MemTotal", 0), m.get("MemAvailable", 0)
+    pct = round(100 * avail / total, 1) if total else 0
+    return {"total_kb": total, "avail_kb": avail, "avail_pct": pct, "warn": bool(total) and pct < 15,
+            "swap_total_kb": m.get("SwapTotal", 0), "swap_free_kb": m.get("SwapFree", 0)}
+
+
+def top_processes(n=5):
+    """This user's n biggest processes (name and size only: command lines can hold paths and
+    arguments), and the total of every other user's, with no names (R7)."""
+    me, mine, others = os.getuid(), [], 0
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            uid = os.stat(f"/proc/{d}").st_uid
+        except OSError:
+            continue
+        kb = live.rss_kb(int(d))
+        if uid != me:
+            others += kb
+            continue
+        st = live.proc_stat(int(d))
+        if st and kb:
+            mine.append({"name": st[0], "rss_kb": kb})
+    mine.sort(key=lambda p: p["rss_kb"], reverse=True)
+    return {"mine": mine[:n], "others_kb": others}
+
+
+def snapshot():
+    data = registry.load()
+    pane_list = tmuxctl.panes()
+    lv = live.live(pane_list=pane_list)
+    up = set(tmuxctl.sessions())
+    kids = live.children_map()
+    by_session = {}
+    for p in pane_list:
+        by_session.setdefault(p["session"], []).append(p)
+    count = {}
+    for s in lv:
+        count[s["session_id"]] = count.get(s["session_id"], 0) + 1
+    favs, fav_sids, fav_tmux = [], set(), set()
+    for e in sorted(data["entries"].values(), key=lambda e: e["tmux"]):
+        st, s = cli.state_of(e, lv, up)
+        if s and count.get(s["session_id"], 0) > 1:
+            st = "duplicate"
+        panes = by_session.get(e["tmux"], [])
+        fav_sids.add(e.get("session_id"))
+        fav_sids.update(e.get("lineage", []))
+        fav_tmux.add(e["tmux"])
+        favs.append({
+            "id4": e["id4"], "name": e["name"], "tmux": e["tmux"], "cwd": e["cwd"],
+            "session_id": e.get("session_id"), "rc": bool(e.get("rc")), "rc_title": e.get("rc_title") or "",
+            "mode": e.get("mode", "auto"), "resurrect": bool(e.get("resurrect")),
+            "want_on": bool(e.get("want_on")), "note": e.get("note") or "",
+            "last_on": e.get("last_on"), "last_off": e.get("last_off"), "state": st,
+            "pid": s["pid"] if s else None, "status": s["status"] if s else None,
+            "busy": live.busy_reason(e["tmux"], lv, kids, panes) if e["tmux"] in up else "",
+            "rss_kb": sum(live.tree_rss_kb(p["pane_pid"], kids) for p in panes),
+            "attach": f"tmux attach -t ={e['tmux']}",
+        })
+    active = [{"pid": s["pid"], "session_id": s["session_id"], "name": s["name"], "cwd": s["cwd"],
+               "status": s["status"], "tmux": s["pane"]["session"] if s["pane"] else None,
+               "pane": s["pane"]["pane_id"] if s["pane"] else None,
+               "duplicate": count.get(s["session_id"], 0) > 1}
+              for s in lv if s["session_id"] not in fav_sids and not (s["pane"] and s["pane"]["session"] in fav_tmux)]
+    unknown = sum(1 for s in live.read_sessions() if not s["ok"])
+    return {"time": int(time.time()), "memory": meminfo(), "top": top_processes(),
+            "server": bool(pane_list) or tmuxctl.server_running(),
+            "favorites": favs, "active": active, "unknown_files": unknown,
+            "on": sum(1 for f in favs if f["state"] == "on")}, fav_sids | {s["session_id"] for s in lv}
+
+
+# --- actions -------------------------------------------------------------------------------
+
+def action_argv(a):
+    """The asctl arguments for one action from the page, or a RegistryError."""
+    if not isinstance(a, dict):
+        raise RegistryError("the body must be a JSON object")
+    kind, id4 = a.get("action"), a.get("id")
+    if kind == "fav":
+        ref = a.get("ref")
+        if not isinstance(ref, str) or not (live.UUID_RE.fullmatch(ref) or re.fullmatch(r"[0-9]{1,10}", ref)):
+            raise RegistryError("fav needs ref: a session id or a pid")
+        argv = ["fav", ref]
+        if a.get("name"):
+            argv += ["--name", registry.check_name(a["name"])]
+        return argv + (["--whole-session"] if a.get("whole_session") is True else [])
+    if not isinstance(id4, str) or not registry.ID4_RE.fullmatch(id4):
+        raise RegistryError("id must be a favorite's 4-digit id")
+    if kind == "on":
+        return ["on", id4]
+    if kind == "off":
+        return ["off", id4] + (["--force"] if a.get("force") is True else [])
+    if kind == "forget":
+        return ["forget", id4]
+    if kind == "rename":
+        return ["rename", id4, registry.check_name(a.get("name") if isinstance(a.get("name"), str) else "")]
+    if kind == "mode":
+        if a.get("mode") not in WEB_MODES:
+            raise RegistryError("from the page the mode can be auto or manual; skip only with asctl mode ID skip")
+        return ["mode", id4, a["mode"]]
+    raise RegistryError(f"unknown action {kind!r}")
+
+
+def run_asctl(argv):
+    r = subprocess.run([os.path.join(cli.HERE, "bin", "asctl")] + argv, capture_output=True, text=True,
+                       timeout=90, stdin=subprocess.DEVNULL)
+    return r.returncode == 0, r.stdout.strip(), r.stderr.strip()
+
+
+# --- the server ----------------------------------------------------------------------------
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    server_version = "asctl"
+    sys_version = ""
+    protocol_version = "HTTP/1.1"
+    timeout = 30  # a slow or idle client is dropped (one thread each)
+
+    def log_message(self, fmt, *args):
+        sys.stderr.write("asctl dash: " + (fmt % args) + "\n")
+
+    def address_string(self):
+        return "unix"
+
+    def _send(self, code, body, ctype="application/json", extra=()):
+        if isinstance(body, (dict, list)):
+            body = json.dumps(body)
+        if isinstance(body, str):
+            body = body.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", ctype + ("; charset=utf-8" if ctype.startswith(("text/", "application/j")) else ""))
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", CSP)
+        # One request per connection: bytes left unread (a refused request's body) can never
+        # be taken as a next request, which a proxy reusing connections could smuggle in.
+        self.send_header("Connection", "close")
+        self.close_connection = True
+        for k, v in extra:
+            self.send_header(k, v)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def _allowed(self):
+        cfg = self.server.cfg
+        logins = self.headers.get_all("Tailscale-User-Login") or []
+        hosts = self.headers.get_all("Host") or []
+        return len(logins) == 1 and logins[0] == cfg["login"] and len(hosts) == 1 and hosts[0] == cfg["host"]
+
+    def _path(self):
+        """The request path below the prefix, or None when it is not under it."""
+        path = urllib.parse.urlsplit(self.path).path
+        prefix = self.server.cfg["prefix"]
+        if not prefix:
+            return path
+        if path == prefix:
+            return ""
+        return path[len(prefix):] if path.startswith(prefix + "/") else None
+
+    def _begin(self):
+        if not self._allowed():
+            self._send(403, {"error": "forbidden"})
+            return None
+        self.server.touch()  # only allowed requests keep the server from its idle exit
+        if self.headers.get_all("Transfer-Encoding") or (
+                self.command != "POST" and (self.headers.get("Content-Length") or "0") != "0"):
+            self._send(400, {"error": "no chunked bodies, and no body on GET or HEAD"})
+            return None
+        path = self._path()
+        if path is None:
+            self._send(404, {"error": "not found"})
+        return path
+
+    def do_GET(self):
+        path = self._begin()
+        if path is None:
+            return
+        if path == "":
+            return self._send(301, "", "text/plain", [("Location", self.server.cfg["prefix"] + "/")])
+        if path == "/":
+            with open(os.path.join(WEB, "index.html"), encoding="utf-8") as f:
+                page = f.read().replace("@TOKEN@", self.server.token)
+            return self._send(200, page, "text/html")
+        if path in STATIC:
+            with open(os.path.join(WEB, path[1:]), "rb") as f:
+                return self._send(200, f.read(), STATIC[path])
+        if path == "/api/state":
+            state, _ = snapshot()
+            return self._send(200, state)
+        if path == "/api/past":
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("q", [""])[0]
+            _, exclude = snapshot()
+            return self._send(200, {"past": past.search(q, exclude)})
+        self._send(404, {"error": "not found"})
+
+    do_HEAD = do_GET
+
+    def do_POST(self):
+        path = self._begin()
+        if path is None:
+            return
+        if path != "/api/action":
+            return self._send(404, {"error": "not found"})
+        origins = self.headers.get_all("Origin") or []
+        token = self.headers.get("X-Asctl-Token", "")
+        if (origins != ["https://" + self.server.cfg["host"]]
+                or not hmac.compare_digest(token.encode("utf-8", "replace"), self.server.token.encode())):
+            return self._send(403, {"error": "bad origin or token (reload the page)"})
+        if not (self.headers.get("Content-Type") or "").startswith("application/json"):
+            return self._send(415, {"error": "JSON only"})
+        try:
+            n = int(self.headers.get("Content-Length") or "-1")
+        except ValueError:
+            n = -1
+        if not 0 <= n <= MAX_BODY:
+            self.close_connection = True
+            return self._send(413, {"error": f"the body must be 0 to {MAX_BODY} bytes"})
+        try:
+            argv = action_argv(json.loads(self.rfile.read(n) or b"null"))
+        except ValueError:
+            return self._send(400, {"error": "the body is not JSON"})
+        except RegistryError as e:
+            return self._send(400, {"error": str(e)})
+        try:
+            ok, out, err = run_asctl(argv)
+        except subprocess.TimeoutExpired:
+            return self._send(504, {"error": "asctl took over 90 s"})
+        self._send(200 if ok else 409, {"ok": ok, "out": out, "error": err.removeprefix("asctl: ")})
+
+
+class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    address_family = socket.AF_UNIX
+    daemon_threads = True
+
+    def __init__(self, cfg, sock=None, path=None):
+        self.cfg, self.token, self.last = cfg, secrets.token_urlsafe(32), time.monotonic()
+        socketserver.TCPServer.__init__(self, path, Handler, bind_and_activate=sock is None)
+        if sock is not None:
+            self.socket.close()
+            self.socket = sock
+
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = "asctl", 0
+
+    def touch(self):
+        self.last = time.monotonic()
+
+
+def systemd_socket():
+    """The socket systemd passed (LISTEN_FDS), or None."""
+    if os.environ.get("LISTEN_PID") != str(os.getpid()) or os.environ.get("LISTEN_FDS") != "1":
+        return None
+    for k in ("LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES"):
+        os.environ.pop(k, None)
+    return socket.socket(fileno=3)
+
+
+def _answers(path):
+    s = socket.socket(socket.AF_UNIX)
+    s.settimeout(2)
+    try:
+        s.connect(path)
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+def serve(sock_path=None, idle=600):
+    cfg = load_config()
+    sock = systemd_socket()
+    if sock is None:
+        sock_path = sock_path or default_socket()
+        _private_dir(os.path.dirname(sock_path))
+        try:
+            if stat.S_ISSOCK(os.lstat(sock_path).st_mode):
+                if _answers(sock_path):
+                    raise RegistryError(f"{sock_path} is in use (another asctl dash, or asctl-dash.socket)")
+                os.unlink(sock_path)  # stale: nothing listens on it
+        except FileNotFoundError:
+            pass
+        old = os.umask(0o177)
+        try:
+            srv = Server(cfg, path=sock_path)
+        finally:
+            os.umask(old)
+        mine = os.lstat(sock_path).st_ino
+        print(f"asctl dash: on {sock_path} for {cfg['login']}", file=sys.stderr, flush=True)
+    else:
+        srv = Server(cfg, sock=sock)
+    # SIGTERM (systemctl stop) ends the loop like the idle exit, so the socket file is removed.
+    signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=srv.shutdown, daemon=True).start())
+    if idle:
+        def watch():
+            while time.monotonic() - srv.last < idle:
+                time.sleep(1)
+            srv.shutdown()
+        threading.Thread(target=watch, daemon=True).start()
+    try:
+        srv.serve_forever(poll_interval=0.5)
+    finally:
+        srv.server_close()
+        if sock is None:
+            try:
+                if os.lstat(sock_path).st_ino == mine:  # never another instance's socket
+                    os.unlink(sock_path)
+            except FileNotFoundError:
+                pass
+    return 0
