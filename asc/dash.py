@@ -52,7 +52,7 @@ import threading
 import time
 import urllib.parse
 
-from . import cli, live, past, registry, tmuxctl
+from . import cli, live, memory, past, registry, tmuxctl
 from .registry import RegistryError
 
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
@@ -162,21 +162,6 @@ def remote_client(headers):
 
 # --- what the page shows -------------------------------------------------------------------
 
-def meminfo():
-    m = {}
-    try:
-        with open("/proc/meminfo", encoding="ascii") as f:
-            for line in f:
-                k, v = line.split(":", 1)
-                m[k] = int(v.split()[0])
-    except (OSError, ValueError):
-        pass
-    total, avail = m.get("MemTotal", 0), m.get("MemAvailable", 0)
-    pct = round(100 * avail / total, 1) if total else 0
-    return {"total_kb": total, "avail_kb": avail, "avail_pct": pct, "warn": bool(total) and pct < 15,
-            "swap_total_kb": m.get("SwapTotal", 0), "swap_free_kb": m.get("SwapFree", 0)}
-
-
 def top_processes(n=5):
     """This user's n biggest processes (name and size only: command lines can hold paths and
     arguments), and the total of every other user's, with no names (R7)."""
@@ -246,7 +231,7 @@ def _snapshot():
                "duplicate": count.get(s["session_id"], 0) > 1}
               for s in lv if s["session_id"] not in fav_sids and not (s["pane"] and s["pane"]["session"] in fav_tmux)]
     unknown = sum(1 for s in live.read_sessions() if not s["ok"])
-    return {"time": int(time.time()), "memory": meminfo(), "top": top_processes(),
+    return {"time": int(time.time()), "memory": memory.meminfo(), "top": top_processes(),
             "server": bool(pane_list) or tmuxctl.server_running(),
             "favorites": favs, "active": active, "unknown_files": unknown,
             "on": sum(1 for f in favs if f["state"] == "on")}, fav_sids | {s["session_id"] for s in lv}
@@ -277,7 +262,8 @@ def action_argv(a):
     # asctl gets the full NAME-ID, so an id forgotten and drawn again meanwhile finds nothing.
     ref = e["tmux"]
     if kind == "on":
-        return ["on", ref]
+        # Past the memory gate only from a manual On the user confirmed (never automatic).
+        return ["on", ref] + (["--force-memory"] if a.get("force_memory") is True else [])
     if kind == "off":
         return ["off", ref] + (["--force"] if a.get("force") is True else [])
     if kind == "forget":
@@ -288,6 +274,15 @@ def action_argv(a):
         if a.get("mode") not in WEB_MODES:
             raise RegistryError("from the page the mode can be auto or manual; skip only with asctl mode ID skip")
         return ["mode", ref, a["mode"]]
+    if kind in ("rc", "resurrect"):
+        if not isinstance(a.get("on"), bool):
+            raise RegistryError(f"{kind} needs on: true or false")
+        argv = [kind, ref, "on" if a["on"] else "off"]
+        if kind == "rc" and a.get("title") is not None:
+            argv += ["--title", registry.check_title(a["title"])]
+        return argv
+    if kind == "note":
+        return ["note", ref, "--", registry.check_note(a.get("text"))]  # a note may start with -
     raise RegistryError(f"unknown action {kind!r}")
 
 

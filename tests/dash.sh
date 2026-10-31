@@ -14,6 +14,10 @@ mkdir -p "$HOME" "$T/fakebash" "$T/run"
 chmod 700 "$T/run"
 cp "$(command -v bash)" "$T/fakebash/claude"
 export FAKE_BASH="$T/fakebash/claude"
+# Memory as asctl sees it (asc/memory.py): plenty, unless a test says otherwise.
+mem() { printf 'MemTotal: %s kB\nMemAvailable: %s kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n' "$1" "$2" > "$T/meminfo"; }
+export ASC_MEMINFO="$T/meminfo"
+mem 32000000 16000000
 export PATH="$REPO/tests/dash/bin:$PATH"  # a fake tailscale: the operator setting
 tm() { tmux -L "$ASC_TMUX_SOCKET" -f /dev/null "$@"; }
 DPID=
@@ -301,6 +305,26 @@ kill "$holder"; wait "$holder" 2>/dev/null
 start_dash
 [ "$(code http://x/app.css)" = 200 ] && ok "a socket nothing listens on (stale) is replaced" || bad "a stale socket blocked the start"
 
+echo "== rc, resurrect, note and the memory gate from the page"
+REG="$HOME/.local/state/agent-session-control/registry.json"
+R3='"id":"'"$id3"'","tmux":"trio-'"$id3"'"'
+[ "$(post '{"action":"rc","on":true,"title":"Trio work",'"$R3"'}' | tail -1)" = 200 ] && [ "$(jq -r ".entries[\"$id3\"].rc_title" "$REG")" = "Trio work" ] && ok "rc on with a title" || bad "rc on from the page failed"
+[ "$(post '{"action":"rc","on":"yes",'"$R3"'}' | tail -1)" = 400 ] && ok "rc on must be a boolean" || bad "rc took a non-boolean"
+[ "$(post '{"action":"rc","on":true,"title":"-x",'"$R3"'}' | tail -1)" = 400 ] && ok "an rc title starting with - refused" || bad "an rc title starting with - accepted"
+[ "$(post '{"action":"rc","on":false,'"$R3"'}' | tail -1)" = 200 ] && [ "$(jq -r ".entries[\"$id3\"].rc" "$REG")" = false ] && ok "rc off" || bad "rc off failed"
+[ "$(post '{"action":"resurrect","on":true,'"$R3"'}' | tail -1)" = 200 ] && state | jq -e '.favorites[] | select(.id4 == "'"$id3"'") | .resurrect and .rc' >/dev/null && ok "resurrect on turns rc on" || bad "resurrect on from the page"
+[ "$(post '{"action":"note","text":"-a <b>note</b>",'"$R3"'}' | tail -1)" = 200 ] && state | jq -e '.favorites[] | select(.id4 == "'"$id3"'") | .note == "-a <b>note</b>"' >/dev/null && ok "a note (any text, even starting with -)" || bad "note from the page failed"
+[ "$(post '{"action":"note","text":5,'"$R3"'}' | tail -1)" = 400 ] && ok "a note that is not text: 400" || bad "a number as note accepted"
+post '{"action":"off","force":true,'"$R3"'}' >/dev/null
+mem 32000000 1600000
+out=$(post '{"action":"on",'"$R3"'}')
+[ "$(tail -1 <<<"$out")" = 409 ] && seen '"error": "memory: 5.0% available' <<<"$out" && ok "on refused when memory is short, with the reason" || bad "on with short memory: $out"
+state | jq -e '.memory.warn' >/dev/null && ok "state: the memory warning is on below 15%" || bad "no memory warning"
+[ "$(post '{"action":"on","force_memory":"yes",'"$R3"'}' | tail -1)" = 409 ] && ok "force_memory only when it is true" || bad "force_memory taken from a non-boolean"
+[ "$(post '{"action":"on","force_memory":true,'"$R3"'}' | tail -1)" = 200 ] && ok "on with force_memory (after the page's confirm)" || bad "forced on failed"
+post '{"action":"off","force":true,'"$R3"'}' >/dev/null
+mem 32000000 16000000
+
 echo "== prefix and idle exit"
 stop_dash
 printf '{"login": "%s", "host": "%s", "prefix": "/u"}\n' "$LOGIN" "$HOST" > "$CONF"
@@ -392,6 +416,8 @@ asc/dash.py %%% op in (None, "", pwd.getpwuid(os.getuid()).pw_name) %%% True
 asc/dash.py %%%         ok = r.returncode == 0 and op in %%%         ok = op in
 asc/dash.py %%%     if stat.S_IMODE(os.stat(path).st_mode) & 0o022: %%%     if False:
 asc/tmuxctl.py %%% timeout=timeout, stdin=subprocess.DEVNULL) %%% stdin=subprocess.DEVNULL)
+asc/dash.py %%%  + (["--force-memory"] if a.get("force_memory") is True else []) %%%  + (["--force-memory"] if a.get("force_memory") else [])
+asc/dash.py %%%         if not isinstance(a.get("on"), bool): %%%         if False:
 asc/past.py %%%                 title = t %%%                 title = title or t
 asc/past.py %%%     out.sort(key=lambda c: c["mtime"], reverse=True) %%%     out.sort(key=lambda c: c["mtime"])
 MUTANTS

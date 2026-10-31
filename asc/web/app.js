@@ -48,6 +48,10 @@ async function act(body) {
         window.confirm(`${body.tmux}: ${j.error}\n\nForce ${body.tmux} off anyway? Everything in it ends.`)) {
       return act({ ...body, force: true });
     }
+    if (!j.ok && body.action === "on" && /^memory:/.test(j.error || "") &&
+        window.confirm(`${body.tmux}: ${j.error}\n\nStart ${body.tmux} anyway? earlyoom may then end sessions.`)) {
+      return act({ ...body, force_memory: true });
+    }
   } catch (e) {
     $("msg").textContent = "Failed: " + e;
   }
@@ -67,7 +71,7 @@ function render(s) {
   $("banner").textContent = warn.join(" ");
 
   const f = $("favorites");
-  f.replaceChildren(row(["Name", "State", "Mode", "Memory", "Folder", ""].map((t) => el("th", t))));
+  f.replaceChildren(row(["Name", "State", "Mode", "rc", "Resurrect", "Memory", "Folder", "Note", ""].map((t) => el("th", t))));
   for (const e of s.favorites) {
     const acts = el("td");
     const ref = { id: e.id4, tmux: e.tmux };
@@ -77,6 +81,15 @@ function render(s) {
       const other = e.mode === "auto" ? "manual" : "auto";
       acts.append(button("Mode: " + other, { action: "mode", mode: other, ...ref }));
     }
+    acts.append(button(e.rc ? "rc off" : "rc on", { action: "rc", on: !e.rc, ...ref }));
+    acts.append(button(e.resurrect ? "Resurrect off" : "Resurrect on", { action: "resurrect", on: !e.resurrect, ...ref }));
+    const note = el("button", "Note");
+    note.type = "button";
+    note.addEventListener("click", () => {
+      const text = window.prompt(`Note for ${e.tmux}`, e.note);
+      if (text !== null) act({ action: "note", text, ...ref });
+    });
+    acts.append(note);
     acts.append(button("Forget", { action: "forget", ...ref }, `Forget ${e.tmux}? A running session is left alone.`));
     const copy = el("button", "Copy attach");
     copy.type = "button";
@@ -84,7 +97,8 @@ function render(s) {
     acts.append(copy);
     const state = e.state + (e.status ? ` (${e.status})` : "") + (e.claudes > 1 ? `, ${e.claudes} claudes` : "") +
       (e.busy ? ` — ${e.busy}` : "");
-    f.append(row([e.tmux, state, e.mode, e.rss_kb ? mb(e.rss_kb) : "", el("td", e.cwd, "path"), acts]));
+    f.append(row([e.tmux, state, e.mode, e.rc ? "on: " + e.rc_title : "off", e.resurrect ? "on" : "off",
+      e.rss_kb ? mb(e.rss_kb) : "", el("td", e.cwd, "path"), e.note, acts]));
   }
 
   const a = $("active");

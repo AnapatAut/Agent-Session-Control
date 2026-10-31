@@ -3,7 +3,7 @@
 # tests/asc/bin, a throwaway HOME and a tmux server of their own (tmux -L). Touches neither
 # your tmux nor your ~/.claude. Seconds, no network.
 #   tests/asc.sh                  prints ok/FAIL per check; exit 0 = all passed
-#   ASC_MUTANTS=1 tests/asc.sh    also 24 mutants of asctl, each must make it fail (minutes)
+#   ASC_MUTANTS=1 tests/asc.sh    also 30 mutants of asctl, each must make it fail (minutes)
 set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 T=$(mktemp -d) || exit 2
@@ -14,6 +14,10 @@ unset TMUX
 mkdir -p "$HOME" "$T/fakebash"
 cp "$(command -v bash)" "$T/fakebash/claude"
 export FAKE_BASH="$T/fakebash/claude"
+# Memory as asctl sees it (asc/memory.py): plenty, unless a test says otherwise.
+mem() { printf 'MemTotal: %s kB\nMemAvailable: %s kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n' "$1" "$2" > "$T/meminfo"; }
+export ASC_MEMINFO="$T/meminfo"
+mem 32000000 16000000
 tm() { tmux -L "$ASC_TMUX_SOCKET" -f /dev/null "$@"; }
 cleanup() { tm kill-server 2>/dev/null; rm -rf "$T"; }
 trap cleanup EXIT
@@ -213,6 +217,33 @@ asctl fav "$SID3" --name fmt >/dev/null; id7=$(jq -r '.entries[] | select(.name 
 asctl on "$id7" >/dev/null && grep -qF "cwd=$W3 " "$HOME/claude-args.log" && ok "claude started in the literal folder (tmux formats not expanded)" || bad "the folder was expanded by tmux: $(tail -1 "$HOME/claude-args.log")"
 asctl off "$id7" --force >/dev/null
 
+echo "== memory gate"
+mem 32000000 1600000
+out=$(errof on "$id2")
+seen 'memory: 5.0% available, a start needs 20%' <<<"$out" && ! tm has-session -t "=chat-$id2" 2>/dev/null && ok "on refused below 20% available, nothing started" || bad "on below 20%: $out"
+mem 4000000 850000
+out=$(errof on "$id2")
+seen 'would leave 5.9% available, under 15%' <<<"$out" && ok "on refused when the start would leave under 15% (600 MB expected)" || bad "on leaving too little: $out"
+asctl on "$id2" --force-memory >/dev/null && ok "on --force-memory starts anyway" || bad "on --force-memory failed"
+asctl off "$id2" --force >/dev/null
+mem 32000000 16000000
+echo "== rc, resurrect, note"
+asctl rc "$id2" on --title "My chat" >/dev/null && [ "$(jqe ".entries[\"$id2\"].rc")" = true ] && [ "$(jqe ".entries[\"$id2\"].rc_title")" = "My chat" ] && ok "rc on with a title" || bad "rc on failed"
+asctl on "$id2" >/dev/null; tail -1 "$HOME/claude-args.log" | seen -- '--remote-control My chat' && ok "started with --remote-control and its title" || bad "rc not passed: $(tail -1 "$HOME/claude-args.log")"
+asctl off "$id2" --force >/dev/null
+asctl rc "$id2" off >/dev/null; asctl on "$id2" >/dev/null
+tail -1 "$HOME/claude-args.log" | seen -- '--remote-control' && bad "rc off still passed --remote-control" || ok "rc off: no --remote-control"
+asctl off "$id2" --force >/dev/null
+asctl rc "$id2" on --title=-x >/dev/null 2>&1 && bad "a title starting with - accepted" || ok "a title starting with - refused (claude would read an option)"
+asctl rc "$id2" on --title "$(printf 'a\tb')" >/dev/null 2>&1 && bad "a title with a control character accepted" || ok "a title with a control character refused"
+asctl resurrect "$id2" on >/dev/null && [ "$(jqe ".entries[\"$id2\"].resurrect")" = true ] && [ "$(jqe ".entries[\"$id2\"].rc")" = true ] && ok "resurrect on turns rc on" || bad "resurrect on did not turn rc on"
+asctl rc "$id2" off >/dev/null && [ "$(jqe ".entries[\"$id2\"].resurrect")" = true ] && ok "rc can still be turned off by hand" || bad "rc off changed resurrect"
+arg=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import cli, registry; e = registry.find(registry.load(), sys.argv[2]); print(" ".join(cli.claude_argv(e, resurrect=True)), "|", " ".join(cli.claude_argv(e)))' "$REPO" "$id2")
+[[ ${arg%%|*} == *--remote-control* && ${arg#*|} != *--remote-control* ]] && ok "a resurrect start always has rc; a manual one follows the toggle" || bad "resurrect rc rule: $arg"
+asctl note "$id2" "talks to the API" >/dev/null && [ "$(jqe ".entries[\"$id2\"].note")" = "talks to the API" ] && ok "note" || bad "note failed"
+asctl note "$id2" "$(head -c 501 /dev/zero | tr '\0' x)" >/dev/null 2>&1 && bad "a note over 500 characters accepted" || ok "a note over 500 characters refused"
+asctl note "$id2" -- "-starts with a dash" >/dev/null && ok "a note may start with -" || bad "a note starting with - refused"
+
 
 # ASC_MUTANTS=1: break asctl one way at a time, in a copy; each must make this test fail.
 if [ "${ASC_MUTANTS:-}" = 1 ]; then
@@ -252,6 +283,12 @@ asc/registry.py %%% fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB) %%% fcntl.LOC
 asc/registry.py %%% MODES = {"auto": "auto", "manual": "manual", "skip": "bypassPermissions"} %%% MODES = {"auto": "auto", "manual": "manual", "skip": "auto"}
 asc/registry.py %%%     except ValueError as e: %%%     except ZeroDivisionError as e:
 bin/asctl-wrap %%% > "$f.tmp" && mv -f "$f.tmp" "$f" %%% > /dev/null
+asc/memory.py %%%     if 100 * avail / total < START_PCT: %%%     if False:
+asc/memory.py %%%     if left < LEAVE_PCT: %%%     if False:
+asc/cli.py %%%         if not args.force_memory: %%%         if False:
+asc/cli.py %%%             e["rc"] = True %%%             pass
+asc/cli.py %%%  or (resurrect and e.get("resurrect")) %%%  or False
+asc/registry.py %%%     if not t or t.startswith("-"): %%%     if not t:
 MUTANTS
 fi
 

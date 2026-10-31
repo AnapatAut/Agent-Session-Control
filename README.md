@@ -23,7 +23,12 @@ asctl fav 12345 --name das  # favorite one (by pid, session id or pane %N); its 
 asctl list                  # favorites and their state
 asctl off 0421              # refuses while claude works or another pane runs something; --force
 asctl on 0421               # tmux session das-0421, claude --resume <id> --name das-0421
+                            # (refused under 20% memory available, or if it would leave under 15%;
+                            # --force-memory starts it anyway)
 asctl mode 0421 manual      # permission mode for the next start: auto (default), manual, skip
+asctl rc 0421 on --title "DB work"   # remote control from the next start
+asctl resurrect 0421 on     # bring it back after a reboot (turns rc on; a resurrect start always has rc)
+asctl note 0421 "talks to the API"
 asctl rename 0421 db ; asctl forget 0421
 ```
 

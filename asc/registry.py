@@ -110,6 +110,25 @@ def check_name(name):
     return name
 
 
+def _plain(text, what, limit):
+    if not isinstance(text, str) or len(text) > limit or any(ord(c) < 32 or 0x7f <= ord(c) < 0xa0 for c in text):
+        raise RegistryError(f"bad {what}: at most {limit} characters, no control characters")
+    return text
+
+
+def check_title(title):
+    """An rc title: shown on claude.ai, passed to claude as one argument (never starting with
+    "-", which claude would read as an option)."""
+    t = _plain(title, "title", 80).strip()
+    if not t or t.startswith("-"):
+        raise RegistryError("bad title: empty, or starts with -")
+    return t
+
+
+def check_note(note):
+    return _plain(note, "note", 500)
+
+
 def slug(text):
     """A name from free text (a session name, a folder): lower case, a-z 0-9 -."""
     s = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")[:31].strip("-")

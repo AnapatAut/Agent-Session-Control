@@ -5,10 +5,15 @@
   asctl fav REF [--name N] [--whole-session]
                                    favorite a running claude (REF: its pid, session id or
                                    tmux pane %N), or a past conversation (REF: its session id)
-  asctl on ID                      start it: a tmux session NAME-ID in its folder, resumed
+  asctl on ID [--force-memory]     start it: a tmux session NAME-ID in its folder, resumed;
+                                   refused when memory is short (asc/memory.py) unless forced
   asctl off ID [--force]           end it: claude gets SIGTERM, then its tmux session closes
   asctl rename ID NAME             a new name (the tmux session too, if it runs)
   asctl mode ID auto|manual|skip   permission mode for the next start (skip: no prompts)
+  asctl rc ID on|off [--title T]   remote control (and its title) from the next start
+  asctl resurrect ID on|off        bring it back after a reboot; on turns rc on too, and a
+                                   resurrect start always has rc
+  asctl note ID TEXT               a note shown with it ("" clears it)
   asctl forget ID                  drop the favorite; a running session is left alone
   asctl dash [--socket P] [--idle S]
                                    the dashboard server, on a unix socket (see asc/dash.py)
@@ -23,7 +28,7 @@ import sys
 import time
 import uuid
 
-from . import live, registry, tmuxctl
+from . import live, memory, registry, tmuxctl
 from .registry import RegistryError
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -48,11 +53,11 @@ def last_exit(id4):
         return None
 
 
-def claude_argv(e):
+def claude_argv(e, resurrect=False):
     a = [os.environ.get("ASC_CLAUDE", "claude")]
     a += ["--resume", e["session_id"]] if e.get("started") else ["--session-id", e["session_id"]]
     a += ["--name", e["tmux"], "--permission-mode", registry.MODES[e.get("mode", "auto")]]
-    if e.get("rc"):
+    if e.get("rc") or (resurrect and e.get("resurrect")):
         a += ["--remote-control", e.get("rc_title") or e["tmux"]]
     return a
 
@@ -242,6 +247,10 @@ def cmd_on(args):
                                 f"session: {', '.join(blockers)}; on refused")
         if not os.path.isdir(e["cwd"]):
             raise RegistryError(f"folder {e['cwd']} does not exist")
+        if not args.force_memory:
+            why = memory.gate(e.get("rss_kb"))
+            if why:
+                raise RegistryError(f"{why} (asctl on {e['id4']} --force-memory starts it anyway)")
         with registry.changing() as data:
             e = registry.find(data, e["id4"])
             e["want_on"], e["last_on"] = True, registry.now()
@@ -338,6 +347,40 @@ def cmd_mode(args):
     return 0
 
 
+def cmd_rc(args):
+    if args.state not in ("on", "off"):
+        raise RegistryError("rc is on or off")
+    title = registry.check_title(args.title) if args.title is not None else None
+    with registry.changing() as data:
+        e = registry.find(data, args.id)
+        e["rc"] = args.state == "on"
+        if title is not None:
+            e["rc_title"] = title
+    out(f"{e['tmux']}: rc {args.state}" + (f", title {e.get('rc_title')!r}" if e["rc"] else "") + " from its next start")
+    return 0
+
+
+def cmd_resurrect(args):
+    if args.state not in ("on", "off"):
+        raise RegistryError("resurrect is on or off")
+    with registry.changing() as data:
+        e = registry.find(data, args.id)
+        e["resurrect"] = args.state == "on"
+        if e["resurrect"]:
+            e["rc"] = True
+    out(f"{e['tmux']}: resurrect {args.state}" + (" (rc on)" if e["resurrect"] else ""))
+    return 0
+
+
+def cmd_note(args):
+    note = registry.check_note(args.text)
+    with registry.changing() as data:
+        e = registry.find(data, args.id)
+        e["note"] = note
+    out(f"{e['tmux']}: note " + ("cleared" if not note else "set"))
+    return 0
+
+
 def cmd_forget(args):
     id4 = registry.find(registry.load(), args.id)["id4"]
     with registry.entry_lock(id4, wait=True), registry.changing() as data:
@@ -364,10 +407,26 @@ def main(argv=None):
     a.add_argument("--name")
     a.add_argument("--whole-session", action="store_true")
     a.set_defaults(f=cmd_fav)
-    for c, f in (("on", cmd_on), ("forget", cmd_forget)):
-        a = sub.add_parser(c)
-        a.add_argument("id")
-        a.set_defaults(f=f)
+    a = sub.add_parser("on")
+    a.add_argument("id")
+    a.add_argument("--force-memory", action="store_true")
+    a.set_defaults(f=cmd_on)
+    a = sub.add_parser("forget")
+    a.add_argument("id")
+    a.set_defaults(f=cmd_forget)
+    a = sub.add_parser("rc")
+    a.add_argument("id")
+    a.add_argument("state")
+    a.add_argument("--title")
+    a.set_defaults(f=cmd_rc)
+    a = sub.add_parser("resurrect")
+    a.add_argument("id")
+    a.add_argument("state")
+    a.set_defaults(f=cmd_resurrect)
+    a = sub.add_parser("note")
+    a.add_argument("id")
+    a.add_argument("text")
+    a.set_defaults(f=cmd_note)
     a = sub.add_parser("off")
     a.add_argument("id")
     a.add_argument("--force", action="store_true")
