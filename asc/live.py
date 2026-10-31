@@ -10,12 +10,42 @@ import glob
 import json
 import os
 import re
+import stat
 
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 SHELLS = {"bash", "zsh", "sh", "dash", "fish", "ksh", "tcsh", "csh"}
 # Looked through like a shell when checking what a pane runs (a shebang script's process
 # name is its file name).
 WRAPPERS = SHELLS | {"asctl-wrap"}
+
+
+def open_regular(path):
+    """A regular file opened for reading (binary), or None: never a FIFO or device (open would
+    block or read forever) and never through a symlink."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError:
+        return None
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        return None
+    return os.fdopen(fd, "rb")
+
+
+def read_json(path, limit=1 << 20):
+    """A small JSON file's value, or None (unreadable, not a regular file, too big, not JSON,
+    or nested deep enough to raise RecursionError)."""
+    f = open_regular(path)
+    if f is None:
+        return None
+    with f:
+        data = f.read(limit + 1)
+    if len(data) > limit:
+        return None
+    try:
+        return json.loads(data.decode("utf-8", "replace"))
+    except (ValueError, RecursionError):
+        return None
 
 
 def proc_stat(pid):
@@ -67,11 +97,7 @@ def read_sessions(home=None):
     out = []
     for path in sorted(glob.glob(os.path.join(home, ".claude", "sessions", "*.json"))):
         base = os.path.basename(path)[:-5]
-        try:
-            with open(path, encoding="utf-8") as f:
-                raw = json.load(f)
-        except (OSError, ValueError):
-            raw = None
+        raw = read_json(path)
         if not isinstance(raw, dict):
             # Unreadable (a partial write, a new format): never live, but on must see it.
             out.append({"file": path, "ok": False, "pid": int(base) if base.isdigit() else None,
@@ -93,11 +119,11 @@ def read_sessions(home=None):
 
 
 def _text(path):
-    try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            return f.read(65536)
-    except OSError:
+    f = open_regular(path)
+    if f is None:
         return ""
+    with f:
+        return f.read(65536).decode("utf-8", "replace")
 
 
 def unreadable_blockers(session_id, home=None):
@@ -162,13 +188,15 @@ def tree_rss_kb(pid, kids):
     return total
 
 
-def busy_reason(session_name, lv, kids=None, pane_list=None):
+def busy_reason(session_name, lv, kids=None, pane_list=None, own_sid=None):
     """Why a tmux session is busy, or "" when it is not. Each pane's process tree is walked
     (tmux's pane_current_command names the process group, which for a claude under asctl-wrap
     is the wrapper's bash): shells are looked through; a claude counts by its session file
     (busy if working; one with no trusted file is unknown, so busy); anything else running
     (a dev server, a build, an editor) makes the session busy. lv: the live claudes (live());
-    kids, pane_list: children_map() and that session's panes, when the caller has them."""
+    kids, pane_list: children_map() and that session's panes, when the caller has them.
+    own_sid: the favorite's session id; any other claude in the session counts as busy too
+    (Off would end it as well)."""
     from . import tmuxctl
     known = {s["pid"]: s for s in lv}
     kids = children_map() if kids is None else kids
@@ -182,6 +210,8 @@ def busy_reason(session_name, lv, kids=None, pane_list=None):
                     return f"pane {p['pane_id']} runs a claude asctl cannot read ({pid})"
                 if s["status"] == "busy":
                     return f"the claude in pane {p['pane_id']} is working"
+                if own_sid and s["session_id"] != own_sid:
+                    return f"pane {p['pane_id']} runs another claude ({pid}, session {s['session_id']})"
                 continue
             if name in WRAPPERS:
                 todo += kids.get(pid, [])

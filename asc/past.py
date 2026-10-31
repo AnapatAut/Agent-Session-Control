@@ -7,8 +7,10 @@ last 64 KB: the folder from the first record that has `cwd`, the title from the 
 import glob
 import json
 import os
+import stat
 import threading
 
+from . import live
 from .live import UUID_RE
 
 CHUNK = 65536
@@ -17,7 +19,10 @@ _lock = threading.Lock()
 
 
 def _records(path, size):
-    with open(path, "rb") as f:
+    f = live.open_regular(path)
+    if f is None:
+        return
+    with f:
         head = f.read(CHUNK)
         tail = b""
         if size > CHUNK:
@@ -33,7 +38,7 @@ def _records(path, size):
         for line in lines:
             try:
                 r = json.loads(line)
-            except ValueError:
+            except (ValueError, RecursionError):
                 continue
             if isinstance(r, dict):
                 yield r
@@ -60,9 +65,11 @@ def conversations(home=None):
         if not UUID_RE.fullmatch(sid):
             continue
         try:
-            st = os.stat(path)
+            st = os.lstat(path)
         except OSError:
             continue
+        if not stat.S_ISREG(st.st_mode):
+            continue  # a symlink, FIFO or device: never opened
         key = (st.st_mtime_ns, st.st_size)
         with _lock:
             hit = _cache.get(path)

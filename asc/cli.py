@@ -75,13 +75,18 @@ def past_conversation(sid):
     """Folder and title of a past conversation, from its transcript (first lines only)."""
     for path in glob.glob(os.path.expanduser(f"~/.claude/projects/*/{sid}.jsonl")):
         cwd = title = None
-        with open(path, encoding="utf-8", errors="replace") as f:
+        f = live.open_regular(path)
+        if f is None:
+            continue
+        with f:
             for i, line in enumerate(f):
                 if i > 200:
                     break
                 try:
-                    r = json.loads(line)
-                except ValueError:
+                    r = json.loads(line.decode("utf-8", "replace"))
+                except (ValueError, RecursionError):
+                    continue
+                if not isinstance(r, dict):
                     continue
                 cwd = cwd or (r.get("cwd") if isinstance(r.get("cwd"), str) else None)
                 if r.get("type") in ("custom-title", "agent-name"):
@@ -281,7 +286,7 @@ def cmd_off(args):
             raise RegistryError(f"its claude ({away['pid']}) runs outside its tmux session {e['tmux']!r} "
                                 f"(in {where}); off ends only what runs in {e['tmux']!r}, so nothing was done")
         if up and not args.force:
-            why = live.busy_reason(e["tmux"], lv)
+            why = live.busy_reason(e["tmux"], lv, own_sid=e.get("session_id"))
             if why:
                 raise RegistryError(f"busy: {why} (asctl off {e['id4']} --force ends it anyway)")
         with registry.changing() as data:

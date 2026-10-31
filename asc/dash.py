@@ -5,23 +5,33 @@ socket 0600), or on the socket systemd passes it (asctl-dash.socket): on a share
 local user could reach a localhost port and forge the login header, while only this user and
 root (tailscaled, for `tailscale serve unix:...`) can open the socket.
 
-Every request must carry exactly one Tailscale-User-Login equal to the configured login and a
-Host equal to the configured host; anything else gets 403. Every action is a POST with the
+Every request must carry exactly one Tailscale-User-Login equal to the configured login, a
+Host equal to the configured host, and come from another machine: the last X-Forwarded-For
+entry (the one tailscale serve adds; a client can put its own before it) must not be one of
+this machine's addresses. tailscaled tags a request with the login of the device it comes
+from, so without that check any local user, or an agent of theirs, could ask this machine's
+own serve port and be taken for the owner. Anything else gets 403. Every action is a POST with the
 page's token and a matching Origin. Actions run `asctl` itself (an argument list, no shell),
 so they take the same locks and checks as the CLI. From the web the permission mode can be
 set only to auto or manual; skip is set only with `asctl mode ID skip` (a favorite already in
 skip still starts with it).
 
 Config, ~/.config/agent-session-control/dash.json:
-  {"login": "<your Tailscale login>", "host": "<this machine's MagicDNS name>", "prefix": "/user"}
+  {"login": "<your Tailscale login>", "host": "<MagicDNS name>:<port>", "prefix": "/user"}
+host is what the browser sends as Host (and, after https://, as Origin): with the port when
+it is not 443.
 prefix (optional) is the path `tailscale serve --set-path` mounts this user's dashboard on.
 Give each user's dashboard an origin of its own (its own serve port or host): paths of one
 host:port share one browser origin, so a page under another user's path could read this
 page's token and post actions with this login (the Origin header has no path).
-The server exits after --idle seconds without a request (systemd starts it again on the next).
+The server exits after --idle seconds without a request (systemd starts it again on the next),
+once no action is running; on SIGTERM it waits up to 100 s for running actions. The page token
+is kept in the socket's folder (0600), so a page left open still works after a restart.
 """
+import fcntl
 import hmac
 import http.server
+import ipaddress
 import json
 import os
 import re
@@ -83,6 +93,42 @@ def _private_dir(d):
     st = os.lstat(d)
     if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o700:
         raise RegistryError(f"{d} must be a folder owned by you with mode 0700")
+
+
+# --- who may ask --------------------------------------------------------------------------
+
+_local = {"at": 0.0, "ips": None}
+
+
+def local_addresses():
+    """This machine's own addresses (every interface, tailscale0 too), cached 30 s; None when
+    they cannot be read (then every request is refused)."""
+    now = time.monotonic()
+    if _local["ips"] is not None and now - _local["at"] < 30:
+        return _local["ips"]
+    try:
+        r = subprocess.run(["ip", "-j", "addr", "show"], capture_output=True, text=True, timeout=5)
+        ips = {ipaddress.ip_address(a["local"]) for i in json.loads(r.stdout)
+               for a in i.get("addr_info", []) if "local" in a}
+    except (OSError, ValueError, subprocess.SubprocessError, KeyError, TypeError):
+        ips = None
+    _local.update(at=now, ips=ips)
+    return ips
+
+
+def remote_client(headers):
+    """True when the client tailscale serve names is another machine."""
+    xff = headers.get_all("X-Forwarded-For") or []
+    if len(xff) != 1:
+        return False
+    try:
+        ip = ipaddress.ip_address(xff[0].split(",")[-1].strip())
+    except ValueError:
+        return False
+    if ip.version == 6 and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    ips = local_addresses()
+    return ips is not None and not ip.is_loopback and not ip.is_unspecified and ip not in ips
 
 
 # --- what the page shows -------------------------------------------------------------------
@@ -152,7 +198,8 @@ def snapshot():
             "want_on": bool(e.get("want_on")), "note": e.get("note") or "",
             "last_on": e.get("last_on"), "last_off": e.get("last_off"), "state": st,
             "pid": s["pid"] if s else None, "status": s["status"] if s else None,
-            "busy": live.busy_reason(e["tmux"], lv, kids, panes) if e["tmux"] in up else "",
+            "busy": live.busy_reason(e["tmux"], lv, kids, panes, e.get("session_id")) if e["tmux"] in up else "",
+            "claudes": sum(1 for x in lv if x["pane"] and x["pane"]["session"] == e["tmux"]),
             "rss_kb": sum(live.tree_rss_kb(p["pane_pid"], kids) for p in panes),
             "attach": f"tmux attach -t ={e['tmux']}",
         })
@@ -180,11 +227,16 @@ def action_argv(a):
         if not isinstance(ref, str) or not (live.UUID_RE.fullmatch(ref) or re.fullmatch(r"[0-9]{1,10}", ref)):
             raise RegistryError("fav needs ref: a session id or a pid")
         argv = ["fav", ref]
-        if a.get("name"):
-            argv += ["--name", registry.check_name(a["name"])]
+        if a.get("name") is not None:
+            argv += ["--name", registry.check_name(_text(a["name"]))]
         return argv + (["--whole-session"] if a.get("whole_session") is True else [])
     if not isinstance(id4, str) or not registry.ID4_RE.fullmatch(id4):
         raise RegistryError("id must be a favorite's 4-digit id")
+    # The page names the entry it shows: a page out of date (a rename, an id forgotten and drawn
+    # again) never acts on another session.
+    e = registry.find(registry.load(), id4)
+    if a.get("tmux") != e["tmux"]:
+        raise RegistryError(f"this page is out of date ({id4} is now {e['tmux']}); reload it")
     if kind == "on":
         return ["on", id4]
     if kind == "off":
@@ -192,12 +244,16 @@ def action_argv(a):
     if kind == "forget":
         return ["forget", id4]
     if kind == "rename":
-        return ["rename", id4, registry.check_name(a.get("name") if isinstance(a.get("name"), str) else "")]
+        return ["rename", id4, registry.check_name(_text(a.get("name")))]
     if kind == "mode":
         if a.get("mode") not in WEB_MODES:
             raise RegistryError("from the page the mode can be auto or manual; skip only with asctl mode ID skip")
         return ["mode", id4, a["mode"]]
     raise RegistryError(f"unknown action {kind!r}")
+
+
+def _text(v):
+    return v if isinstance(v, str) else ""
 
 
 def run_asctl(argv):
@@ -247,7 +303,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         cfg = self.server.cfg
         logins = self.headers.get_all("Tailscale-User-Login") or []
         hosts = self.headers.get_all("Host") or []
-        return len(logins) == 1 and logins[0] == cfg["login"] and len(hosts) == 1 and hosts[0] == cfg["host"]
+        return (len(logins) == 1 and logins[0] == cfg["login"] and len(hosts) == 1 and hosts[0] == cfg["host"]
+                and remote_client(self.headers))
 
     def _path(self):
         """The request path below the prefix, or None when it is not under it."""
@@ -323,10 +380,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send(400, {"error": "the body is not JSON"})
         except RegistryError as e:
             return self._send(400, {"error": str(e)})
+        with self.server.actions:
+            self.server.running += 1
         try:
             ok, out, err = run_asctl(argv)
         except subprocess.TimeoutExpired:
             return self._send(504, {"error": "asctl took over 90 s"})
+        finally:
+            with self.server.actions:
+                self.server.running -= 1
+                self.server.actions.notify_all()
         self._send(200 if ok else 409, {"ok": ok, "out": out, "error": err.removeprefix("asctl: ")})
 
 
@@ -334,8 +397,9 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
     address_family = socket.AF_UNIX
     daemon_threads = True
 
-    def __init__(self, cfg, sock=None, path=None):
-        self.cfg, self.token, self.last = cfg, secrets.token_urlsafe(32), time.monotonic()
+    def __init__(self, cfg, token, sock=None, path=None):
+        self.cfg, self.token, self.last = cfg, token, time.monotonic()
+        self.actions, self.running = threading.Condition(), 0
         socketserver.TCPServer.__init__(self, path, Handler, bind_and_activate=sock is None)
         if sock is not None:
             self.socket.close()
@@ -347,6 +411,10 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
     def touch(self):
         self.last = time.monotonic()
+
+    def wait_actions(self, timeout):
+        with self.actions:
+            self.actions.wait_for(lambda: self.running == 0, timeout)
 
 
 def systemd_socket():
@@ -370,12 +438,42 @@ def _answers(path):
         s.close()
 
 
+def load_token(d):
+    """The page token kept in d/token (0600), made on first use."""
+    p = os.path.join(d, "token")
+    try:
+        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    except FileExistsError:
+        f = live.open_regular(p)
+        if f is None:
+            raise RegistryError(f"{p} is not a regular file")
+        with f:
+            st = os.fstat(f.fileno())
+            t = f.read(256).decode("ascii", "replace").strip()
+        if st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o600 or len(t) < 40:
+            raise RegistryError(f"{p} must be yours, mode 0600, holding a token; remove it to make a new one")
+        return t
+    t = secrets.token_urlsafe(32)
+    with os.fdopen(fd, "w") as f:
+        f.write(t + "\n")
+    return t
+
+
 def serve(sock_path=None, idle=600):
     cfg = load_config()
     sock = systemd_socket()
+    sock_path = sock_path or default_socket()
+    d = os.path.dirname(sock_path)
+    _private_dir(d)
+    # One server per folder: held while it runs, so two starting together cannot both decide
+    # a socket is stale and remove each other's.
+    lock = os.open(os.path.join(d, "dash.lock"), os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        raise RegistryError(f"another asctl dash runs on {d}")
+    token = load_token(d)
     if sock is None:
-        sock_path = sock_path or default_socket()
-        _private_dir(os.path.dirname(sock_path))
         try:
             if stat.S_ISSOCK(os.lstat(sock_path).st_mode):
                 if _answers(sock_path):
@@ -385,24 +483,27 @@ def serve(sock_path=None, idle=600):
             pass
         old = os.umask(0o177)
         try:
-            srv = Server(cfg, path=sock_path)
+            srv = Server(cfg, token, path=sock_path)
+        except OSError as e:
+            raise RegistryError(f"cannot listen on {sock_path}: {e}")
         finally:
             os.umask(old)
         mine = os.lstat(sock_path).st_ino
         print(f"asctl dash: on {sock_path} for {cfg['login']}", file=sys.stderr, flush=True)
     else:
-        srv = Server(cfg, sock=sock)
+        srv = Server(cfg, token, sock=sock)
     # SIGTERM (systemctl stop) ends the loop like the idle exit, so the socket file is removed.
     signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=srv.shutdown, daemon=True).start())
     if idle:
         def watch():
-            while time.monotonic() - srv.last < idle:
+            while time.monotonic() - srv.last < idle or srv.running:
                 time.sleep(1)
             srv.shutdown()
         threading.Thread(target=watch, daemon=True).start()
     try:
         srv.serve_forever(poll_interval=0.5)
     finally:
+        srv.wait_actions(100)  # an asctl on or off half done would leave its entry half changed
         srv.server_close()
         if sock is None:
             try:

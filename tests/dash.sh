@@ -29,14 +29,16 @@ LOGIN="someone${E}example.com" HOST="machine.example${N}.net"
 SOCK="$T/run/asctl/dash.sock"
 CONF="$HOME/.config/agent-session-control/dash.json"
 # curl to the dashboard as tailscale serve would pass it on: the login and host headers.
-dc() { curl -s --unix-socket "$SOCK" -H "Tailscale-User-Login: $LOGIN" -H "Host: $HOST" "$@"; }
+# The client address tailscale serve passes on: another machine (TEST-NET-1, RFC 5737).
+XFF="X-Forwarded-For: 192.0.2.10"
+dc() { curl -s --unix-socket "$SOCK" -H "Tailscale-User-Login: $LOGIN" -H "Host: $HOST" -H "$XFF" "$@"; }
 code() { dc -o /dev/null -w '%{http_code}' "$@"; }
 # The status of a GET sent as raw header lines (curl folds a doubled Host into one).
 raw() {
 	python3 -I -c 'import socket, sys
 s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1])
 s.sendall(("GET /api/state HTTP/1.1\r\n" + "".join(h + "\r\n" for h in sys.argv[2:]) + "Connection: close\r\n\r\n").encode())
-print(s.recv(64).split()[1].decode())' "$SOCK" "$@"
+print(s.recv(64).split()[1].decode())' "$SOCK" "$XFF" "$@"
 }
 # Send stdin as is on one connection; print the status code of every response until it closes.
 rawsend() {
@@ -101,22 +103,23 @@ start_dash && ok "dash listens on its socket" || bad "no socket: $(cat "$T/dash.
 [ "$(stat -c %a "$T/run/asctl")" = 700 ] && ok "socket folder 0700" || bad "socket folder $(stat -c %a "$T/run/asctl")"
 [ "$(code http://x/api/state)" = 200 ] && ok "the right login and host: 200" || bad "the right login and host: $(code http://x/api/state)"
 [ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Host: $HOST" http://x/api/state)" = 403 ] && ok "no login header: 403" || bad "no login header let in"
-[ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Tailscale-User-Login: other${E}example.com" -H "Host: $HOST" http://x/api/state)" = 403 ] && ok "another login: 403" || bad "another login let in"
+[ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Tailscale-User-Login: other${E}example.com" -H "Host: $HOST" -H "$XFF" http://x/api/state)" = 403 ] && ok "another login: 403" || bad "another login let in"
 [ "$(raw "Host: $HOST" "Tailscale-User-Login: $LOGIN")" = 200 ] && ok "raw request with the right headers: 200" || bad "raw request refused"
 [ "$(raw "Host: $HOST" "Tailscale-User-Login: $LOGIN" "Tailscale-User-Login: $LOGIN")" = 403 ] && ok "the login header twice: 403" || bad "a doubled login header let in"
-[ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Tailscale-User-Login: $LOGIN" -H "Host: evil.example" http://x/api/state)" = 403 ] && ok "another Host: 403" || bad "another Host let in"
+[ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Tailscale-User-Login: $LOGIN" -H "Host: evil.example" -H "$XFF" http://x/api/state)" = 403 ] && ok "another Host: 403" || bad "another Host let in"
 [ "$(raw "Host: $HOST" "Host: evil.example" "Tailscale-User-Login: $LOGIN")" = 403 ] && ok "two Host headers: 403" || bad "two Host headers let in"
 second="GET /api/state HTTP/1.1
 Host: $HOST
+$XFF
 Tailscale-User-Login: $LOGIN
 "
-r=$(printf 'GET / HTTP/1.1\nHost: %s\nTailscale-User-Login: evil%sexample.com\nContent-Length: %s\n\n%s\n' "$HOST" "$E" "$(( ${#second} + 5 ))" "$second" | rawsend)
+r=$(printf 'GET / HTTP/1.1\nHost: %s\n%s\nTailscale-User-Login: evil%sexample.com\nContent-Length: %s\n\n%s\n' "$HOST" "$XFF" "$E" "$(( ${#second} + $(printf '%s' "$second" | tr -cd '\n' | wc -c) + 2 ))" "$second" | rawsend)
 [ "$r" = 403 ] && ok "a request smuggled in a refused one's body is never answered (one request per connection)" || bad "smuggling: responses $r"
-r=$(printf 'GET /api/state HTTP/1.1\nHost: %s\nTailscale-User-Login: %s\n\nGET /api/state HTTP/1.1\nHost: %s\nTailscale-User-Login: %s\n\n' "$HOST" "$LOGIN" "$HOST" "$LOGIN" | rawsend)
+r=$(printf 'GET /api/state HTTP/1.1\nHost: %s\n%s\nTailscale-User-Login: %s\n\nGET /api/state HTTP/1.1\nHost: %s\n%s\nTailscale-User-Login: %s\n\n' "$HOST" "$XFF" "$LOGIN" "$HOST" "$XFF" "$LOGIN" | rawsend)
 [ "$r" = 200 ] && ok "keep-alive: the connection closes after one response" || bad "keep-alive: responses $r"
-r=$(printf 'POST /api/action HTTP/1.1\nHost: %s\nTailscale-User-Login: %s\nTransfer-Encoding: chunked\n\n0\n\n' "$HOST" "$LOGIN" | rawsend)
+r=$(printf 'POST /api/action HTTP/1.1\nHost: %s\n%s\nTailscale-User-Login: %s\nTransfer-Encoding: chunked\n\n0\n\n' "$HOST" "$XFF" "$LOGIN" | rawsend)
 [ "$r" = 400 ] && ok "a chunked body: 400" || bad "a chunked body: $r"
-r=$(printf 'GET /api/state HTTP/1.1\nHost: %s\nTailscale-User-Login: %s\nContent-Length: 3\n\nabc' "$HOST" "$LOGIN" | rawsend)
+r=$(printf 'GET /api/state HTTP/1.1\nHost: %s\n%s\nTailscale-User-Login: %s\nContent-Length: 3\n\nabc' "$HOST" "$XFF" "$LOGIN" | rawsend)
 [ "$r" = 400 ] && ok "a GET with a body: 400" || bad "a GET with a body: $r"
 refuses && ok "a second dash refuses the socket in use" || bad "a second dash took the socket"
 [ "$(code http://x/app.css)" = 200 ] && ok "the first one still answers" || bad "the first dash lost its socket"
@@ -137,7 +140,7 @@ pid=$(claude_in dev)
 s=$(state)
 jq -e '.memory.avail_pct > 0 and .memory.total_kb > 0' <<<"$s" >/dev/null && ok "state: memory" || bad "state: no memory"
 jq -e --arg s "$SID" '.active | map(select(.session_id == $s and .tmux == "dev")) | length == 1' <<<"$s" >/dev/null && ok "state: the running claude, not favorited" || bad "state: active list wrong: $s"
-jq -e '.top.mine | length > 0 and all(has("name") and has("rss_kb") and (has("cmdline") | not))' <<<"$s" >/dev/null && ok "state: own biggest processes, names and sizes only" || bad "state: top processes wrong"
+jq -e '.top.mine | length > 0 and all(keys == ["name", "rss_kb"])' <<<"$s" >/dev/null && ok "state: own biggest processes, names and sizes only" || bad "state: top processes wrong"
 jq -e '.top.others_kb | type == "number"' <<<"$s" >/dev/null && ok "state: other users as one total" || bad "state: no others total"
 jq -e '.server == true' <<<"$s" >/dev/null && ok "state: the tmux server is up" || bad "state: server not seen"
 
@@ -162,30 +165,31 @@ r=$(dc -w '%{http_code}' -o /dev/null -X POST -H "Origin: https://$HOST" -H "X-A
 echo "== actions: favorite, off, on, mode, rename, forget"
 out=$(post '{"action":"fav","ref":"'"$pid"'","name":"das"}')
 [ "$(tail -1 <<<"$out")" = 200 ] && ok "fav by pid" || bad "fav failed: $out"
-id=$(state | jq -r '.favorites[0].id4')
+id=$(state | jq -r '.favorites[0].id4'); TM="das-$id"
 s=$(state)
 jq -e --arg i "$id" '.favorites[0] | .tmux == "das-\($i)" and .state == "on" and .status == "idle" and .rss_kb > 0 and .attach == "tmux attach -t =das-\($i)"' <<<"$s" >/dev/null && ok "state: the favorite, on, idle, its memory, the attach command" || bad "state: favorite wrong: $(jq -c '.favorites[0]' <<<"$s")"
 jq -e '.active | length == 0' <<<"$s" >/dev/null && ok "state: no longer in the not-favorited list" || bad "state: still listed as not favorited"
 touch "$HOME/fake-busy"; sleep 0.6
-out=$(post '{"action":"off","id":"'"$id"'"}')
+out=$(post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'"}')
 [ "$(tail -1 <<<"$out")" = 409 ] && seen 'busy: the claude in pane' <<<"$out" && ok "off refused while busy, with the reason" || bad "off while busy: $out"
 state | jq -e '.favorites[0].busy | test("is working")' >/dev/null && ok "state: busy reason shown" || bad "state: no busy reason"
 rm -f "$HOME/fake-busy"; sleep 0.6
-[ "$(post '{"action":"off","id":"'"$id"'"}' | tail -1)" = 200 ] && ok "off" || bad "off failed"
+[ "$(post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] && ok "off" || bad "off failed"
 state | jq -e '.favorites[0].state == "off"' >/dev/null && ok "state: off" || bad "state: not off"
-[ "$(post '{"action":"mode","id":"'"$id"'","mode":"skip"}' | tail -1)" = 400 ] && ok "mode skip from the page: refused" || bad "mode skip from the page accepted"
+[ "$(post '{"action":"mode","id":"'"$id"'","tmux":"'"$TM"'","mode":"skip"}' | tail -1)" = 400 ] && ok "mode skip from the page: refused" || bad "mode skip from the page accepted"
 [ "$(jq -r ".entries[\"$id\"].mode" "$HOME/.local/state/agent-session-control/registry.json")" = auto ] && ok "the mode stayed auto" || bad "the mode changed"
-[ "$(post '{"action":"mode","id":"'"$id"'","mode":"manual"}' | tail -1)" = 200 ] && ok "mode manual from the page" || bad "mode manual failed"
+[ "$(post '{"action":"mode","id":"'"$id"'","tmux":"'"$TM"'","mode":"manual"}' | tail -1)" = 200 ] && ok "mode manual from the page" || bad "mode manual failed"
 asctl mode "$id" skip >/dev/null
-[ "$(post '{"action":"on","id":"'"$id"'"}' | tail -1)" = 200 ] && ok "on (a favorite in skip still starts from the page)" || bad "on failed"
+[ "$(post '{"action":"on","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] && ok "on (a favorite in skip still starts from the page)" || bad "on failed"
 tail -1 "$HOME/claude-args.log" | seen -- '--permission-mode bypassPermissions' && ok "started with its skip mode" || bad "skip not passed: $(tail -1 "$HOME/claude-args.log")"
 touch "$HOME/fake-busy"; sleep 0.6
-[ "$(post '{"action":"off","id":"'"$id"'","force":"yes"}' | tail -1)" = 409 ] && ok "force only when it is true (\"yes\" is not)" || bad "force taken from a non-boolean"
-[ "$(post '{"action":"off","id":"'"$id"'","force":true}' | tail -1)" = 200 ] && ok "off with force while busy" || bad "off --force failed"
+[ "$(post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'","force":"yes"}' | tail -1)" = 409 ] && ok "force only when it is true (\"yes\" is not)" || bad "force taken from a non-boolean"
+[ "$(post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'","force":true}' | tail -1)" = 200 ] && ok "off with force while busy" || bad "off --force failed"
 rm -f "$HOME/fake-busy"
-[ "$(post '{"action":"rename","id":"'"$id"'","name":"Bad Name"}' | tail -1)" = 400 ] && ok "rename to a bad name: 400" || bad "a bad name accepted"
-[ "$(post '{"action":"rename","id":"'"$id"'","name":"db"}' | tail -1)" = 200 ] && state | jq -e '.favorites[0].tmux | startswith("db-")' >/dev/null && ok "rename" || bad "rename failed"
-[ "$(post '{"action":"forget","id":"'"$id"'"}' | tail -1)" = 200 ] && state | jq -e '.favorites | length == 0' >/dev/null && ok "forget" || bad "forget failed"
+[ "$(post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"Bad Name"}' | tail -1)" = 400 ] && ok "rename to a bad name: 400" || bad "a bad name accepted"
+[ "$(post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"db"}' | tail -1)" = 200 ] && state | jq -e '.favorites[0].tmux | startswith("db-")' >/dev/null && ok "rename" || bad "rename failed"
+TM="db-$id"
+[ "$(post '{"action":"forget","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] && state | jq -e '.favorites | length == 0' >/dev/null && ok "forget" || bad "forget failed"
 
 echo "== past conversations"
 mkdir -p "$HOME/.claude/projects/-x"
@@ -204,6 +208,69 @@ asctl fav "$P1" >/dev/null
 pj=$(dc "http://x/api/past")
 jq -e --arg b "$P2" '[.past[].session_id] | index($b) == null' <<<"$pj" >/dev/null && ok "past: a running conversation is not listed" || bad "past: a running one listed"
 jq -e --arg a "$P1" '[.past[].session_id] | index($a) == null' <<<"$pj" >/dev/null && ok "past: a favorite is not listed" || bad "past: a favorite listed"
+
+echo "== the client must be another machine"
+nox() { curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Tailscale-User-Login: $LOGIN" -H "Host: $HOST" "$@" http://x/api/state; }
+myip=$(ip -j addr show | jq -r '[.[].addr_info[].local] | map(select(startswith("127.") or . == "::1" | not)) | .[0]')
+[ "$(nox)" = 403 ] && ok "no X-Forwarded-For: 403" || bad "no X-Forwarded-For let in"
+[ "$(nox -H 'X-Forwarded-For: 127.0.0.1')" = 403 ] && ok "from loopback: 403" || bad "loopback let in"
+[ "$(nox -H 'X-Forwarded-For: ::ffff:127.0.0.1')" = 403 ] && ok "from loopback as IPv4-mapped IPv6: 403" || bad "mapped loopback let in"
+[ -n "$myip" ] && [ "$(nox -H "X-Forwarded-For: $myip")" = 403 ] && ok "from one of this machine's own addresses: 403" || bad "this machine's own address let in ($myip)"
+[ "$(nox -H "X-Forwarded-For: 192.0.2.10, $myip")" = 403 ] && ok "a client's own entry first does not hide that the last is this machine" || bad "the first entry was trusted"
+[ "$(nox -H "X-Forwarded-For: 127.0.0.1, 192.0.2.10")" = 200 ] && ok "the last entry decides (another machine: 200)" || bad "the last entry not used"
+[ "$(nox -H "$XFF" -H "$XFF")" = 403 ] && ok "X-Forwarded-For twice: 403" || bad "a doubled X-Forwarded-For let in"
+[ "$(nox -H 'X-Forwarded-For: nonsense')" = 403 ] && ok "a bad address: 403" || bad "a bad address let in"
+
+echo "== stale pages, odd bodies, a second claude"
+tm new-session -d -s trio -c "$W" -- "$ASC_CLAUDE" --session-id 44444444-5555-4666-8777-888888888888
+p3=$(claude_in trio)
+asctl fav "$p3" --name trio >/dev/null; id3=$(jq -r '.entries[] | select(.name == "trio") | .id4' "$HOME/.local/state/agent-session-control/registry.json")
+out=$(post '{"action":"off","id":"'"$id3"'","tmux":"old-'"$id3"'"}')
+[ "$(tail -1 <<<"$out")" = 400 ] && seen 'out of date' <<<"$out" && tm has-session -t "=trio-$id3" && ok "an action from an out-of-date page (another name): refused, nothing done" || bad "a stale page acted: $out"
+[ "$(post '{"action":"off","id":"'"$id3"'"}' | tail -1)" = 400 ] && ok "an action without the tmux name: refused" || bad "an action without the tmux name accepted"
+[ "$(post '{"action":"fav","ref":"123","name":[1]}' | tail -1)" = 400 ] && ok "a name that is not a string: 400 (no crash)" || bad "a list as name"
+tm new-window -t "=trio-$id3:" -c "$W" -- "$ASC_CLAUDE" --session-id 55555555-6666-4777-8888-999999999999
+for _ in $(seq 1 25); do state | jq -e '.favorites[] | select(.id4 == "'"$id3"'") | .claudes == 2' >/dev/null && break; sleep 0.2; done
+state | jq -e '.favorites[] | select(.id4 == "'"$id3"'") | .claudes == 2' >/dev/null && ok "state: two claudes in the favorite's session" || bad "state: claude count wrong"
+out=$(post '{"action":"off","id":"'"$id3"'","tmux":"trio-'"$id3"'"}')
+[ "$(tail -1 <<<"$out")" = 409 ] && seen 'runs another claude' <<<"$out" && ok "off refused: an idle second claude would end too" || bad "off would end a second claude: $out"
+post '{"action":"off","id":"'"$id3"'","tmux":"trio-'"$id3"'","force":true}' >/dev/null
+
+echo "== transcripts and session files that could hang or crash a read"
+mkdir -p "$HOME/.claude/projects/-y"
+python3 -c 'import sys; open(sys.argv[1], "w").write("[" * 50000 + "\n")' "$HOME/.claude/projects/-y/66666666-7777-4888-8999-aaaaaaaaaaaa.jsonl"
+python3 -c 'import sys; open(sys.argv[1], "w").write("[" * 100000)' "$HOME/.claude/sessions/4000001.json"
+mkfifo "$HOME/.claude/projects/-y/77777777-8888-4999-8aaa-bbbbbbbbbbbb.jsonl" "$HOME/.claude/sessions/4000002.json"
+ln -s /dev/zero "$HOME/.claude/projects/-y/88888888-9999-4aaa-8bbb-cccccccccccc.jsonl"
+[ "$(dc -m 10 -o /dev/null -w '%{http_code}' http://x/api/past)" = 200 ] && ok "past: deep JSON, a FIFO and a symlink to /dev/zero neither hang nor crash it" || bad "past hangs or crashes on odd transcripts"
+[ "$(dc -m 10 -o /dev/null -w '%{http_code}' http://x/api/state)" = 200 ] && ok "state: deep JSON and a FIFO in the session files neither hang nor crash it" || bad "state hangs or crashes on odd session files"
+dc http://x/api/past | jq -e '[.past[].session_id] | (index("77777777-8888-4999-8aaa-bbbbbbbbbbbb") == null and index("88888888-9999-4aaa-8bbb-cccccccccccc") == null)' >/dev/null && ok "past: a FIFO or a symlink is not listed" || bad "past lists a FIFO or a symlink"
+"$REPO/bin/asctl" fav 66666666-7777-4888-8999-aaaaaaaaaaaa 2>"$T/err" >/dev/null
+seen 'no conversation' "$T/err" && ! seen Traceback "$T/err" && ok "fav of a deep-JSON transcript: a clean refusal" || bad "fav of a deep-JSON transcript: $(tail -1 "$T/err")"
+state | jq -e '.unknown_files >= 2' >/dev/null && ok "state: they count as session files in an unknown format" || bad "odd session files not counted"
+timeout 10 "$REPO/bin/asctl" live >/dev/null && ok "asctl live too" || bad "asctl live hangs or crashes on them"
+rm -f "$HOME/.claude/projects/-y/"* "$HOME/.claude/sessions/4000001.json" "$HOME/.claude/sessions/4000002.json"
+
+echo "== the token, a running action at SIGTERM, a socket path too long"
+TOK1=$(token)
+[ "$(stat -c %a "$T/run/asctl/token")" = 600 ] && ok "the token file is 0600" || bad "token file mode $(stat -c %a "$T/run/asctl/token")"
+stop_dash; start_dash
+[ "$(token)" = "$TOK1" ] && ok "the token survives a restart (an open page keeps working)" || bad "a new token after restart"
+(post '{"action":"on","id":"'"$id3"'","tmux":"trio-'"$id3"'"}' | tail -1 > "$T/inflight") &
+inf=$!
+sleep 0.3; kill -TERM "$DPID"; wait "$inf"; wait "$DPID" 2>/dev/null; DPID=
+[ "$(cat "$T/inflight")" = 200 ] && tm has-session -t "=trio-$id3" && ok "SIGTERM waits for a running action to finish" || bad "SIGTERM cut a running action: $(cat "$T/inflight")"
+long="$T/run/long/$(printf 'x%.0s' $(seq 1 120)).sock"
+timeout 5 "$REPO/bin/asctl" dash --socket "$long" --idle 0 2>"$T/err"; rc=$?
+[ "$rc" = 1 ] && seen 'cannot listen' "$T/err" && ok "a socket path too long: a clean error" || bad "a long socket path: rc $rc, $(tail -1 "$T/err")"
+python3 -I -c 'import socket, sys, time
+s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.listen(1); time.sleep(30)' "$SOCK" & holder=$!
+for _ in $(seq 1 30); do [ -S "$SOCK" ] && break; sleep 0.1; done
+refuses && seen 'is in use' "$T/err" && ok "a socket another process listens on (asctl-dash.socket) is refused, not removed" || bad "dash took a socket in use"
+[ -S "$SOCK" ] && ok "that socket is still there" || bad "that socket was removed"
+kill "$holder"; wait "$holder" 2>/dev/null
+start_dash
+[ "$(code http://x/app.css)" = 200 ] && ok "a socket nothing listens on (stale) is replaced" || bad "a stale socket blocked the start"
 
 echo "== prefix and idle exit"
 stop_dash
@@ -230,9 +297,9 @@ DPID=
 echo "== systemd socket activation"
 if command -v systemd-socket-activate >/dev/null; then
 	mkdir -p "$T/sa"; chmod 700 "$T/sa"
-	systemd-socket-activate -l "$T/sa/s.sock" "$REPO/bin/asctl" dash --idle 0 2>/dev/null & DPID=$!
+	systemd-socket-activate -E HOME -E XDG_RUNTIME_DIR -E ASC_TMUX_SOCKET -l "$T/sa/s.sock" "$REPO/bin/asctl" dash --idle 0 2>/dev/null & DPID=$!
 	for _ in $(seq 1 30); do [ -S "$T/sa/s.sock" ] && break; sleep 0.1; done
-	r=$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$T/sa/s.sock" -H "Tailscale-User-Login: $LOGIN" -H "Host: $HOST" http://x/u/api/state)
+	r=$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$T/sa/s.sock" -H "Tailscale-User-Login: $LOGIN" -H "Host: $HOST" -H "$XFF" http://x/u/api/state)
 	[ "$r" = 200 ] && ok "serves on the socket systemd passes" || bad "socket activation: $r"
 	stop_dash
 else
@@ -273,6 +340,18 @@ asc/dash.py %%%         if not self._allowed(): %%%         if self.server.touch
 asc/dash.py %%%                 if _answers(sock_path): %%%                 if False:
 asc/dash.py %%%         if self.headers.get_all("Transfer-Encoding") or ( %%%         if False and (
 asc/dash.py %%% token.encode("utf-8", "replace") %%% token
+asc/dash.py %%%                 and remote_client(self.headers)) %%%                 and True)
+asc/dash.py %%%     if ip.version == 6 and ip.ipv4_mapped: %%%     if False:
+asc/dash.py %%% xff[0].split(",")[-1] %%% xff[0].split(",")[0]
+asc/dash.py %%%     if len(xff) != 1: %%%     if not xff:
+asc/dash.py %%%     if a.get("tmux") != e["tmux"]: %%%     if False:
+asc/dash.py %%%         srv.wait_actions(100) %%%         pass
+asc/dash.py %%%         return t %%%         return secrets.token_urlsafe(32)
+asc/dash.py %%%             raise RegistryError(f"cannot listen on {sock_path}: {e}") %%%             raise
+asc/live.py %%%                 if own_sid and s["session_id"] != own_sid: %%%                 if False:
+asc/live.py %%%     except (ValueError, RecursionError): %%%     except ValueError:
+asc/past.py %%%             except (ValueError, RecursionError): %%%             except ValueError:
+asc/past.py %%%         if not stat.S_ISREG(st.st_mode): %%%         if False:
 asc/past.py %%%                 title = t %%%                 title = title or t
 asc/past.py %%%     out.sort(key=lambda c: c["mtime"], reverse=True) %%%     out.sort(key=lambda c: c["mtime"])
 MUTANTS

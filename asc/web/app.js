@@ -45,7 +45,7 @@ async function act(body) {
     const j = await r.json();
     $("msg").textContent = j.ok ? j.out : "Refused: " + (j.error || r.status);
     if (!j.ok && body.action === "off" && /busy/.test(j.error || "") &&
-        window.confirm(j.error + "\n\nForce it off anyway?")) {
+        window.confirm(`${body.tmux}: ${j.error}\n\nForce ${body.tmux} off anyway? Everything in it ends.`)) {
       return act({ ...body, force: true });
     }
   } catch (e) {
@@ -70,18 +70,20 @@ function render(s) {
   f.replaceChildren(row(["Name", "State", "Mode", "Memory", "Folder", ""].map((t) => el("th", t))));
   for (const e of s.favorites) {
     const acts = el("td");
-    if (e.state === "on") acts.append(button("Off", { action: "off", id: e.id4 }));
-    else acts.append(button("On", { action: "on", id: e.id4 }));
+    const ref = { id: e.id4, tmux: e.tmux };
+    if (e.state === "on") acts.append(button("Off", { action: "off", ...ref }, `Turn ${e.tmux} off? Its claude and tmux session end.`));
+    else acts.append(button("On", { action: "on", ...ref }));
     if (e.mode !== "skip") {
       const other = e.mode === "auto" ? "manual" : "auto";
-      acts.append(button("Mode: " + other, { action: "mode", id: e.id4, mode: other }));
+      acts.append(button("Mode: " + other, { action: "mode", mode: other, ...ref }));
     }
-    acts.append(button("Forget", { action: "forget", id: e.id4 }, `Forget ${e.tmux}? A running session is left alone.`));
+    acts.append(button("Forget", { action: "forget", ...ref }, `Forget ${e.tmux}? A running session is left alone.`));
     const copy = el("button", "Copy attach");
     copy.type = "button";
     copy.addEventListener("click", () => navigator.clipboard && navigator.clipboard.writeText(e.attach));
     acts.append(copy);
-    const state = e.state + (e.status ? ` (${e.status})` : "") + (e.busy ? ` — ${e.busy}` : "");
+    const state = e.state + (e.status ? ` (${e.status})` : "") + (e.claudes > 1 ? `, ${e.claudes} claudes` : "") +
+      (e.busy ? ` — ${e.busy}` : "");
     f.append(row([e.tmux, state, e.mode, e.rss_kb ? mb(e.rss_kb) : "", el("td", e.cwd, "path"), acts]));
   }
 
