@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# The asctl command: runs the asc package next to this folder, isolated from PYTHONPATH, the
+# user's site packages and the current folder (python3 -I); only that folder is put on the path.
+here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)" || exit 2
+exec python3 -I -c 'import sys; sys.path.insert(0, sys.argv.pop(1)); from asc.cli import main; raise SystemExit(main())' "$here" "$@"

@@ -11,6 +11,27 @@ or a credential ([`tools/privacy-rules`](tools/privacy-rules)). They run from co
 addresses) go in `.git/privacy-local`, one per line: it is inside `.git`, so it is never
 committed. `tests/lint.sh` runs the same check on every tracked file.
 
+## asctl (phase 1: registry, on and off)
+
+`bin/asctl` keeps a registry of favorite Claude Code sessions and turns each one on (a tmux
+session `NAME-ID` in its folder, the conversation resumed) and off (claude gets SIGTERM, then
+its tmux session closes). Python 3 standard library only.
+
+```bash
+asctl live                  # running claudes: pid, session id, tmux session, folder
+asctl fav 12345 --name das  # favorite one (by pid, session id or pane %N); its tmux session becomes das-0421
+asctl list                  # favorites and their state
+asctl off 0421              # refuses while claude works or another pane runs something; --force
+asctl on 0421               # tmux session das-0421, claude --resume <id> --name das-0421
+asctl mode 0421 manual      # permission mode for the next start: auto (default), manual, skip
+asctl rename 0421 db ; asctl forget 0421
+```
+
+It never starts a tmux server itself (the server would belong to asctl's process); a later
+phase adds `asctl-tmux.service` to own it. Every tmux target is exact (`=name`, `=name:`), every
+command an argument list (no shell), and a session counts as live only when its PID runs, is
+named `claude` and started when Claude Code's session file says. Tests: `tests/asc.sh`.
+
 ## tmux-claude-restore
 
 After the machine reboots or crashes, reopen the Claude Code conversation that was running in

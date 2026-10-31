@@ -1,10 +1,11 @@
 # Tests
 
-Five scripts. None touches your own tmux, `~/.tmux.conf` or systemd user units.
+Six scripts. None touches your own tmux, `~/.tmux.conf` or systemd user units.
 
 | Script | Time | Needs | Checks |
 |---|---|---|---|
 | `tests/lint.sh` | seconds | bash; `shellcheck` if installed | bash syntax and shellcheck for every script; the privacy check of every tracked file |
+| `tests/asc.sh` | about 30 s (`ASC_MUTANTS=1`: minutes) | bash, tmux, jq, python3 | `asctl`: live, fav, on, off, rename, mode, forget, with a fake claude on a tmux server of its own |
 | `tests/privacy.sh` | seconds (`PRIVACY_MUTANTS=1`: about a minute) | bash, git | the privacy check and its hooks catch each kind of leak and let the allowed cases through |
 | `tests/container.sh` | about 3 min | Docker, network (apt, GitHub) | everything below; each case in a throwaway systemd container of its own |
 | `tests/killsweep.sh` | about 3 min | Docker, network (apt, GitHub) | a kill before every step of install, upgrade and uninstall, and inside the writes |

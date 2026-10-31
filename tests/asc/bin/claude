@@ -1,0 +1,61 @@
+#!/bin/bash
+# Fake Claude Code for tests/asc.sh. It runs itself again through $FAKE_BASH (a copy of bash
+# named claude) as argv[0] "claude", so both its comm and tmux's pane_current_command say
+# "claude", as for the real one. Like Claude Code 2.1.316:
+# writes ~/.claude/sessions/<pid>.json (with procStart = /proc start time) once its REPL is up,
+# shows the trust prompt with "No, exit" selected for a folder not trusted yet, exits 143 on
+# SIGTERM after removing its session file, and leaves the file behind on SIGKILL.
+# $HOME/fake-busy: status "busy". $HOME/fake-quote: first shows a transcript that quotes the
+# trust prompt (not as the last lines) and logs any key it gets in 3 s.
+# Every start is logged to $HOME/claude-args.log.
+if [ -n "${FAKE_BASH:-}" ] && [ "${FAKE_EXECED:-}" != 1 ]; then
+	FAKE_EXECED=1 exec -a claude "$FAKE_BASH" "$0" "$@"
+fi
+log="$HOME/claude-args.log"
+echo "pid=$$ cwd=$PWD args=$*" >> "$log"
+sid=""; name=""; prev=""
+for a in "$@"; do
+	case $prev in --resume|--session-id) sid=$a ;; --name) name=$a ;; esac
+	prev=$a
+done
+[ -n "$sid" ] || sid=$(cat /proc/sys/kernel/random/uuid)
+trusted="$HOME/fake-trusted"
+if ! grep -qxF "$PWD" "$trusted" 2>/dev/null; then
+	sel=0
+	draw() {
+		clear
+		printf '%s\n' " Accessing workspace:" "" " $PWD" "" " Quick safety check: Is this a project you created or one you trust?" ""
+		if [ $sel = 0 ]; then printf '%s\n' " ❯ No, exit" "   Yes, I trust this folder"
+		else printf '%s\n' "   No, exit" " ❯ Yes, I trust this folder"; fi
+		printf '%s\n' "" " Enter to confirm · Esc to cancel"
+	}
+	draw
+	while IFS= read -rsn1 k; do
+		if [ "$k" = $'\e' ]; then
+			read -rsn2 -t 0.1 k2
+			case "$k2" in "[B") sel=1 ;; "[A") sel=0 ;; *) exit 1 ;; esac
+			draw
+		elif [ -z "$k" ]; then
+			[ $sel = 1 ] || { echo "pid=$$ trust: no" >> "$log"; exit 1; }
+			echo "$PWD" >> "$trusted"; echo "pid=$$ trust: yes" >> "$log"; break
+		fi
+	done
+	clear
+fi
+if [ -e "$HOME/fake-quote" ]; then
+	printf '%s\n' " > what does this prompt mean? $PWD" " Accessing workspace:" " Quick safety check: Is this a project you created or one you trust?" \
+		" ❯ No, exit" " ❯ Yes, I trust this folder" " Enter to confirm · Esc to cancel" "" " It asks whether to trust the folder." " >"
+	read -rsn1 -t 3 k && echo "pid=$$ quote: got a key" >> "$log"
+fi
+st=$(awk '{ sub(/.*\) /, ""); print $20 }' /proc/$$/stat)
+f="$HOME/.claude/sessions/$$.json"
+mkdir -p "$HOME/.claude/sessions"
+write() {
+	local status=idle; [ -e "$HOME/fake-busy" ] && status=busy
+	printf '{"pid":%s,"sessionId":"%s","cwd":"%s","kind":"interactive","name":"%s","status":"%s","procStart":"%s"}\n' \
+		$$ "$sid" "$PWD" "$name" "$status" "$st" > "$f.tmp" && mv -f "$f.tmp" "$f"
+}
+trap 'rm -f "$f"; exit 143' TERM
+trap 'rm -f "$f"; exit 0' INT
+echo "fake claude $sid name=$name in $PWD"
+while :; do write; sleep 0.3; done

@@ -6,7 +6,8 @@ set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO" || exit 2
 files=(install.sh claude-lib.sh claude-save.sh claude-restore.sh tests/*.sh tests/sandbox/claude
-	tools/privacy-check.sh tools/install-hooks.sh .githooks/pre-commit .githooks/commit-msg .githooks/pre-push)
+	tools/privacy-check.sh tools/install-hooks.sh .githooks/pre-commit .githooks/commit-msg .githooks/pre-push
+	bin/asctl bin/asctl-wrap tests/asc/bin/claude)
 rc=0
 for f in "${files[@]}"; do bash -n "$f" || { echo "syntax error: $f"; rc=1; }; done
 [ $rc = 0 ] && echo "bash -n: ok (${#files[@]} files)"
@@ -22,5 +23,7 @@ if command -v shellcheck >/dev/null; then
 else
 	echo "shellcheck: not installed, skipped (e.g. apt install shellcheck, or: uvx --from shellcheck-py shellcheck)"
 fi
+python3 -I -m py_compile asc/*.py && echo "python: ok (asc/*.py compile)" || rc=1
+find asc -name __pycache__ -prune -exec rm -r {} + 2>/dev/null
 tools/privacy-check.sh --tree && echo "privacy: ok (tracked files)" || rc=1
 exit $rc
