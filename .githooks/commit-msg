@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# privacy-hook: installed by tools/install-hooks.sh
+# Refuse a commit message that names the machine, a user or a session (or a session trailer).
+D=${0%/hooks/*}/privacy
+[ -x "$D/privacy-check.sh" ] || { echo "privacy: hooks not installed: run tools/install-hooks.sh" >&2; exit 1; }
+exec "$D/privacy-check.sh" --msg "$1"

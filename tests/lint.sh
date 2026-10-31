@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Static checks: bash syntax and shellcheck for every script in the repo. Fast, changes nothing.
+# Static checks: bash syntax and shellcheck for every script in the repo, and the privacy check
+# of every tracked file. Fast, changes nothing.
 #   tests/lint.sh
 set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO" || exit 2
-files=(install.sh claude-lib.sh claude-save.sh claude-restore.sh tests/*.sh tests/sandbox/claude)
+files=(install.sh claude-lib.sh claude-save.sh claude-restore.sh tests/*.sh tests/sandbox/claude
+	tools/privacy-check.sh tools/install-hooks.sh .githooks/pre-commit .githooks/commit-msg .githooks/pre-push)
 rc=0
 for f in "${files[@]}"; do bash -n "$f" || { echo "syntax error: $f"; rc=1; }; done
 [ $rc = 0 ] && echo "bash -n: ok (${#files[@]} files)"
@@ -20,4 +22,5 @@ if command -v shellcheck >/dev/null; then
 else
 	echo "shellcheck: not installed, skipped (e.g. apt install shellcheck, or: uvx --from shellcheck-py shellcheck)"
 fi
+tools/privacy-check.sh --tree && echo "privacy: ok (tracked files)" || rc=1
 exit $rc

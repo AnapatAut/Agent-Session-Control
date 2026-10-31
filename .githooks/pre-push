@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# privacy-hook: installed by tools/install-hooks.sh
+# Check every commit about to be pushed (names, emails, messages, file names, added lines),
+# every annotated tag (tagger, message) and the ref names. Installed by tools/install-hooks.sh.
+# stdin: "<local ref> <local sha> <remote ref> <remote sha>" per ref; $2 is the remote's URL.
+export GIT_NO_REPLACE_OBJECTS=1        # check what is sent, not what `git replace` shows
+z=0000000000000000000000000000000000000000
+check=${0%/hooks/*}/privacy/privacy-check.sh
+[ -x "$check" ] || { echo "privacy: hooks not installed: run tools/install-hooks.sh" >&2; exit 1; }
+# What the remote has, asked from the remote itself (this clone's tracking refs can be stale or
+# belong to another URL): only its commits that exist here are left out of the check. If it
+# cannot be asked, nothing is left out.
+have=$(mktemp) || exit 1
+trap 'rm -f "$have"' EXIT
+git ls-remote -- "$2" 2>/dev/null | cut -f1 | sort -u | sed 's/$/^{commit}/' |
+	git cat-file --batch-check='%(objectname) %(objecttype)' | awk '$2 == "commit" { print "^" $1 }' > "$have"
+rc=0
+while read -r lref lsha rref _; do
+	"$check" --text ref "$lref $rref" || rc=1
+	[ "$lsha" = "$z" ] && continue                      # a ref being deleted
+	# Follow a tag chain to its end, checking every tag on the way; only a commit may be at the
+	# end (a tag on a blob or tree would send content nothing here checks).
+	o=$lsha
+	while [ "$(git cat-file -t "$o")" = tag ]; do
+		"$check" --tag "$o" || rc=1
+		o=$(git cat-file tag "$o" | sed -n '1s/^object //p')
+	done
+	[ "$(git cat-file -t "$o")" = commit ] || { echo "privacy: refused: $o is a $(git cat-file -t "$o"), not a commit" >&2; rc=1; continue; }
+	"$check" --range --have "$have" "$lsha" || rc=1
+done
+exit $rc

@@ -4,6 +4,13 @@ Agent-Session-Control starts from **tmux-claude-restore**, described below: it b
 Claude Code conversation of each tmux pane after a reboot. What comes next (a session
 registry, an on/off dashboard, per-session restore) is in [`ROADMAP.md`](ROADMAP.md).
 
+**Contributing:** install the privacy hooks once per clone, `tools/install-hooks.sh` (again after
+changing them). They refuse a commit or push that names a machine, a user, a claude.ai session
+or a credential ([`tools/privacy-rules`](tools/privacy-rules)). They run from copies inside
+`.git`, so checking out an older commit does not turn them off. Your own real names (host, users, logins,
+addresses) go in `.git/privacy-local`, one per line: it is inside `.git`, so it is never
+committed. `tests/lint.sh` runs the same check on every tracked file.
+
 ## tmux-claude-restore
 
 After the machine reboots or crashes, reopen the Claude Code conversation that was running in
@@ -24,6 +31,7 @@ Repo: `git@github.com:AnapatAut/Agent-Session-Control.git`.
 - `install.sh`
 - `claude-lib.sh`, `claude-save.sh`, `claude-restore.sh`
 - `README.md`, `ROADMAP.md`
+- `tools/privacy-check.sh`, `tools/privacy-rules`, `tools/install-hooks.sh`, `.githooks/` (the privacy check)
 - `tests/`: `lint.sh`; `container.sh`, an automated end-to-end test in a throwaway systemd
   container; `killsweep.sh`, which kills the installer before every step and checks that a
   rerun or an uninstall always ends clean (see [`tests/README.md`](tests/README.md))

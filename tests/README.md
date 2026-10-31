@@ -1,10 +1,11 @@
 # Tests
 
-Four scripts. None touches your own tmux, `~/.tmux.conf` or systemd user units.
+Five scripts. None touches your own tmux, `~/.tmux.conf` or systemd user units.
 
 | Script | Time | Needs | Checks |
 |---|---|---|---|
-| `tests/lint.sh` | seconds | bash; `shellcheck` if installed | bash syntax and shellcheck for every script |
+| `tests/lint.sh` | seconds | bash; `shellcheck` if installed | bash syntax and shellcheck for every script; the privacy check of every tracked file |
+| `tests/privacy.sh` | seconds (`PRIVACY_MUTANTS=1`: about a minute) | bash, git | the privacy check and its hooks catch each kind of leak and let the allowed cases through |
 | `tests/container.sh` | about 3 min | Docker, network (apt, GitHub) | everything below; each case in a throwaway systemd container of its own |
 | `tests/killsweep.sh` | about 3 min | Docker, network (apt, GitHub) | a kill before every step of install, upgrade and uninstall, and inside the writes |
 | `tests/mutants.sh` | about 15 min (`MUTANTS_FULL=1`: about 2 h) | Docker, network | each safeguard broken on purpose must make a test fail |
@@ -224,6 +225,36 @@ tests/mutants.sh                     # all, 4 at a time (JOBS=n to change)
 tests/mutants.sh no-lock pipe-kills  # only these
 MUTANTS_FULL=1 tests/mutants.sh      # every mutant on its whole suite (the slow mode, 2 at a time)
 ```
+
+## What `privacy.sh` covers
+
+In throwaway git repos (no network, no global git config): each kind of leak the generic
+rules know (a home folder outside the test users, a macOS home, a claude.ai session link or
+id, a real UUID, an email, a MagicDNS name, a tailnet address, a GitHub token, a private key)
+and a name from the local file in another case is caught by `--tree`; the allowed cases pass
+(a test user's home, `/home/$u`, GitHub and Anthropic noreply emails, `git@github.com`, the
+one-digit test UUID, an address outside the tailnet range, a local name inside a longer
+word); a file name is checked; the rules file and checker pass their own check. `--staged`
+catches a leak, a binary file and an author email; `--msg` catches a session trailer and
+ignores git's comment lines. The hooks: a commit with a leak or a trailer is refused, a
+clean one passes; a push of a leak committed past the hooks and then removed is refused and
+the remote does not move; a new branch is checked only for the commits the remote lacks; a
+pushed message trailer and author email are refused; a force push over a remote commit this
+clone never had works; an annotated tag's message is refused. Cases found in review: an added
+line starting with `++ `, a leak added while resolving a merge, a pure rename, an empty file's
+name, a tab in a file name, a local name joined by `_`, an encoded `~/.claude/projects/` folder,
+a dangling symlink, a linked worktree, a broken rule (it must stop the check with exit 2), a
+tag inside a tag, a tag on a blob or a tree, a commit hidden by `git replace`, a merged tag's
+`mergetag` header, text after a bare scissors line; and no false alarm on `--home-dir` or a
+file of blank lines; a local name in a branch or tag name, a root commit with `log.showRoot=false`,
+a message after a `\002` byte; the installed hooks still run on a branch without `.githooks`,
+hooks used straight from `.githooks` refuse; a moved clone keeps its hooks; a `gpgsig` line in a
+message body and a leak behind a stale tracking ref are refused; the installer keeps someone
+else's hook and refuses while `core.hooksPath` points elsewhere; a remote with 60000 refs still
+works; a git that fails part way (a missing object) stops the check with exit 2; a local file of only comments refuses nothing; a hand-made
+`gpgsig-x` header is checked. `PRIVACY_MUTANTS=1 tests/privacy.sh` (about two
+minutes) also breaks the checker and hooks 37 ways,
+one at a time in a copy; each must make the test fail.
 
 ## What they change on the host
 

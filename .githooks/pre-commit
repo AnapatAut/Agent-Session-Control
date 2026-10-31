@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# privacy-hook: installed by tools/install-hooks.sh
+# Refuse a commit whose added lines, file names or author name the machine, a user or a session.
+# Runs the installed checker in <git dir>/privacy, next to this hooks folder.
+D=${0%/hooks/*}/privacy
+[ -x "$D/privacy-check.sh" ] || { echo "privacy: hooks not installed: run tools/install-hooks.sh" >&2; exit 1; }
+for f in privacy-check.sh privacy-rules; do
+	t="$(git rev-parse --show-toplevel)/tools/$f"
+	[ ! -f "$t" ] || cmp -s "$t" "$D/$f" || echo "privacy: warning: tools/$f differs from the installed copy: run tools/install-hooks.sh" >&2
+done
+exec "$D/privacy-check.sh" --staged
