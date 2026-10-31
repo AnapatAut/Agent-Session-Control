@@ -333,12 +333,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def _allowed(self):
+    def _refusal(self):
+        """Why this request is refused, or "" (logged, never sent: the client learns only 403)."""
         cfg = self.server.cfg
         logins = self.headers.get_all("Tailscale-User-Login") or []
         hosts = self.headers.get_all("Host") or []
-        return (len(logins) == 1 and logins[0] == cfg["login"] and len(hosts) == 1 and hosts[0] == cfg["host"]
-                and remote_client(self.headers) and serve_is_ours())
+        if not (len(logins) == 1 and logins[0] == cfg["login"]):
+            return f"login ({len(logins)} login header(s), not the configured one)"
+        if not (len(hosts) == 1 and hosts[0] == cfg["host"]):
+            return "host"
+        if not remote_client(self.headers):
+            return "the client is this machine, or no usable X-Forwarded-For"
+        if not serve_is_ours():
+            return "another user is the Tailscale operator, or it cannot be read"
+        return ""
 
     def _path(self):
         """The request path below the prefix, or None when it is not under it."""
@@ -351,7 +359,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return path[len(prefix):] if path.startswith(prefix + "/") else None
 
     def _begin(self):
-        if not self._allowed():
+        why = self._refusal()
+        if why:
+            self.log_message("refused: %s", why)
             self._send(403, {"error": "forbidden"})
             return None
         self.server.touch()  # only allowed requests keep the server from its idle exit

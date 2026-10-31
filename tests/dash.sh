@@ -234,7 +234,7 @@ whoami > "$HOME/fake-operator"
 op_code; [ "$(cat "$T/opc")" = 200 ] && ok "this user as the operator: served" || bad "own operator refused"
 echo someone-else > "$HOME/fake-operator"
 op_code; [ "$(cat "$T/opc")" = 403 ] && ok "another user as the Tailscale operator: every request refused" || bad "served while another user is the operator"
-seen 'Tailscale operator' "$T/dash.err" && ok "it says why" || bad "no reason logged"
+seen 'refused: another user is the Tailscale operator' "$T/dash.err" && ok "the log says why (the client only gets 403)" || bad "no reason logged"
 rm -f "$HOME/fake-operator"; touch "$HOME/fake-tailscale-broken"
 op_code; [ "$(cat "$T/opc")" = 403 ] && ok "the setting cannot be read: refused (fail closed)" || bad "served without reading the operator"
 rm -f "$HOME/fake-tailscale-broken"
@@ -380,7 +380,7 @@ if [ "${DASH_MUTANTS:-}" = 1 ]; then
 		seen '  FAIL  ' <<<"$out" && ok "mutant caught: $f: $old" || bad "mutant missed: $f: $old"
 	done <<'MUTANTS'
 asc/dash.py %%% len(logins) == 1 and %%% len(logins) >= 1 and
-asc/dash.py %%% logins[0] == cfg["login"] and %%% True and
+asc/dash.py %%%         if not (len(logins) == 1 and logins[0] == cfg["login"]): %%%         if not len(logins) == 1:
 asc/dash.py %%% len(hosts) == 1 and hosts[0] == cfg["host"] %%% True
 asc/dash.py %%% if (origins != ["https://" + self.server.cfg["host"]] %%% if (False
 asc/dash.py %%% or not hmac.compare_digest( %%% or False and hmac.compare_digest(
@@ -395,11 +395,11 @@ asc/dash.py %%% return path[len(prefix):] if path.startswith(prefix + "/") else 
 asc/dash.py %%%         self.send_header("Content-Security-Policy", CSP) %%%         pass
 asc/dash.py %%% if s["session_id"] not in fav_sids and not (s["pane"] and s["pane"]["session"] in fav_tmux)] %%% if True]
 asc/dash.py %%%         self.send_header("Connection", "close") %%%         pass
-asc/dash.py %%%         if not self._allowed(): %%%         if self.server.touch() or not self._allowed():
+asc/dash.py %%%         why = self._refusal() %%%         why = self.server.touch() or self._refusal()
 asc/dash.py %%%                 if _answers(sock_path): %%%                 if False:
 asc/dash.py %%%         if self.headers.get_all("Transfer-Encoding") or ( %%%         if False and (
 asc/dash.py %%% token.encode("utf-8", "replace") %%% token
-asc/dash.py %%%                 and remote_client(self.headers) and serve_is_ours()) %%%                 and serve_is_ours())
+asc/dash.py %%%         if not remote_client(self.headers): %%%         if False:
 asc/dash.py %%%     if ip.version == 6 and ip.ipv4_mapped: %%%     if False:
 asc/dash.py %%% xff[0].split(",")[-1] %%% xff[0].split(",")[0]
 asc/dash.py %%%     if len(xff) != 1: %%%     if not xff:
@@ -411,7 +411,7 @@ asc/live.py %%%                 if own_sid and s["session_id"] != own_sid: %%%  
 asc/live.py %%%     except (ValueError, RecursionError): %%%     except ValueError:
 asc/past.py %%%             except (ValueError, RecursionError): %%%             except ValueError:
 asc/past.py %%%         if not stat.S_ISREG(st.st_mode): %%%         if False:
-asc/dash.py %%%  and serve_is_ours()) %%% )
+asc/dash.py %%%         if not serve_is_ours(): %%%         if False:
 asc/dash.py %%% op in (None, "", pwd.getpwuid(os.getuid()).pw_name) %%% True
 asc/dash.py %%%         ok = r.returncode == 0 and op in %%%         ok = op in
 asc/dash.py %%%     if stat.S_IMODE(os.stat(path).st_mode) & 0o022: %%%     if False:
