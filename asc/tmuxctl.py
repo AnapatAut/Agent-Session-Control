@@ -13,8 +13,13 @@ def _base():
     return ["tmux", "-L", sock] if sock else ["tmux"]
 
 
-def run(*args, check=False):
-    return subprocess.run(_base() + list(args), capture_output=True, text=True, check=check)
+def run(*args, check=False, timeout=5):
+    """A tmux call; one that does not answer in time (a stopped server) counts as failed."""
+    try:
+        return subprocess.run(_base() + list(args), capture_output=True, text=True, check=check,
+                              timeout=timeout, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(args, 124, "", "tmux did not answer in time")
 
 
 def server_pid():

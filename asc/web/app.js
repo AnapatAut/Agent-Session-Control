@@ -91,7 +91,7 @@ function render(s) {
   a.replaceChildren(row(["Name", "Status", "tmux", "Folder", ""].map((t) => el("th", t))));
   for (const x of s.active) {
     a.append(row([x.name || x.session_id, x.status + (x.duplicate ? " (duplicate)" : ""), x.tmux || "-",
-      el("td", x.cwd, "path"), wrap(button("Favorite", { action: "fav", ref: String(x.pid) }))]));
+      el("td", x.cwd, "path"), wrap(button("Favorite", { action: "fav", ref: x.session_id }))]));
   }
 
   const t = $("top");

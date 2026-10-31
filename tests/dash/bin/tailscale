@@ -1,0 +1,7 @@
+#!/bin/bash
+# Fake tailscale for tests/dash.sh: `tailscale debug prefs` with OperatorUser from
+# $HOME/fake-operator (unset when the file is missing); fails if $HOME/fake-tailscale-broken.
+[ "$1 $2" = "debug prefs" ] || exit 2
+[ -e "$HOME/fake-tailscale-broken" ] && { echo "failed to connect to local tailscaled" >&2; exit 1; }
+op=$(cat "$HOME/fake-operator" 2>/dev/null)
+printf '{\n\t"ControlURL": "https://controlplane.example",\n\t"OperatorUser": "%s"\n}\n' "$op"

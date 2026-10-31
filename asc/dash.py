@@ -5,6 +5,11 @@ socket 0600), or on the socket systemd passes it (asctl-dash.socket): on a share
 local user could reach a localhost port and forge the login header, while only this user and
 root (tailscaled, for `tailscale serve unix:...`) can open the socket.
 
+Only root and the Tailscale operator can change what `tailscale serve` puts on a port, so
+while another user is the operator (`tailscale set --operator=NAME`), they could mount a page
+of theirs on this origin and drive this one: every request is then refused (fail closed: also
+when the setting cannot be read). Clear it with `sudo tailscale set --operator=`.
+
 Every request must carry exactly one Tailscale-User-Login equal to the configured login, a
 Host equal to the configured host, and come from another machine: the last X-Forwarded-For
 entry (the one tailscale serve adds; a client can put its own before it) must not be one of
@@ -34,6 +39,7 @@ import http.server
 import ipaddress
 import json
 import os
+import pwd
 import re
 import secrets
 import signal
@@ -116,6 +122,29 @@ def local_addresses():
     return ips
 
 
+_operator = {"at": 0.0, "ok": False}
+
+
+def serve_is_ours():
+    """True when no user but this one can change tailscale serve: the Tailscale operator is
+    unset or this user (cached 30 s; False when it cannot be read)."""
+    now = time.monotonic()
+    if now - _operator["at"] < 30:
+        return _operator["ok"]
+    try:
+        r = subprocess.run(["tailscale", "debug", "prefs"], capture_output=True, text=True, timeout=5,
+                           stdin=subprocess.DEVNULL)
+        op = json.loads(r.stdout).get("OperatorUser") if r.returncode == 0 else None
+        ok = r.returncode == 0 and op in (None, "", pwd.getpwuid(os.getuid()).pw_name)
+    except (OSError, ValueError, AttributeError, KeyError, subprocess.SubprocessError):
+        ok = False
+    if not ok:
+        sys.stderr.write("asctl dash: refusing requests: another user is the Tailscale operator, "
+                         "or it cannot be read (sudo tailscale set --operator=)\n")
+    _operator.update(at=now, ok=ok)
+    return ok
+
+
 def remote_client(headers):
     """True when the client tailscale serve names is another machine."""
     xff = headers.get_all("X-Forwarded-For") or []
@@ -170,7 +199,15 @@ def top_processes(n=5):
     return {"mine": mine[:n], "others_kb": others}
 
 
+_snap = threading.Lock()
+
+
 def snapshot():
+    with _snap:  # one at a time: many open pages never mean many /proc walks and tmux calls
+        return _snapshot()
+
+
+def _snapshot():
     data = registry.load()
     pane_list = tmuxctl.panes()
     lv = live.live(pane_list=pane_list)
@@ -237,18 +274,20 @@ def action_argv(a):
     e = registry.find(registry.load(), id4)
     if a.get("tmux") != e["tmux"]:
         raise RegistryError(f"this page is out of date ({id4} is now {e['tmux']}); reload it")
+    # asctl gets the full NAME-ID, so an id forgotten and drawn again meanwhile finds nothing.
+    ref = e["tmux"]
     if kind == "on":
-        return ["on", id4]
+        return ["on", ref]
     if kind == "off":
-        return ["off", id4] + (["--force"] if a.get("force") is True else [])
+        return ["off", ref] + (["--force"] if a.get("force") is True else [])
     if kind == "forget":
-        return ["forget", id4]
+        return ["forget", ref]
     if kind == "rename":
-        return ["rename", id4, registry.check_name(_text(a.get("name")))]
+        return ["rename", ref, registry.check_name(_text(a.get("name")))]
     if kind == "mode":
         if a.get("mode") not in WEB_MODES:
             raise RegistryError("from the page the mode can be auto or manual; skip only with asctl mode ID skip")
-        return ["mode", id4, a["mode"]]
+        return ["mode", ref, a["mode"]]
     raise RegistryError(f"unknown action {kind!r}")
 
 
@@ -304,7 +343,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         logins = self.headers.get_all("Tailscale-User-Login") or []
         hosts = self.headers.get_all("Host") or []
         return (len(logins) == 1 and logins[0] == cfg["login"] and len(hosts) == 1 and hosts[0] == cfg["host"]
-                and remote_client(self.headers))
+                and remote_client(self.headers) and serve_is_ours())
 
     def _path(self):
         """The request path below the prefix, or None when it is not under it."""
@@ -423,7 +462,14 @@ def systemd_socket():
         return None
     for k in ("LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES"):
         os.environ.pop(k, None)
-    return socket.socket(fileno=3)
+    s = socket.socket(fileno=3)
+    path = s.getsockname() if s.family == socket.AF_UNIX else None
+    if not isinstance(path, str) or not path.startswith("/"):
+        raise RegistryError("the socket systemd passed is not a unix socket with a path")
+    _private_dir(os.path.dirname(path))
+    if stat.S_IMODE(os.stat(path).st_mode) & 0o022:  # connecting needs write permission
+        raise RegistryError(f"{path} is open to other users (SocketMode=0600)")
+    return s
 
 
 def _answers(path):
@@ -462,7 +508,7 @@ def load_token(d):
 def serve(sock_path=None, idle=600):
     cfg = load_config()
     sock = systemd_socket()
-    sock_path = sock_path or default_socket()
+    sock_path = sock_path or (sock.getsockname() if sock else default_socket())
     d = os.path.dirname(sock_path)
     _private_dir(d)
     # One server per folder: held while it runs, so two starting together cannot both decide

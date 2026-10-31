@@ -14,6 +14,7 @@ mkdir -p "$HOME" "$T/fakebash" "$T/run"
 chmod 700 "$T/run"
 cp "$(command -v bash)" "$T/fakebash/claude"
 export FAKE_BASH="$T/fakebash/claude"
+export PATH="$REPO/tests/dash/bin:$PATH"  # a fake tailscale: the operator setting
 tm() { tmux -L "$ASC_TMUX_SOCKET" -f /dev/null "$@"; }
 DPID=
 cleanup() { [ -n "$DPID" ] && kill "$DPID" 2>/dev/null; tm kill-server 2>/dev/null; rm -rf "$T"; }
@@ -221,6 +222,21 @@ myip=$(ip -j addr show | jq -r '[.[].addr_info[].local] | map(select(startswith(
 [ "$(nox -H "$XFF" -H "$XFF")" = 403 ] && ok "X-Forwarded-For twice: 403" || bad "a doubled X-Forwarded-For let in"
 [ "$(nox -H 'X-Forwarded-For: nonsense')" = 403 ] && ok "a bad address: 403" || bad "a bad address let in"
 
+echo "== the Tailscale operator"
+# Restart (the setting is cached 30 s), then the status of a request. Not in $(...): a server
+# started in a subshell would hold its pipe open.
+op_code() { stop_dash; start_dash; code http://x/api/state > "$T/opc"; }
+whoami > "$HOME/fake-operator"
+op_code; [ "$(cat "$T/opc")" = 200 ] && ok "this user as the operator: served" || bad "own operator refused"
+echo someone-else > "$HOME/fake-operator"
+op_code; [ "$(cat "$T/opc")" = 403 ] && ok "another user as the Tailscale operator: every request refused" || bad "served while another user is the operator"
+seen 'Tailscale operator' "$T/dash.err" && ok "it says why" || bad "no reason logged"
+rm -f "$HOME/fake-operator"; touch "$HOME/fake-tailscale-broken"
+op_code; [ "$(cat "$T/opc")" = 403 ] && ok "the setting cannot be read: refused (fail closed)" || bad "served without reading the operator"
+rm -f "$HOME/fake-tailscale-broken"
+op_code; [ "$(cat "$T/opc")" = 200 ] && ok "no operator: served" || bad "no operator refused"
+TOK=$(token)
+
 echo "== stale pages, odd bodies, a second claude"
 tm new-session -d -s trio -c "$W" -- "$ASC_CLAUDE" --session-id 44444444-5555-4666-8777-888888888888
 p3=$(claude_in trio)
@@ -235,6 +251,19 @@ state | jq -e '.favorites[] | select(.id4 == "'"$id3"'") | .claudes == 2' >/dev/
 out=$(post '{"action":"off","id":"'"$id3"'","tmux":"trio-'"$id3"'"}')
 [ "$(tail -1 <<<"$out")" = 409 ] && seen 'runs another claude' <<<"$out" && ok "off refused: an idle second claude would end too" || bad "off would end a second claude: $out"
 post '{"action":"off","id":"'"$id3"'","tmux":"trio-'"$id3"'","force":true}' >/dev/null
+
+tm new-session -d -s quad -c "$W" -- "$ASC_CLAUDE" --session-id 99999999-aaaa-4bbb-8ccc-dddddddddddd
+p4=$(claude_in quad)
+out=$(post '{"action":"fav","ref":"99999999-aaaa-4bbb-8ccc-dddddddddddd","name":"quad"}')
+[ "$(tail -1 <<<"$out")" = 200 ] && ok "fav by session id (what the page sends)" || bad "fav by session id: $out"
+
+echo "== a tmux server that does not answer"
+srv=$(tm display-message -p '#{pid}')
+kill -STOP "$srv"
+t0=$(date +%s); r=$(dc -m 90 -o /dev/null -w '%{http_code}' http://x/api/state); t1=$(date +%s)
+kill -CONT "$srv"
+[ "$r" = 200 ] && [ $((t1 - t0)) -lt 80 ] && ok "state still answers ($((t1 - t0)) s) while tmux hangs" || bad "state with a hung tmux: $r after $((t1 - t0)) s"
+pgrep -P "$DPID" -x tmux >/dev/null && bad "tmux clients left behind" || ok "no tmux client left waiting"
 
 echo "== transcripts and session files that could hang or crash a read"
 mkdir -p "$HOME/.claude/projects/-y"
@@ -297,10 +326,16 @@ DPID=
 echo "== systemd socket activation"
 if command -v systemd-socket-activate >/dev/null; then
 	mkdir -p "$T/sa"; chmod 700 "$T/sa"
-	systemd-socket-activate -E HOME -E XDG_RUNTIME_DIR -E ASC_TMUX_SOCKET -l "$T/sa/s.sock" "$REPO/bin/asctl" dash --idle 0 2>/dev/null & DPID=$!
+	systemd-socket-activate -E HOME -E PATH -E ASC_TMUX_SOCKET -l "$T/sa/s.sock" "$REPO/bin/asctl" dash --idle 0 2>"$T/err" & DPID=$!
+	for _ in $(seq 1 30); do [ -S "$T/sa/s.sock" ] && break; sleep 0.1; done
+	chmod 666 "$T/sa/s.sock"  # before the first connection, which starts asctl
+	curl -s -m 5 -o /dev/null --unix-socket "$T/sa/s.sock" http://x/ ; sleep 0.5
+	seen 'open to other users' "$T/err" && ok "a passed socket open to other users is refused" || bad "a passed socket 0666 accepted: $(tail -1 "$T/err")"
+	stop_dash; rm -f "$T/sa/s.sock"
+	systemd-socket-activate -E HOME -E PATH -E ASC_TMUX_SOCKET -l "$T/sa/s.sock" "$REPO/bin/asctl" dash --idle 0 2>"$T/sa.err" & DPID=$!
 	for _ in $(seq 1 30); do [ -S "$T/sa/s.sock" ] && break; sleep 0.1; done
 	r=$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$T/sa/s.sock" -H "Tailscale-User-Login: $LOGIN" -H "Host: $HOST" -H "$XFF" http://x/u/api/state)
-	[ "$r" = 200 ] && ok "serves on the socket systemd passes" || bad "socket activation: $r"
+	[ "$r" = 200 ] && ok "serves on the socket systemd passes" || bad "socket activation: $r $(tail -2 "$T/sa.err")"
 	stop_dash
 else
 	echo "  skip  systemd-socket-activate not installed"
@@ -340,7 +375,7 @@ asc/dash.py %%%         if not self._allowed(): %%%         if self.server.touch
 asc/dash.py %%%                 if _answers(sock_path): %%%                 if False:
 asc/dash.py %%%         if self.headers.get_all("Transfer-Encoding") or ( %%%         if False and (
 asc/dash.py %%% token.encode("utf-8", "replace") %%% token
-asc/dash.py %%%                 and remote_client(self.headers)) %%%                 and True)
+asc/dash.py %%%                 and remote_client(self.headers) and serve_is_ours()) %%%                 and serve_is_ours())
 asc/dash.py %%%     if ip.version == 6 and ip.ipv4_mapped: %%%     if False:
 asc/dash.py %%% xff[0].split(",")[-1] %%% xff[0].split(",")[0]
 asc/dash.py %%%     if len(xff) != 1: %%%     if not xff:
@@ -352,6 +387,11 @@ asc/live.py %%%                 if own_sid and s["session_id"] != own_sid: %%%  
 asc/live.py %%%     except (ValueError, RecursionError): %%%     except ValueError:
 asc/past.py %%%             except (ValueError, RecursionError): %%%             except ValueError:
 asc/past.py %%%         if not stat.S_ISREG(st.st_mode): %%%         if False:
+asc/dash.py %%%  and serve_is_ours()) %%% )
+asc/dash.py %%% op in (None, "", pwd.getpwuid(os.getuid()).pw_name) %%% True
+asc/dash.py %%%         ok = r.returncode == 0 and op in %%%         ok = op in
+asc/dash.py %%%     if stat.S_IMODE(os.stat(path).st_mode) & 0o022: %%%     if False:
+asc/tmuxctl.py %%% timeout=timeout, stdin=subprocess.DEVNULL) %%% stdin=subprocess.DEVNULL)
 asc/past.py %%%                 title = t %%%                 title = title or t
 asc/past.py %%%     out.sort(key=lambda c: c["mtime"], reverse=True) %%%     out.sort(key=lambda c: c["mtime"])
 MUTANTS
