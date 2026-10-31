@@ -36,14 +36,17 @@ CONF="$HOME/.config/agent-session-control/dash.json"
 # curl to the dashboard as tailscale serve would pass it on: the login and host headers.
 # The client address tailscale serve passes on: another machine (TEST-NET-1, RFC 5737).
 XFF="X-Forwarded-For: 192.0.2.10"
-dc() { curl -s --unix-socket "$SOCK" -H "Tailscale-User-Login: $LOGIN" -H "Host: $HOST" -H "$XFF" "$@"; }
+# As tailscale serve passes a request to a unix socket: Host: localhost, the browser's host in
+# X-Forwarded-Host.
+XFH="X-Forwarded-Host: $HOST"
+dc() { curl -s --unix-socket "$SOCK" -H "Tailscale-User-Login: $LOGIN" -H "Host: localhost" -H "$XFH" -H "$XFF" "$@"; }
 code() { dc -o /dev/null -w '%{http_code}' "$@"; }
 # The status of a GET sent as raw header lines (curl folds a doubled Host into one).
 raw() {
 	python3 -I -c 'import socket, sys
 s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1])
 s.sendall(("GET /api/state HTTP/1.1\r\n" + "".join(h + "\r\n" for h in sys.argv[2:]) + "Connection: close\r\n\r\n").encode())
-print(s.recv(64).split()[1].decode())' "$SOCK" "$XFF" "$@"
+print(s.recv(64).split()[1].decode())' "$SOCK" "$XFF" "$XFH" "$@"
 }
 # Send stdin as is on one connection; print the status code of every response until it closes.
 rawsend() {
@@ -108,23 +111,28 @@ start_dash && ok "dash listens on its socket" || bad "no socket: $(cat "$T/dash.
 [ "$(stat -c %a "$T/run/asctl")" = 700 ] && ok "socket folder 0700" || bad "socket folder $(stat -c %a "$T/run/asctl")"
 [ "$(code http://x/api/state)" = 200 ] && ok "the right login and host: 200" || bad "the right login and host: $(code http://x/api/state)"
 [ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Host: $HOST" http://x/api/state)" = 403 ] && ok "no login header: 403" || bad "no login header let in"
-[ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Tailscale-User-Login: other${E}example.com" -H "Host: $HOST" -H "$XFF" http://x/api/state)" = 403 ] && ok "another login: 403" || bad "another login let in"
+[ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Tailscale-User-Login: other${E}example.com" -H "Host: $HOST" -H "$XFH" -H "$XFF" http://x/api/state)" = 403 ] && ok "another login: 403" || bad "another login let in"
 [ "$(raw "Host: $HOST" "Tailscale-User-Login: $LOGIN")" = 200 ] && ok "raw request with the right headers: 200" || bad "raw request refused"
 [ "$(raw "Host: $HOST" "Tailscale-User-Login: $LOGIN" "Tailscale-User-Login: $LOGIN")" = 403 ] && ok "the login header twice: 403" || bad "a doubled login header let in"
-[ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Tailscale-User-Login: $LOGIN" -H "Host: evil.example" -H "$XFF" http://x/api/state)" = 403 ] && ok "another Host: 403" || bad "another Host let in"
+[ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Tailscale-User-Login: $LOGIN" -H "Host: evil.example" -H "$XFH" -H "$XFF" http://x/api/state)" = 403 ] && ok "another Host (neither localhost nor the host): 403" || bad "another Host let in"
+xfh() { curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Tailscale-User-Login: $LOGIN" -H "Host: localhost" -H "$XFF" "$@" http://x/api/state; }
+[ "$(xfh)" = 403 ] && ok "no X-Forwarded-Host: 403" || bad "no X-Forwarded-Host let in"
+[ "$(xfh -H 'X-Forwarded-Host: evil.example')" = 403 ] && ok "another X-Forwarded-Host: 403" || bad "another X-Forwarded-Host let in"
+[ "$(xfh -H "$XFH" -H "$XFH")" = 403 ] && ok "X-Forwarded-Host twice: 403" || bad "a doubled X-Forwarded-Host let in"
 [ "$(raw "Host: $HOST" "Host: evil.example" "Tailscale-User-Login: $LOGIN")" = 403 ] && ok "two Host headers: 403" || bad "two Host headers let in"
 second="GET /api/state HTTP/1.1
 Host: $HOST
 $XFF
+$XFH
 Tailscale-User-Login: $LOGIN
 "
-r=$(printf 'GET / HTTP/1.1\nHost: %s\n%s\nTailscale-User-Login: evil%sexample.com\nContent-Length: %s\n\n%s\n' "$HOST" "$XFF" "$E" "$(( ${#second} + $(printf '%s' "$second" | tr -cd '\n' | wc -c) + 2 ))" "$second" | rawsend)
+r=$(printf 'GET / HTTP/1.1\nHost: %s\n%s\n%s\nTailscale-User-Login: evil%sexample.com\nContent-Length: %s\n\n%s\n' "$HOST" "$XFF" "$XFH" "$E" "$(( ${#second} + $(printf '%s' "$second" | tr -cd '\n' | wc -c) + 2 ))" "$second" | rawsend)
 [ "$r" = 403 ] && ok "a request smuggled in a refused one's body is never answered (one request per connection)" || bad "smuggling: responses $r"
-r=$(printf 'GET /api/state HTTP/1.1\nHost: %s\n%s\nTailscale-User-Login: %s\n\nGET /api/state HTTP/1.1\nHost: %s\n%s\nTailscale-User-Login: %s\n\n' "$HOST" "$XFF" "$LOGIN" "$HOST" "$XFF" "$LOGIN" | rawsend)
+r=$(printf 'GET /api/state HTTP/1.1\nHost: %s\n%s\n%s\nTailscale-User-Login: %s\n\nGET /api/state HTTP/1.1\nHost: %s\n%s\n%s\nTailscale-User-Login: %s\n\n' "$HOST" "$XFF" "$XFH" "$LOGIN" "$HOST" "$XFF" "$XFH" "$LOGIN" | rawsend)
 [ "$r" = 200 ] && ok "keep-alive: the connection closes after one response" || bad "keep-alive: responses $r"
-r=$(printf 'POST /api/action HTTP/1.1\nHost: %s\n%s\nTailscale-User-Login: %s\nTransfer-Encoding: chunked\n\n0\n\n' "$HOST" "$XFF" "$LOGIN" | rawsend)
+r=$(printf 'POST /api/action HTTP/1.1\nHost: %s\n%s\n%s\nTailscale-User-Login: %s\nTransfer-Encoding: chunked\n\n0\n\n' "$HOST" "$XFF" "$XFH" "$LOGIN" | rawsend)
 [ "$r" = 400 ] && ok "a chunked body: 400" || bad "a chunked body: $r"
-r=$(printf 'GET /api/state HTTP/1.1\nHost: %s\n%s\nTailscale-User-Login: %s\nContent-Length: 3\n\nabc' "$HOST" "$XFF" "$LOGIN" | rawsend)
+r=$(printf 'GET /api/state HTTP/1.1\nHost: %s\n%s\n%s\nTailscale-User-Login: %s\nContent-Length: 3\n\nabc' "$HOST" "$XFF" "$XFH" "$LOGIN" | rawsend)
 [ "$r" = 400 ] && ok "a GET with a body: 400" || bad "a GET with a body: $r"
 refuses && ok "a second dash refuses the socket in use" || bad "a second dash took the socket"
 [ "$(code http://x/app.css)" = 200 ] && ok "the first one still answers" || bad "the first dash lost its socket"
@@ -215,7 +223,7 @@ jq -e --arg b "$P2" '[.past[].session_id] | index($b) == null' <<<"$pj" >/dev/nu
 jq -e --arg a "$P1" '[.past[].session_id] | index($a) == null' <<<"$pj" >/dev/null && ok "past: a favorite is not listed" || bad "past: a favorite listed"
 
 echo "== the client must be another machine"
-nox() { curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Tailscale-User-Login: $LOGIN" -H "Host: $HOST" "$@" http://x/api/state; }
+nox() { curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Tailscale-User-Login: $LOGIN" -H "Host: localhost" -H "$XFH" "$@" http://x/api/state; }
 myip=$(ip -j addr show | jq -r '[.[].addr_info[].local] | map(select(startswith("127.") or . == "::1" | not)) | .[0]')
 [ "$(nox)" = 403 ] && ok "no X-Forwarded-For: 403" || bad "no X-Forwarded-For let in"
 [ "$(nox -H 'X-Forwarded-For: 127.0.0.1')" = 403 ] && ok "from loopback: 403" || bad "loopback let in"
@@ -358,7 +366,7 @@ if command -v systemd-socket-activate >/dev/null; then
 	stop_dash; rm -f "$T/sa/s.sock"
 	systemd-socket-activate -E HOME -E PATH -E ASC_TMUX_SOCKET -l "$T/sa/s.sock" "$REPO/bin/asctl" dash --idle 0 2>"$T/sa.err" & DPID=$!
 	for _ in $(seq 1 30); do [ -S "$T/sa/s.sock" ] && break; sleep 0.1; done
-	r=$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$T/sa/s.sock" -H "Tailscale-User-Login: $LOGIN" -H "Host: $HOST" -H "$XFF" http://x/u/api/state)
+	r=$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$T/sa/s.sock" -H "Tailscale-User-Login: $LOGIN" -H "Host: localhost" -H "$XFH" -H "$XFF" http://x/u/api/state)
 	[ "$r" = 200 ] && ok "serves on the socket systemd passes" || bad "socket activation: $r $(tail -2 "$T/sa.err")"
 	stop_dash
 else
@@ -381,7 +389,8 @@ if [ "${DASH_MUTANTS:-}" = 1 ]; then
 	done <<'MUTANTS'
 asc/dash.py %%% len(logins) == 1 and %%% len(logins) >= 1 and
 asc/dash.py %%%         if not (len(logins) == 1 and logins[0] == cfg["login"]): %%%         if not len(logins) == 1:
-asc/dash.py %%% len(hosts) == 1 and hosts[0] == cfg["host"] %%% True
+asc/dash.py %%% len(fwd) == 1 and fwd[0] == cfg["host"] and %%% True and
+asc/dash.py %%%  and len(hosts) == 1 and hosts[0] in ("localhost", cfg["host"]) %%%  and True
 asc/dash.py %%% if (origins != ["https://" + self.server.cfg["host"]] %%% if (False
 asc/dash.py %%% or not hmac.compare_digest( %%% or False and hmac.compare_digest(
 asc/dash.py %%% if not (self.headers.get("Content-Type") or "").startswith("application/json"): %%% if False:

@@ -10,8 +10,10 @@ while another user is the operator (`tailscale set --operator=NAME`), they could
 of theirs on this origin and drive this one: every request is then refused (fail closed: also
 when the setting cannot be read). Clear it with `sudo tailscale set --operator=`.
 
-Every request must carry exactly one Tailscale-User-Login equal to the configured login, a
-Host equal to the configured host, and come from another machine: the last X-Forwarded-For
+Every request must carry exactly one Tailscale-User-Login equal to the configured login, and
+exactly one X-Forwarded-Host equal to the configured host (tailscale serve passes the
+browser's Host there, and sends Host: localhost to a unix socket; Host must be that or the
+configured host), and come from another machine: the last X-Forwarded-For
 entry (the one tailscale serve adds; a client can put its own before it) must not be one of
 this machine's addresses. tailscaled tags a request with the login of the device it comes
 from, so without that check any local user, or an agent of theirs, could ask this machine's
@@ -338,10 +340,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         cfg = self.server.cfg
         logins = self.headers.get_all("Tailscale-User-Login") or []
         hosts = self.headers.get_all("Host") or []
+        fwd = self.headers.get_all("X-Forwarded-Host") or []
         if not (len(logins) == 1 and logins[0] == cfg["login"]):
             return f"login ({len(logins)} login header(s), not the configured one)"
-        if not (len(hosts) == 1 and hosts[0] == cfg["host"]):
-            return "host"
+        if not (len(fwd) == 1 and fwd[0] == cfg["host"] and len(hosts) == 1 and hosts[0] in ("localhost", cfg["host"])):
+            return f"host (X-Forwarded-Host {[h[:100] for h in fwd]!r}, Host {[h[:100] for h in hosts]!r})"
         if not remote_client(self.headers):
             return "the client is this machine, or no usable X-Forwarded-For"
         if not serve_is_ours():
