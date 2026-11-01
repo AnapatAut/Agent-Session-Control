@@ -101,6 +101,14 @@ mkdir -p "$(dirname "$CONF")"
 printf '{"login": "%s"}\n' "$LOGIN" > "$CONF"
 refuses && ok "dash refuses a config with no host" || bad "dash started with no host"
 printf '{"login": "%s", "host": "%s"}\n' "$LOGIN" "$HOST" > "$CONF"
+chmod 700 "$(dirname "$CONF")"; chmod 664 "$CONF"
+refuses && seen 'chmod go-w' "$T/err" && ok "dash refuses a config others can write" || bad "dash used a config others can write: $(cat "$T/err")"
+chmod 644 "$CONF"; chmod 775 "$(dirname "$CONF")"
+refuses && ok "dash refuses a config in a folder others can write" || bad "dash used a config in a folder others can write"
+chmod 755 "$(dirname "$CONF")"
+mkdir -p "$T/open"; chmod 777 "$T/open"; mv "$CONF" "$T/open/dash.json"; ln -s "$T/open/dash.json" "$CONF"
+refuses && ok "and a symlinked config in a folder others can write" || bad "dash used a symlinked config in an open folder"
+rm "$CONF"; mv "$T/open/dash.json" "$CONF"
 chmod 755 "$T/run"; mkdir -p "$T/run/asctl"; chmod 755 "$T/run/asctl"
 refuses && ok "dash refuses a socket folder that is not 0700" || bad "dash used a socket folder others can open"
 chmod 700 "$T/run/asctl"
@@ -146,7 +154,8 @@ TOK=$(token)
 [ ${#TOK} -ge 40 ] && ok "the page carries a token" || bad "no token in the page"
 grep -E '<script>|<script [^>]*>[^<]' "$T/page" >/dev/null && bad "the page has inline script" || ok "the page has no inline script"
 [ "$(code http://x/app.js)" = 200 ] && [ "$(code http://x/app.css)" = 200 ] && ok "app.js and app.css served" || bad "static files missing"
-grep -n 'innerHTML\|outerHTML\|insertAdjacentHTML\|document.write' "$REPO/asc/web/app.js" >/dev/null && bad "app.js writes HTML from strings" || ok "app.js sets text only (no innerHTML)"
+# Reading outerHTML (to compare two rows) is fine; any way of turning a string into HTML is not.
+grep -nE '(inner|outer)HTML[[:space:]]*\+?=|insertAdjacentHTML|document\.write|createContextualFragment|DOMParser|srcdoc' "$REPO/asc/web/app.js" "$REPO/asc/web/splash.js" >/dev/null && bad "app.js writes HTML from strings" || ok "app.js sets text only (no innerHTML)"
 
 echo "== the installable app (PWA)"
 # No login: as an install check fetches the manifest, worker and icons, outside the page.
@@ -187,8 +196,8 @@ v=$(px icon-maskable-512.png 26 27)  # on the corner's curve: a blend, so edges 
 [ "$(px icon-192.png 96 96)" = ffffff ] && [ "$(px icon-512.png 256 256)" = ffffff ] && ok "the any icons are plain white" || bad "any icons not white"
 # Drawn once, then served from the cache (the server starts again after every idle exit).
 ic=$(ls "$HOME/.cache/agent-session-control/icons/"*-icon-maskable-512.png 2>/dev/null | head -1)
-[ -n "$ic" ] && [ "$(stat -c %a "$(dirname "$ic")")" = 700 ] && cmp -s "$ic" <(anon http://x/icon-maskable-512.png) \
-	&& ok "icons cached in a 0700 folder, the same bytes served" || bad "no icon cache: $ic"
+[ -n "$ic" ] && [ "$(stat -c %a "$(dirname "$ic")")" = 700 ] && [ "$(stat -c %a "$ic")" = 600 ] && cmp -s "$ic" <(anon http://x/icon-maskable-512.png) \
+	&& ok "icons cached 0600 in a 0700 folder, the same bytes served" || bad "no icon cache: $ic"
 anon -D - -o /dev/null http://x/favicon.svg | seen -i '^content-type: image/svg+xml' && ok "favicon.svg" || bad "no favicon.svg"
 [ "$(acode -I http://x/sw.js)" = 200 ] && ok "HEAD on a public file" || bad "HEAD on a public file"
 r=""; for u in / /app.js /app.css /splash.js /api/state "/api/past?q=" /index.html /sw.js/ /./sw.js /%2e%2e/asc/dash.py /icon-1.png /favicon.ico; do
@@ -244,6 +253,10 @@ id=$(state | jq -r '.favorites[0].id4'); TM="das-$id"
 s=$(state)
 jq -e --arg i "$id" '.favorites[0] | .tmux == "das-\($i)" and .state == "on" and .status == "idle" and .rss_kb > 0 and .attach == "tmux attach -t =das-\($i)"' <<<"$s" >/dev/null && ok "state: the favorite, on, idle, its memory, the attach command" || bad "state: favorite wrong: $(jq -c '.favorites[0]' <<<"$s")"
 jq -e '.active | length == 0' <<<"$s" >/dev/null && ok "state: no longer in the not-favorited list" || bad "state: still listed as not favorited"
+jq -e --arg l "$LOGIN" --arg h "$HOME" '.login == $l and .home == $h and .favorites[0].rc_live == false' <<<"$s" >/dev/null && ok "state: the login, the home folder, remote control not live" || bad "state: login, home or rc_live wrong: $(jq -c '{login, home, rc_live: .favorites[0].rc_live}' <<<"$s")"
+touch "$HOME/fake-rc" "$HOME/fake-wait"; sleep 0.6
+state | jq -e '.favorites[0] | .rc_live == true and .status == "waiting" and .busy == ""' >/dev/null && ok "state: remote control live, waiting (not busy)" || bad "state: rc_live/waiting wrong: $(state | jq -c '.favorites[0] | {rc_live, status, busy}')"
+rm -f "$HOME/fake-rc" "$HOME/fake-wait"; sleep 0.6
 touch "$HOME/fake-busy"; sleep 0.6
 out=$(post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'"}')
 [ "$(tail -1 <<<"$out")" = 409 ] && seen 'busy: the claude in pane' <<<"$out" && ok "off refused while busy, with the reason" || bad "off while busy: $out"
@@ -498,6 +511,10 @@ asc/dash.py %%%  + (["--force-memory"] if a.get("force_memory") is True else [])
 asc/dash.py %%%         if not isinstance(a.get("on"), bool): %%%         if False:
 asc/past.py %%%                 title = t %%%                 title = title or t
 asc/past.py %%%     out.sort(key=lambda c: c["mtime"], reverse=True) %%%     out.sort(key=lambda c: c["mtime"])
+asc/dash.py %%% if st.st_uid != os.getuid() or st.st_mode & 0o022: %%% if st.st_uid != os.getuid():
+asc/dash.py %%%             _private(d, os.stat(d)) %%%             pass
+asc/dash.py %%%             d = os.path.dirname(os.path.realpath(p)) %%%             d = os.path.dirname(p)
+asc/icons.py %%% os.O_NOFOLLOW, 0o600), "wb") %%% os.O_NOFOLLOW, 0o644), "wb")
 MUTANTS
 fi
 

@@ -133,7 +133,8 @@ def icon(name):
     try:
         os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
         tmp = f"{path}.{os.getpid()}.tmp"
-        with open(tmp, "wb") as f:
+        # a new file of ours only: never through a link, never one left by a run that crashed
+        with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), "wb") as f:
             f.write(data)
         os.replace(tmp, path)
     except OSError:

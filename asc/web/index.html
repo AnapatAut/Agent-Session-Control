@@ -6,8 +6,7 @@
 <meta name="asctl-token" content="@TOKEN@">
 <title>Agent Sessions</title>
 <!-- iOS colours its status bar from theme-color; Android takes the manifest's -->
-<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#141414" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f1f1f4">
 <link rel="icon" type="image/svg+xml" href="favicon.svg?v=@V@">
 <link rel="icon" type="image/png" sizes="512x512" href="favicon-512.png?v=@V@">
 <link rel="apple-touch-icon" href="apple-touch-icon.png?v=@V@">
@@ -27,20 +26,32 @@
 <div id="splash"><img src="splash-512.png?v=@V@" alt=""></div>
 <script src="splash.js"></script>
 <header>
-  <h1>Agent Sessions</h1>
-  <div id="memory"></div>
-  <div id="banner" hidden></div>
+  <div class="title"><h1>Agent Sessions</h1><div class="sub mono" id="host"></div></div>
+  <div class="side">
+    <div class="mew"><div class="me" id="me"></div>
+      <button class="nup" id="nup" type="button" hidden aria-expanded="false" aria-controls="stale" aria-label="Not updating: why?"><svg width="22" height="20" viewBox="0 0 24 22" aria-hidden="true"><path d="M12 2 22.5 20H1.5z" fill="currentColor" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"/><path d="M12 8.2v5.6" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/><circle cx="12" cy="17" r="1.4" fill="#fff"/></svg></button></div>
+    <div class="upd"><span id="upd"></span><button class="rf" id="rf" type="button" aria-label="Refresh" title="Refresh now"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2.5v3h-3"/></svg></button></div>
+  </div>
 </header>
-<main>
-  <section><h2>Favorites</h2><table id="favorites"></table></section>
-  <section><h2>Running, not favorited</h2><table id="active"></table></section>
-  <section>
-    <h2>Past conversations</h2>
-    <input id="q" type="search" placeholder="Search titles and folders">
-    <table id="past"></table>
-  </section>
-  <section><h2>Biggest processes</h2><ul id="top"></ul></section>
-  <p id="msg" role="status"></p>
-</main>
+<div class="stale" id="stale" hidden></div>
+<div class="banner" id="banner" hidden></div>
+
+<section class="mem" id="mem" aria-label="Memory">
+  <div><div class="lab">MEMORY</div><div class="big" id="mem-pct"></div></div>
+  <div class="bar" id="mem-bar" title="Starts need 20% free"><i id="mem-used"></i><b id="mem-gate"></b></div>
+  <div class="det" id="mem-det"></div>
+</section>
+
+<div class="chips" id="chips" role="group" aria-label="Show"></div>
+<main id="lists"></main>
+
+<div class="sect">Past conversations</div>
+<input class="search" id="q" type="search" placeholder="Search titles and folders" autocomplete="off">
+<div class="list" id="past"></div>
+
+<details class="top"><summary>Biggest processes</summary><div class="list procs" id="top"></div></details>
+
+<div class="toast" id="toast" role="status" hidden></div>
+<div class="scrim" id="scrim"><div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="Details"></div></div>
 </body>
 </html>

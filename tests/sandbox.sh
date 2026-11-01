@@ -164,7 +164,7 @@ printf "%s\n" "[Socket]" "ListenStream=%t/asctl/dash.sock" "SocketMode=0600" "Di
 	"[Install]" "WantedBy=sockets.target" > "$u/asctl-dash.socket"
 printf "%s\n" "[Unit]" "Requires=asctl-dash.socket" "[Service]" "ExecStart=/opt/asc/bin/asctl dash --idle 5" \
 	"Environment=PATH=/opt/asc/tests/dash/bin:/usr/bin:/bin" "KillMode=mixed" "TimeoutStopSec=120" > "$u/asctl-dash.service"
-printf "{\"login\": \"%s\", \"host\": \"%s\"}\n" "$1" "$2" > "$c/dash.json"; chmod 600 "$c/dash.json"
+printf "{\"login\": \"%s\", \"host\": \"%s\"}\n" "$1" "$2" > "$c/dash.json"; chmod 600 "$c/dash.json"; chmod 700 "$c"
 systemctl --user daemon-reload && systemctl --user enable --now asctl-dash.socket' _ "$LOGIN" "$HOST" >/dev/null 2>&1
 chk "the socket unit listens" '[ "$(uprop asctl-dash.socket ActiveState)" = active ]' 'ux systemctl --user status asctl-dash.socket | tail -5'
 chk "socket 0600 in a 0700 folder, both sbuser's" \

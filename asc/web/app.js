@@ -1,141 +1,522 @@
-// Temporary page over the dashboard API (GET api/state, GET api/past?q=, POST api/action).
-// Every value from the server is user text (titles, folders, notes): set as textContent only.
+// The dashboard page over its API (GET api/state, GET api/past?q=, POST api/action), in the look
+// of the serve dashboard: a list of sessions, and a details sheet for each where every action is.
+// Every value from the server is user text (titles, folders, notes): it is set as textContent only.
 "use strict";
 const token = document.querySelector('meta[name="asctl-token"]').content;
 const $ = (id) => document.getElementById(id);
-const mb = (kb) => (kb / 1024).toFixed(0) + " MB";
+const STALE_MS = 20000;  // no good update for this long: the warning triangle
+
+let S = null;            // the last state from the server
+let past = [];           // past conversations for the search box
+let filter = "all";      // the chip pressed
+let sheetOf = null;      // {kind: "fav" | "active" | "past", key}, while the sheet is open
+let noteDraft = null;    // {id4, text}: a note being typed survives a refresh
+let sheetSig = "";       // the data the open sheet was drawn from: redrawn only when it changes
+const pending = new Set();  // ids with an action running: their controls stay disabled across redraws
+let lastOk = Date.now(), lastOkTime = null;
 
 function el(tag, text, cls) {
   const e = document.createElement(tag);
-  if (text !== undefined && text !== null) e.textContent = String(text);
+  if (text !== undefined && text !== null && text !== "") e.textContent = String(text);
   if (cls) e.className = cls;
   return e;
 }
+function kids(parent, ...children) { for (const c of children) if (c) parent.append(c); return parent; }
 
-function row(cells) {
-  const tr = el("tr");
-  for (const c of cells) {
-    if (!(c instanceof Node)) tr.append(el("td", c));
-    else tr.append(c.tagName === "TD" || c.tagName === "TH" ? c : wrap(c));
+// --- formatting ------------------------------------------------------------------------------
+function size(kb) {
+  if (!kb) return "";
+  return kb >= 1024 * 1024 ? (kb / 1024 / 1024).toFixed(1) + " GB" : Math.round(kb / 1024) + " MB";
+}
+function tilde(p) {
+  const h = S && S.home;
+  if (!p) return "";
+  return h && (p === h || p.startsWith(h + "/")) ? "~" + p.slice(h.length) : p;
+}
+function hm(d) { return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
+function when(ts) {
+  if (!ts) return "";
+  const d = new Date(ts * 1000), now = new Date();
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(now) - day(d)) / 86400000);
+  if (diff === 0) return "today " + hm(d);
+  if (diff === 1) return "yesterday " + hm(d);
+  return d.toLocaleDateString([], { day: "numeric", month: "short", year: d.getFullYear() === now.getFullYear() ? undefined : "numeric" });
+}
+function ago(ts) {
+  const s = Date.now() / 1000 - ts;
+  if (s < 3600) return Math.max(1, Math.round(s / 60)) + " min ago";
+  if (s < 86400) return Math.round(s / 3600) + " h ago";
+  if (s < 86400 * 14) return Math.round(s / 86400) + " days ago";
+  return when(ts);
+}
+const STATUS = { busy: ["Working", "busy"], idle: ["Idle", "idle"], waiting: ["Waiting for you", "wait"],
+                 shell: ["Shell", "idle"], unknown: ["Running", "idle"] };
+
+// What a favorite's state means on the page: which list, the dot, a label and why.
+function look(e) {
+  const st = e.state || "";
+  const code = (st.match(/\((\d+)\)/) || [])[1];
+  if (st === "on") {
+    if (e.claudes > 1) return { group: "attention", dot: "bad", label: e.claudes + " claudes",
+      why: `${e.claudes} claudes run in its tmux session; Off would end them all.` };
+    const [label, dot] = STATUS[e.status] || STATUS.unknown;
+    return { group: "on", dot, label };
   }
-  return tr;
+  if (st === "duplicate") return { group: "attention", dot: "bad", label: "Duplicate",
+    why: "Two claudes hold this session or its name. asctl does nothing about it by itself." };
+  if (st.startsWith("on (outside")) return { group: "attention", dot: "wait", label: "Running outside its tmux",
+    why: `Its claude runs, but not in tmux session ${e.tmux}.` };
+  if (st.startsWith("ended by a signal")) return { group: "attention", dot: "bad", label: "Ended unexpectedly",
+    why: `Claude was ended by a signal (${code}); its tmux session is still up. Turn it on to start claude again.` };
+  if (st.startsWith("tmux up")) return { group: "attention", dot: "wait", label: "Claude ended",
+    why: `Claude ended${code ? " (exit " + code + ")" : ""}; its tmux session is still up.` };
+  if (st === "off (wanted on)") return { group: "attention", dot: "wait", label: "Off, wanted on",
+    why: "It should be on but is not: a reboot without resurrect, or a start that failed." };
+  return { group: "off", dot: "", label: e.last_off ? "off since " + when(e.last_off) : "off" };
 }
-function wrap(node) { const td = el("td"); td.append(node); return td; }
+const isOn = (e) => e.state === "on" || e.state === "duplicate" || (e.state || "").startsWith("on (");
 
-function button(label, body, confirmText) {
-  const b = el("button", label);
-  b.type = "button";
-  b.addEventListener("click", async () => {
-    if (confirmText && !window.confirm(confirmText)) return;
-    b.disabled = true;
-    await act(body);
-    b.disabled = false;
+// --- the list --------------------------------------------------------------------------------
+// Rows are kept by key across refreshes (every 5 s): one whose content is unchanged is not touched,
+// and a changed one keeps its element, so a tap that spans a refresh still reaches its row.
+const rows = new Map(), used = new Set();
+function rowEl(key, open, dotCls, name, id, sub, meta, note, why, whyCls) {
+  const r = el("div", null, "row");
+  const nm = el("div", name, "nm");
+  if (id) nm.append(el("span", id, "id"));
+  const head = kids(el("div", null, "head"), el("span", null, "dot " + dotCls), kids(el("div"), nm, el("div", sub, "cwd mono")));
+  r.append(head, kids(el("div", null, "meta"), ...meta), el("div", note, "note"), el("span", "›", "sw"));
+  if (why) r.append(el("div", why, "why " + (whyCls || "")));
+  r.setAttribute("aria-label", name + (id ? " " + id : ""));
+  used.add(key);
+  const sig = r.outerHTML, old = rows.get(key);  // outerHTML is only read, to compare
+  if (old) {
+    if (old.sig !== sig) { old.el.replaceChildren(...r.childNodes); old.el.setAttribute("aria-label", r.getAttribute("aria-label")); old.sig = sig; }
+    return old.el;
+  }
+  r.tabIndex = 0;
+  r.setAttribute("role", "button");
+  r.dataset.fk = key;
+  r.addEventListener("click", open);
+  // Enter on keydown, Space on keyup, as a native button: a keyup after the sheet moved the focus
+  // must not press the sheet's close button
+  r.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); open(); } else if (ev.key === " ") ev.preventDefault(); });
+  r.addEventListener("keyup", (ev) => { if (ev.key === " ") { ev.preventDefault(); open(); } });
+  rows.set(key, { el: r, sig });
+  return r;
+}
+// Forget the rows of these lists that the last render did not use.
+function sweepRows(...prefixes) {
+  for (const k of [...rows.keys()]) if (prefixes.some((p) => k.startsWith(p)) && !used.has(k)) rows.delete(k);
+  for (const k of [...used]) if (prefixes.some((p) => k.startsWith(p))) used.delete(k);
+}
+function tag(text) { return el("span", text, "tag"); }
+// Moving a row or rebuilding a chip drops the keyboard focus to the page: put it back.
+function keepFocus(draw) {
+  const fk = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.fk : null;
+  draw();
+  if (fk && document.activeElement === document.body) {
+    const t = document.querySelector(`[data-fk="${CSS.escape(fk)}"]`);
+    if (t) t.focus({ preventScroll: true });
+  }
+}
+
+function favRow(e) {
+  const l = look(e);
+  const meta = [el("span", l.label, "st " + (l.dot || ""))];
+  if (isOn(e) && e.rss_kb) meta.push(tag(size(e.rss_kb)));
+  if (e.rc_live) meta.push(tag("rc live")); else if (e.rc) meta.push(tag("rc"));
+  if (e.resurrect) meta.push(tag("↻ resurrect"));
+  if (e.mode === "manual") meta.push(tag("asks first")); else if (e.mode === "skip") meta.push(tag("skip permissions"));
+  return rowEl("fav:" + e.id4, () => openSheet("fav", e.id4), l.dot, e.name, e.id4, tilde(e.cwd), meta, e.note, l.why, l.dot === "wait" ? "wait" : "");
+}
+
+function section(title, pillCls, rows) {
+  if (!rows.length) return [];
+  const h = kids(el("div", title, "sect"), el("span", rows.length, "pill " + pillCls));
+  return [h, kids(el("div", null, "list"), ...rows)];
+}
+
+function shown(e) {
+  if (filter === "on") return isOn(e);
+  if (filter === "off") return !isOn(e);
+  if (filter === "busy") return isOn(e) && e.status === "busy";
+  return true;
+}
+
+function render() { keepFocus(draw); }
+function draw() {
+  const s = S;
+  $("me").textContent = s.login;
+  const h = location.hostname;
+  $("host").textContent = /^[\d.:\[\]]+$/.test(h) ? h : h.split(".")[0];
+  $("upd").textContent = "Updated " + new Date(s.time * 1000).toLocaleTimeString();
+
+  // memory
+  const m = s.memory, used = m.total_kb ? 100 - m.avail_pct : 0;
+  $("mem").classList.toggle("warn", m.warn);
+  $("mem-pct").textContent = m.total_kb ? m.avail_pct + "% free" : "unknown";
+  $("mem-used").style.width = Math.max(0, Math.min(100, used)) + "%";
+  const onKb = s.favorites.filter(isOn).reduce((a, e) => a + (e.rss_kb || 0), 0);
+  $("mem-det").replaceChildren(document.createTextNode(`${size(m.avail_kb)} of ${size(m.total_kb)} free`), el("br"),
+    document.createTextNode(`${s.on} on use ${size(onKb) || "0 MB"}`));
+
+  const warn = [];
+  if (m.warn) warn.push("Memory is below 15% free; a start needs 20%.");
+  if (!s.server) warn.push("No tmux server is running.");
+  if (s.unknown_files) warn.push(`${s.unknown_files} session file(s) in a format asctl does not know.`);
+  $("banner").hidden = !warn.length;
+  $("banner").textContent = warn.join(" ");
+
+  // chips
+  const n = { all: s.favorites.length, on: s.favorites.filter(isOn).length };
+  n.off = n.all - n.on;
+  n.busy = s.favorites.filter((e) => isOn(e) && e.status === "busy").length;
+  $("chips").replaceChildren(...[["all", "All"], ["on", "On"], ["off", "Off"], ["busy", "Busy"]].map(([k, t]) => {
+    const c = kids(el("button", t, "chip"), el("span", n[k], "n"));
+    c.type = "button";
+    c.dataset.fk = "chip:" + k;
+    c.setAttribute("aria-pressed", String(filter === k));
+    c.addEventListener("click", () => { filter = k; render(); });
+    return c;
+  }));
+
+  // sessions
+  const groups = { attention: [], on: [], off: [] };
+  for (const e of s.favorites) if (shown(e)) groups[look(e).group].push(favRow(e));
+  const parts = [...section("Needs attention", "red", groups.attention), ...section("On", "", groups.on),
+                 ...section("Off", "grey", groups.off)];
+  if (!s.favorites.length) parts.push(el("div", "No favorites yet: open a running claude or a past conversation below and favorite it.", "none"));
+  else if (!parts.length) parts.push(el("div", "None.", "none"));
+  const act = s.active.map((x) => {
+    const [label, dot] = STATUS[x.status] || STATUS.unknown;
+    return rowEl("active:" + x.pid, () => openSheet("active", x.pid), x.duplicate ? "bad" : dot, x.name || "Unnamed claude", "",
+      tilde(x.cwd) + (x.tmux ? " · tmux " + x.tmux : " · not in tmux"),
+      [el("span", x.duplicate ? "Duplicate" : label, "st " + (x.duplicate ? "bad" : dot))], "", "", "");
   });
-  return b;
+  parts.push(...section("Running, not favorited", "grey", act));
+  $("lists").replaceChildren(...parts);
+  sweepRows("fav:", "active:");
+
+  // biggest processes: names and sizes only
+  $("top").replaceChildren(...s.top.mine.map((p) => kids(el("div", null, "proc"), el("span", p.name), el("span", size(p.rss_kb), "mono"))),
+    kids(el("div", null, "proc"), el("span", "Other users together"), el("span", size(s.top.others_kb), "mono")));
+
+  if (sheetOf) renderSheet();
 }
 
+function renderPast() { keepFocus(drawPast); }
+function drawPast() {
+  $("past").replaceChildren(...past.map((c) => rowEl("past:" + c.session_id, () => openSheet("past", c.session_id), "blank", c.title || "Untitled", "",
+    tilde(c.cwd), [el("span", ago(c.mtime))], "", "", "")));
+  sweepRows("past:");
+}
+
+// --- talking to the server -------------------------------------------------------------------
+function toast(text) {
+  const t = $("toast");
+  t.textContent = text;
+  t.hidden = false;
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => { t.hidden = true; }, 5000);
+}
+
+// One action; returns {ok, out|error}. Off refused as busy, and On refused for memory, offer the
+// forced one after a confirm (never automatic).
 async function act(body) {
-  $("msg").textContent = "…";
+  const id = body.id || body.ref;
+  pending.add(id);
+  if (sheetOf) renderSheet();  // every control of this session off until the answer
+  let j;
   try {
     const r = await fetch("api/action", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Asctl-Token": token },
       body: JSON.stringify(body),
     });
-    const j = await r.json();
-    $("msg").textContent = j.ok ? j.out : "Refused: " + (j.error || r.status);
-    if (!j.ok && body.action === "off" && /busy/.test(j.error || "") &&
-        window.confirm(`${body.tmux}: ${j.error}\n\nForce ${body.tmux} off anyway? Everything in it ends.`)) {
-      return act({ ...body, force: true });
-    }
-    if (!j.ok && body.action === "on" && /^memory:/.test(j.error || "") &&
-        window.confirm(`${body.tmux}: ${j.error}\n\nStart ${body.tmux} anyway? earlyoom may then end sessions.`)) {
-      return act({ ...body, force_memory: true });
-    }
+    j = await r.json().catch(() => ({ ok: false, error: "HTTP " + r.status }));
   } catch (e) {
-    $("msg").textContent = "Failed: " + e;
+    j = { ok: false, error: "the dashboard did not answer (" + e.message + ")" };
   }
-  refresh();
-}
-
-function render(s) {
-  const m = s.memory;
-  $("memory").textContent = `Memory available ${m.avail_pct}% (${mb(m.avail_kb)} of ${mb(m.total_kb)}), ` +
-    `swap free ${mb(m.swap_free_kb)} of ${mb(m.swap_total_kb)}, ${s.on} on`;
-  const warn = [];
-  if (m.warn) warn.push("Memory below 15%: starting sessions is held back.");
-  if (s.active.length) warn.push(`${s.active.length} running claude(s) not favorited: a reboot will not bring them back.`);
-  if (s.unknown_files) warn.push(`${s.unknown_files} session file(s) in an unknown format.`);
-  if (!s.server) warn.push("No tmux server is running.");
-  $("banner").hidden = !warn.length;
-  $("banner").textContent = warn.join(" ");
-
-  const f = $("favorites");
-  f.replaceChildren(row(["Name", "State", "Mode", "rc", "Resurrect", "Memory", "Folder", "Note", ""].map((t) => el("th", t))));
-  for (const e of s.favorites) {
-    const acts = el("td");
-    const ref = { id: e.id4, tmux: e.tmux };
-    if (e.state === "on") acts.append(button("Off", { action: "off", ...ref }, `Turn ${e.tmux} off? Its claude and tmux session end.`));
-    else acts.append(button("On", { action: "on", ...ref }));
-    if (e.mode !== "skip") {
-      const other = e.mode === "auto" ? "manual" : "auto";
-      acts.append(button("Mode: " + other, { action: "mode", mode: other, ...ref }));
-    }
-    acts.append(button(e.rc ? "rc off" : "rc on", { action: "rc", on: !e.rc, ...ref }));
-    acts.append(button(e.resurrect ? "Resurrect off" : "Resurrect on", { action: "resurrect", on: !e.resurrect, ...ref }));
-    const note = el("button", "Note");
-    note.type = "button";
-    note.addEventListener("click", () => {
-      const text = window.prompt(`Note for ${e.tmux}`, e.note);
-      if (text !== null) act({ action: "note", text, ...ref });
-    });
-    acts.append(note);
-    acts.append(button("Forget", { action: "forget", ...ref }, `Forget ${e.tmux}? A running session is left alone.`));
-    const copy = el("button", "Copy attach");
-    copy.type = "button";
-    copy.addEventListener("click", () => navigator.clipboard && navigator.clipboard.writeText(e.attach));
-    acts.append(copy);
-    const state = e.state + (e.status ? ` (${e.status})` : "") + (e.claudes > 1 ? `, ${e.claudes} claudes` : "") +
-      (e.busy ? ` — ${e.busy}` : "");
-    f.append(row([e.tmux, state, e.mode, e.rc ? "on: " + e.rc_title : "off", e.resurrect ? "on" : "off",
-      e.rss_kb ? mb(e.rss_kb) : "", el("td", e.cwd, "path"), e.note, acts]));
+  if (!j.ok && body.action === "off" && !body.force && /busy/.test(j.error || "") &&
+      window.confirm(`${body.tmux}: ${j.error}\n\nForce it off anyway? Everything in it ends.`)) {
+    return act({ ...body, force: true });
   }
-
-  const a = $("active");
-  a.replaceChildren(row(["Name", "Status", "tmux", "Folder", ""].map((t) => el("th", t))));
-  for (const x of s.active) {
-    a.append(row([x.name || x.session_id, x.status + (x.duplicate ? " (duplicate)" : ""), x.tmux || "-",
-      el("td", x.cwd, "path"), wrap(button("Favorite", { action: "fav", ref: x.session_id }))]));
+  if (!j.ok && body.action === "on" && !body.force_memory && /^memory:/.test(j.error || "") &&
+      window.confirm(`${body.tmux}: ${j.error}\n\nStart it anyway? earlyoom may then end other sessions.`)) {
+    return act({ ...body, force_memory: true });
   }
-
-  const t = $("top");
-  t.replaceChildren(...s.top.mine.map((p) => el("li", `${p.name} ${mb(p.rss_kb)}`)),
-    el("li", `other users: ${mb(s.top.others_kb)}`));
+  pending.delete(id);
+  toast(j.ok ? (j.out || "Done.") : "Refused: " + (j.error || "unknown error"));
+  await refresh();
+  if (sheetOf) renderSheet();  // also when the state did not change
+  return j;
 }
 
 async function refresh() {
+  const rf = $("rf");
+  rf.classList.add("spin");
+  let fresh = null;
   try {
-    const r = await fetch("api/state");
-    if (r.ok) render(await r.json());
-  } catch (e) { /* the next tick tries again */ }
+    const r = await fetch("api/state", { cache: "no-store" });
+    if (r.ok) fresh = await r.json();
+  } catch (e) { /* the network: the next tick tries again; the triangle tells after STALE_MS */ }
+  rf.classList.remove("spin");
+  if (fresh) {
+    S = fresh;
+    lastOk = Date.now();
+    lastOkTime = new Date();
+    render();  // outside the try: a bug here shows in the console, never as "not updating"
+  }
+  staleCheck();
 }
 
-let pastTimer;
 async function loadPast() {
-  const r = await fetch("api/past?q=" + encodeURIComponent($("q").value));
-  if (!r.ok) return;
-  const { past } = await r.json();
-  const p = $("past");
-  p.replaceChildren(row(["Title", "Last active", "Folder", ""].map((t) => el("th", t))));
-  for (const c of past) {
-    p.append(row([c.title || c.session_id, new Date(c.mtime * 1000).toLocaleString(), el("td", c.cwd, "path"),
-      wrap(button("Favorite", { action: "fav", ref: c.session_id }))]));
+  let got = null;
+  try {
+    const r = await fetch("api/past?q=" + encodeURIComponent($("q").value), { cache: "no-store" });
+    if (r.ok) got = (await r.json()).past;
+  } catch (e) { /* the network: tried again on the next search */ }
+  if (got) { past = got; renderPast(); }
+}
+
+function staleCheck() {
+  const stale = document.visibilityState === "visible" && Date.now() - lastOk > STALE_MS;
+  $("nup").hidden = !stale;
+  if (!stale) { $("stale").hidden = true; $("nup").setAttribute("aria-expanded", "false"); }
+}
+$("nup").addEventListener("click", () => {
+  const open = $("stale").hidden;
+  $("stale").hidden = !open;
+  $("nup").setAttribute("aria-expanded", String(open));
+  $("stale").textContent = "Not updating since " + (lastOkTime ? lastOkTime.toLocaleTimeString() : "the page opened") +
+    " (the dashboard is down, or the login expired). The list shows the last data.";
+});
+
+// --- the details sheet -----------------------------------------------------------------------
+function sw(checked, label, onClick, off) {
+  const b = el("button", null, "switch");
+  b.disabled = !!off;
+  b.type = "button";
+  b.setAttribute("role", "switch");
+  b.setAttribute("aria-checked", String(checked));
+  b.setAttribute("aria-label", label);
+  b.addEventListener("click", async () => { b.disabled = true; await onClick(); b.disabled = false; });
+  return b;
+}
+function opt(title, desc, control) {
+  return kids(el("div", null, "opt"), kids(el("div"), el("div", title, "t"), desc ? el("div", desc, "d") : null), control);
+}
+function btn(text, cls, onClick, off) {
+  const b = el("button", text, "btn " + (cls || ""));
+  b.disabled = !!off;
+  b.type = "button";
+  b.addEventListener("click", async () => { b.disabled = true; try { await onClick(); } finally { b.disabled = false; } });
+  return b;
+}
+function kv(pairs) {
+  const d = el("dl", null, "kv");
+  for (const [k, v] of pairs) if (v !== undefined && v !== null && v !== "") d.append(el("dt", k), el("dd", v, k === "tmux" || k === "Session id" ? "mono" : ""));
+  return d;
+}
+
+function favDesc(e) {
+  return isOn(e) ? [e.last_on ? "since " + when(e.last_on) : "", size(e.rss_kb)].filter(Boolean).join(" · ")
+                 : (e.last_off ? "since " + when(e.last_off) : "");
+}
+
+function favSheet(e) {
+  const l = look(e), ref = { id: e.id4, tmux: e.tmux }, on = isOn(e), wait = pending.has(e.id4);
+  const out = [el("h2", e.name), el("div", e.id4 + " · " + tilde(e.cwd), "s2 mono")];
+  const title = on ? "On · " + l.label : (l.group === "attention" ? "Off · " + l.label : "Off");
+  out.push(kids(el("div", null, "bigsw"), kids(el("div"), el("div", title, "t " + (on ? "" : l.dot)), el("div", favDesc(e), "d")),
+    sw(on, on ? "Turn off" : "Turn on", async () => {
+      if (on) {
+        if (!window.confirm(`Turn ${e.tmux} off? What runs in tmux session ${e.tmux} ends.`)) return;
+        await act({ action: "off", ...ref });
+      } else {
+        await act({ action: "on", ...ref });
+      }
+    }, wait)));
+  if (l.why) out.push(el("div", l.why, "warn " + (l.dot === "bad" ? "bad" : "")));
+  if (on && e.busy) out.push(el("div", "Busy: " + e.busy + ". Off asks before forcing it.", "warn"));
+
+  out.push(el("span", "SETTINGS", "lab"));
+  const rcDesc = (on ? (e.rc_live ? "Live now" : "Not live now") + (e.rc !== e.rc_live ? " · changes at its next start" : "")
+                     : "Used when it starts") + (e.rc ? " · title " + (e.rc_title || e.tmux) : "");
+  const modes = el("div", null, "seg");
+  modes.setAttribute("role", "group");
+  modes.setAttribute("aria-label", "Permissions");
+  for (const [m, t] of [["auto", "Auto"], ["manual", "Manual"]]) {
+    const b = el("button", t);
+    b.type = "button";
+    b.setAttribute("aria-pressed", String(e.mode === m));
+    b.disabled = wait || e.mode === "skip" || e.mode === m;
+    b.addEventListener("click", () => act({ action: "mode", mode: m, ...ref }));
+    modes.append(b);
+  }
+  out.push(kids(el("div", null, "opts"),
+    opt("Remote control", rcDesc, sw(e.rc, "Remote control", () => act({ action: "rc", on: !e.rc, ...ref }), wait)),
+    opt("Resurrect", "Bring it back after a reboot or a tmux crash (always with remote control)",
+      sw(e.resurrect, "Resurrect", () => act({ action: "resurrect", on: !e.resurrect, ...ref }), wait)),
+    opt("Permissions", e.mode === "skip" ? "Skip permissions: set on the machine (asctl mode " + e.id4 + ")"
+                                         : "How claude asks before acting, from its next start", modes)));
+
+  out.push(el("span", "NOTE", "lab"));
+  const draft = noteDraft && noteDraft.id4 === e.id4 ? noteDraft.text : e.note;
+  const ta = el("textarea");
+  ta.maxLength = 500;
+  ta.value = draft;
+  ta.setAttribute("aria-label", "Note");
+  const count = el("span", draft.length + "/500", "count");
+  const save = btn("Save note", "sm p", async () => {
+    const j = await act({ action: "note", text: ta.value, ...ref });
+    if (j.ok) noteDraft = null;
+  });
+  save.disabled = wait || draft === e.note;
+  ta.addEventListener("input", () => {
+    ta.value = ta.value.replace(/[\r\n\t]+/g, " ");  // one line: no control characters
+    noteDraft = { id4: e.id4, text: ta.value };
+    count.textContent = ta.value.length + "/500";
+    save.disabled = pending.has(e.id4) || ta.value === e.note;
+  });
+  out.push(kids(el("div", null, "field"), ta, count), save);
+
+  out.push(el("span", "SESSION", "lab"), kv([
+    ["tmux", e.tmux], ["Session id", e.session_id], ["Claudes", e.claudes > 1 ? e.claudes : ""],
+    ["Last on", when(e.last_on)], ["Last off", when(e.last_off)]]));
+  out.push(kids(el("div", null, "acts"),
+    btn("Copy attach", "", async () => {
+      try { await navigator.clipboard.writeText(e.attach); toast("Copied: " + e.attach); }
+      catch (err) { toast(e.attach); }
+    }),
+    btn("Rename", "", async () => {
+      const name = window.prompt(`New name for ${e.tmux} (a-z, 0-9 and -, up to 31; the id stays)`, e.name);
+      if (name === null || name === e.name) return;
+      if (!/^[a-z0-9][a-z0-9-]{0,30}$/.test(name)) { toast("Refused: a-z, 0-9 and -, starting with a letter or digit, up to 31."); return; }
+      await act({ action: "rename", name, ...ref });
+    }, wait),
+    btn("Forget", "danger", async () => {
+      if (!window.confirm(`Forget ${e.tmux}? A running session is left alone; only the favorite goes.`)) return;
+      const j = await act({ action: "forget", ...ref });
+      if (j.ok) closeSheet();
+    }, wait)));
+  return out;
+}
+
+function favoriteButton(sid) {
+  return btn("☆ Favorite", "p", async () => {
+    const j = await act({ action: "fav", ref: sid });
+    if (j.ok) { closeSheet(); loadPast(); }
+  }, pending.has(sid));
+}
+
+function activeSheet(x) {
+  const [label] = STATUS[x.status] || STATUS.unknown;
+  return [el("h2", x.name || "Unnamed claude"), el("div", tilde(x.cwd), "s2 mono"),
+    x.duplicate ? el("div", "Another claude holds the same session id.", "warn bad") : null,
+    el("span", "SESSION", "lab"),
+    kv([["Status", label], ["tmux", x.tmux || "not in tmux"], ["Pid", x.pid], ["Session id", x.session_id]]),
+    el("div", "Not a favorite: a reboot will not bring it back. Favorite it to turn it on and off here.", "res"),
+    kids(el("div", null, "acts"), favoriteButton(x.session_id))];
+}
+
+function pastSheet(c) {
+  return [el("h2", c.title || "Untitled"), el("div", tilde(c.cwd), "s2 mono"),
+    el("span", "CONVERSATION", "lab"), kv([["Last active", when(c.mtime)], ["Session id", c.session_id]]),
+    el("div", "Favorite it to resume it in its own tmux session.", "res"),
+    kids(el("div", null, "acts"), favoriteButton(c.session_id))];
+}
+
+function renderSheet() {
+  const sheet = $("sheet");
+  // never redraw under the user's typing
+  if (sheet.contains(document.activeElement) && document.activeElement.tagName === "TEXTAREA") return;
+  let item = null, body = null;
+  if (sheetOf.kind === "fav") item = S && S.favorites.find((e) => e.id4 === sheetOf.key);
+  else if (sheetOf.kind === "active") item = S && S.active.find((x) => x.pid === sheetOf.key);
+  else item = past.find((c) => c.session_id === sheetOf.key);
+  if (!item) { closeSheet(); return; }
+  // A redraw replaces every button: only when the data changed, or a tap lands on a removed one.
+  // The memory figure changes on every refresh: it alone is updated in place.
+  const id = sheetOf.kind === "fav" ? item.id4 : item.session_id;
+  const sig = sheetOf.kind + ":" + pending.has(id) + ":" + JSON.stringify({ ...item, rss_kb: 0 });
+  if (sig === sheetSig) {
+    if (sheetOf.kind === "fav") sheet.querySelector(".bigsw .d").textContent = favDesc(item);
+    return;
+  }
+  sheetSig = sig;
+  body = sheetOf.kind === "fav" ? favSheet(item) : sheetOf.kind === "active" ? activeSheet(item) : pastSheet(item);
+  const x = el("button", "✕", "x");
+  x.type = "button";
+  x.setAttribute("aria-label", "Close");
+  x.addEventListener("click", () => closeSheet());
+  const scroll = sheet.scrollTop, controls = () => [...sheet.querySelectorAll("button, textarea")];
+  const focused = controls().indexOf(document.activeElement);
+  sheet.replaceChildren(x, ...body.filter(Boolean));
+  sheet.scrollTop = scroll;
+  const t = controls()[focused];
+  if (focused >= 0) (t && !t.disabled ? t : x).focus();  // the keyboard stays where it was
+}
+
+// Closing from the page goes Back one entry (the one openSheet pushed). That Back lands later; a
+// sheet opened before it lands waits for it, or the Back would close the new sheet.
+let backPending = null;  // {timer, then: [kind, key] | null} while our own Back is on its way
+let opener = null;       // what had the focus before the sheet opened: it gets it back
+function backDone() {
+  const then = backPending.then;
+  clearTimeout(backPending.timer);
+  backPending = null;
+  if (then) openSheet(...then);
+}
+
+function openSheet(kind, key) {
+  if (backPending) { backPending.then = [kind, key]; return; }
+  const first = !sheetOf;
+  sheetOf = { kind, key };
+  sheetSig = "";
+  noteDraft = null;
+  renderSheet();
+  if (!sheetOf) return;
+  if (first) opener = document.activeElement;
+  // the page behind is out of reach (Tab, screen readers) while the sheet is open
+  for (const c of document.body.children) if (c.id !== "scrim" && c.id !== "toast") c.inert = true;
+  $("scrim").classList.add("on");
+  $("sheet").scrollTop = 0;
+  $("sheet").querySelector(".x").focus();
+  if (first) history.pushState({ sheet: true }, "");  // the phone's Back closes the sheet
+}
+function closeSheet(fromBack) {
+  if (!sheetOf) return;
+  sheetOf = null;
+  noteDraft = null;
+  $("scrim").classList.remove("on");
+  for (const c of document.body.children) c.inert = false;
+  if (opener && opener.isConnected) opener.focus({ preventScroll: true });
+  opener = null;
+  if (!fromBack && history.state && history.state.sheet) {
+    backPending = { timer: setTimeout(backDone, 3000), then: null };  // in case no popstate comes
+    history.back();
   }
 }
+window.addEventListener("popstate", () => {
+  if (backPending) backDone();
+  else if (!(history.state && history.state.sheet)) closeSheet(true);  // Forward onto a sheet entry: nothing
+});
+// a reload on the sheet's entry: no sheet is open, so the entry must not cost an extra Back
+if (history.state && history.state.sheet) history.replaceState(null, "");
+$("scrim").addEventListener("click", (ev) => { if (ev.target === $("scrim")) closeSheet(); });
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && sheetOf) closeSheet(); });
 
+// --- start -----------------------------------------------------------------------------------
+let pastTimer;
 $("q").addEventListener("input", () => { clearTimeout(pastTimer); pastTimer = setTimeout(loadPast, 300); });
+$("rf").addEventListener("click", () => { refresh(); loadPast(); });
 setInterval(() => { if (document.visibilityState === "visible") refresh(); }, 5000);
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refresh(); });
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") { lastOk = Math.max(lastOk, Date.now() - 5000); refresh(); }
+});
 refresh();
 loadPast();
 

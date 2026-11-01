@@ -5,8 +5,9 @@
 # writes ~/.claude/sessions/<pid>.json (with procStart = /proc start time) once its REPL is up,
 # shows the trust prompt with "No, exit" selected for a folder not trusted yet, exits 143 on
 # SIGTERM after removing its session file, and leaves the file behind on SIGKILL.
-# $HOME/fake-busy: status "busy". $HOME/fake-quote: first shows a transcript that quotes the
-# trust prompt (not as the last lines) and logs any key it gets in 3 s.
+# $HOME/fake-busy: status "busy"; $HOME/fake-wait: "waiting" (a question or dialog open);
+# $HOME/fake-rc: remote control live (bridgeSessionId set). $HOME/fake-quote: first shows a
+# transcript that quotes the trust prompt (not as the last lines) and logs any key it gets in 3 s.
 # Every start is logged to $HOME/claude-args.log.
 if [ -n "${FAKE_BASH:-}" ] && [ "${FAKE_EXECED:-}" != 1 ]; then
 	FAKE_EXECED=1 exec -a claude "$FAKE_BASH" "$0" "$@"
@@ -51,9 +52,10 @@ st=$(awk '{ sub(/.*\) /, ""); print $20 }' /proc/$$/stat)
 f="$HOME/.claude/sessions/$$.json"
 mkdir -p "$HOME/.claude/sessions"
 write() {
-	local status=idle; [ -e "$HOME/fake-busy" ] && status=busy
-	printf '{"pid":%s,"sessionId":"%s","cwd":"%s","kind":"interactive","name":"%s","status":"%s","procStart":"%s"}\n' \
-		$$ "$sid" "$PWD" "$name" "$status" "$st" > "$f.tmp" && mv -f "$f.tmp" "$f"
+	local status=idle bridge=""; [ -e "$HOME/fake-busy" ] && status=busy; [ -e "$HOME/fake-wait" ] && status=waiting
+	[ -e "$HOME/fake-rc" ] && bridge=',"bridgeSessionId":"session_fake"'
+	printf '{"pid":%s,"sessionId":"%s","cwd":"%s","kind":"interactive","name":"%s","status":"%s","procStart":"%s"%s}\n' \
+		$$ "$sid" "$PWD" "$name" "$status" "$st" "$bridge" > "$f.tmp" && mv -f "$f.tmp" "$f"
 }
 trap 'rm -f "$f"; exit 143' TERM
 trap 'rm -f "$f"; exit 0' INT

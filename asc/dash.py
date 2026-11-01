@@ -23,7 +23,8 @@ so they take the same locks and checks as the CLI. From the web the permission m
 set only to auto or manual; skip is set only with `asctl mode ID skip` (a favorite already in
 skip still starts with it).
 
-Config, ~/.config/agent-session-control/dash.json:
+Config, ~/.config/agent-session-control/dash.json (it and its folder yours and writable only by
+you, or the server refuses to start):
   {"login": "<your Tailscale login>", "host": "<MagicDNS name>:<port>", "prefix": "/user"}
 host is what the browser sends as Host (and, after https://, as Origin): with the port when
 it is not 443.
@@ -97,10 +98,22 @@ def config_path():
     return os.path.join(base, "agent-session-control", "dash.json")
 
 
+def _private(path, st):
+    """The config decides who gets in: like sshd's StrictModes, refuse it (or its folder) when
+    another user owns it or others can write it, since they could put their login in it."""
+    if st.st_uid != os.getuid() or st.st_mode & 0o022:
+        raise RegistryError(f"{path} decides who may use the dashboard, so it must be yours and "
+                            f"writable only by you (chmod go-w {path})")
+
+
 def load_config():
     p = config_path()
     try:
         with open(p, encoding="utf-8") as f:
+            _private(p, os.fstat(f.fileno()))
+            # the folder of the file itself (a symlinked config is checked where it lives)
+            d = os.path.dirname(os.path.realpath(p))
+            _private(d, os.stat(d))
             c = json.load(f)
     except FileNotFoundError:
         raise RegistryError(f"no {p}: it names the one Tailscale login and host allowed in "
@@ -245,6 +258,7 @@ def _snapshot():
         favs.append({
             "id4": e["id4"], "name": e["name"], "tmux": e["tmux"], "cwd": e["cwd"],
             "session_id": e.get("session_id"), "rc": bool(e.get("rc")), "rc_title": e.get("rc_title") or "",
+            "rc_live": bool(s and s["rc"]),
             "mode": e.get("mode", "auto"), "resurrect": bool(e.get("resurrect")),
             "want_on": bool(e.get("want_on")), "note": e.get("note") or "",
             "last_on": e.get("last_on"), "last_off": e.get("last_off"), "state": st,
@@ -438,7 +452,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._send(200, f.read(), STATIC[path])
         if path == "/api/state":
             state, _ = snapshot()
-            return self._send(200, state)
+            return self._send(200, dict(state, login=self.server.cfg["login"], home=os.path.expanduser("~")))
         if path == "/api/past":
             q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("q", [""])[0]
             _, exclude = snapshot()

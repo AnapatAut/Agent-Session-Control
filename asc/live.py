@@ -109,7 +109,7 @@ def read_sessions(home=None):
               and (raw.get("pidDomain") is None or raw.get("pidDomain") == domain))
         s = {"file": path, "ok": bool(ok), "pid": pid, "session_id": sid, "cwd": raw.get("cwd"),
              "name": raw.get("name") if isinstance(raw.get("name"), str) else "",
-             "status": raw.get("status") if raw.get("status") in ("busy", "idle", "shell") else "unknown",
+             "status": raw.get("status") if raw.get("status") in ("busy", "idle", "shell", "waiting") else "unknown",
              "rc": bool(raw.get("bridgeSessionId")), "kind": raw.get("kind"),
              "proc_start": raw.get("procStart")}
         s["live"] = bool(ok) and alive(pid, s["proc_start"])
