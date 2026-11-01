@@ -147,6 +147,57 @@ grep -E '<script>|<script [^>]*>[^<]' "$T/page" >/dev/null && bad "the page has 
 [ "$(code http://x/app.js)" = 200 ] && [ "$(code http://x/app.css)" = 200 ] && ok "app.js and app.css served" || bad "static files missing"
 grep -n 'innerHTML\|outerHTML\|insertAdjacentHTML\|document.write' "$REPO/asc/web/app.js" >/dev/null && bad "app.js writes HTML from strings" || ok "app.js sets text only (no innerHTML)"
 
+echo "== the installable app (PWA)"
+# No login: as an install check fetches the manifest, worker and icons, outside the page.
+anon() { curl -s --unix-socket "$SOCK" -H "Host: localhost" "$@"; }
+acode() { anon -o /dev/null -w '%{http_code}' "$@"; }
+m=$(anon "http://x$PREFIX/manifest.json?v=1")
+jq -e '.display == "standalone" and .short_name == "Sessions" and (.start_url | startswith("./?v="))
+	and .scope == "./" and (.id | test("v=")) and (.icons | length == 4)' <<<"$m" >/dev/null \
+	&& ok "the manifest, without a login: standalone, relative URLs, versioned id" || bad "manifest: $m"
+anon -D - -o /dev/null "http://x/manifest.json" | seen -i '^content-type: application/manifest+json' && ok "the manifest's type" || bad "manifest type wrong"
+for u in $(jq -r '.icons[].src' <<<"$m"); do
+	[ "$(acode "http://x/$u")" = 200 ] || bad "manifest icon $u: $(acode "http://x/$u")"
+done
+sw=$(anon http://x/sw.js)
+seen -F 'fetch(e.request)' <<<"$sw" && ! seen caches <<<"$sw" && ok "the worker passes through and never caches" || bad "worker: $sw"
+for f in favicon-512.png apple-touch-icon.png splash-512.png icon-192.png icon-512.png icon-maskable-192.png icon-maskable-512.png; do
+	h=$(anon -D - -o "$T/icon" "http://x/$f?v=1")
+	seen -i '^content-type: image/png' <<<"$h" && seen -i '^cache-control: public' <<<"$h" \
+		&& [ "$(head -c 4 "$T/icon" | od -An -tx1 | tr -d ' ')" = 89504e47 ] || bad "icon $f"
+done
+ok "every icon is a PNG, served without a login, cacheable"
+# Pixels where the recipe needs them (asc/icons.py): maskable tile edge to edge with white only in
+# its corners, the lime knob, a transparent favicon corner, the "any" icons plain white.
+px() { anon "http://x/$1" | python3 -I -c 'import struct, sys, zlib
+d = sys.stdin.buffer.read(); w, h, _, ct = struct.unpack(">IIBB", d[16:26]); n = 4 if ct == 6 else 3
+i = 8; raw = b""
+while i < len(d):
+    ln, t = struct.unpack(">I4s", d[i:i + 8]); raw += d[i + 8:i + 8 + ln] if t == b"IDAT" else b""; i += 12 + ln
+raw = zlib.decompress(raw); x, y = (int(v) for v in sys.argv[1:3]); o = y * (w * n + 1) + 1 + x * n
+print(raw[o:o + n].hex())' "$2" "$3"; }
+[ "$(px icon-maskable-512.png 0 0)" = ffffff ] && [ "$(px icon-maskable-512.png 256 0)" = 3d3df5 ] \
+	&& [ "$(px icon-maskable-512.png 0 256)" = 3d3df5 ] && [ "$(px icon-maskable-512.png 336 256)" = d7f34f ] \
+	&& ok "maskable icon: white corners, blue edges, the lime knob" || bad "maskable icon pixels: $(px icon-maskable-512.png 0 0) $(px icon-maskable-512.png 256 0) $(px icon-maskable-512.png 336 256)"
+v=$(px icon-maskable-512.png 26 27)  # on the corner's curve: a blend, so edges are smooth
+[ "$v" != ffffff ] && [ "$v" != 3d3df5 ] && ok "anti-aliased edges ($v on the corner's curve)" || bad "hard edges: $v"
+[ "$(px apple-touch-icon.png 0 0)" = 3d3df5 ] && ok "apple-touch icon: full bleed" || bad "apple-touch corner: $(px apple-touch-icon.png 0 0)"
+[ "$(px favicon-512.png 0 0)" = 00000000 ] && [ "$(px favicon-512.png 256 4)" = 3d3df5ff ] && ok "favicon: transparent corners" || bad "favicon pixels"
+[ "$(px icon-192.png 96 96)" = ffffff ] && [ "$(px icon-512.png 256 256)" = ffffff ] && ok "the any icons are plain white" || bad "any icons not white"
+anon -D - -o /dev/null http://x/favicon.svg | seen -i '^content-type: image/svg+xml' && ok "favicon.svg" || bad "no favicon.svg"
+[ "$(acode -I http://x/sw.js)" = 200 ] && ok "HEAD on a public file" || bad "HEAD on a public file"
+r=""; for u in / /app.js /app.css /splash.js /api/state "/api/past?q=" /index.html /sw.js/ /./sw.js /%2e%2e/asc/dash.py /icon-1.png /favicon.ico; do
+	[ "$(acode --path-as-is "http://x$u")" = 403 ] || r="$r $u"
+done
+[ -z "$r" ] && ok "everything else still needs the login (exact paths only)" || bad "served without a login:$r"
+r=$(printf 'GET /sw.js HTTP/1.1\nHost: localhost\nContent-Length: 3\n\nabc' | rawsend)
+[ "$r" = 403 ] && ok "a public path with a body goes through the checks: 403" || bad "a public path with a body: $r"
+r=$(printf 'GET /sw.js HTTP/1.1\nHost: localhost\nTransfer-Encoding: chunked\n\n0\n\n' | rawsend)
+[ "$r" = 403 ] && ok "a public path, chunked: 403" || bad "a public path, chunked: $r"
+seen -F 'href="manifest.json?v=' "$T/page" && seen -F 'src="splash-512.png?v=' "$T/page" && ! seen -F '@V@' "$T/page" \
+	&& ok "the page links the manifest and icons, versioned" || bad "page: no manifest link or @V@ left"
+seen -F 'serviceWorker.register("sw.js")' "$REPO/asc/web/app.js" && ok "the page registers the worker (relative, works under a prefix)" || bad "no worker registration"
+
 echo "== state"
 tm new-session -d -s dev -c "$W" -- "$ASC_CLAUDE" --session-id "$SID" --name dev
 pid=$(claude_in dev)
@@ -343,6 +394,8 @@ start_dash
 [ "$(code http://x/api/state)" = 404 ] && [ "$(code http://x/x/api/state)" = 404 ] && ok "outside the prefix: 404 (also a path as long as it)" || bad "outside the prefix served"
 [ "$(code http://x/u)" = 301 ] && dc -D - -o /dev/null http://x/u | seen -i '^location: /u/' && ok "the prefix without a slash redirects to /u/" || bad "no redirect for /u"
 TOK=$(token); [ ${#TOK} -ge 40 ] && ok "the page under the prefix" || bad "no page under the prefix"
+[ "$(acode http://x/u/manifest.json)" = 200 ] && [ "$(acode http://x/u/icon-192.png)" = 200 ] && ok "the app files under the prefix, without a login" || bad "app files under the prefix"
+[ "$(acode http://x/manifest.json)" = 403 ] && ok "and not outside it" || bad "the manifest served outside the prefix"
 stop_dash
 [ -e "$SOCK" ] && bad "SIGTERM left the socket file" || ok "SIGTERM: the server removes its socket"
 start_dash 2
@@ -416,6 +469,17 @@ asc/dash.py %%%     if a.get("tmux") != e["tmux"]: %%%     if False:
 asc/dash.py %%%         srv.wait_actions(100) %%%         pass
 asc/dash.py %%%         return t %%%         return secrets.token_urlsafe(32)
 asc/dash.py %%%             raise RegistryError(f"cannot listen on {sock_path}: {e}") %%%             raise
+asc/dash.py %%% "/favicon.svg": "image/svg+xml", ** %%% "/favicon.svg": "image/svg+xml", "/app.js": "application/javascript", **
+asc/dash.py %%% PUBLIC or self.headers.get_all("Transfer-Encoding") or ( %%% PUBLIC or False and (
+asc/dash.py %%%             self._send(200, icons.icon(path[1:]), PUBLIC[path], cache="public, max-age=86400") %%%             self._send(200, icons.icon(path[1:]), PUBLIC[path])
+asc/icons.py %%%     "icon-maskable-512.png": (512, 0.8, 0.18, WHITE), %%%     "icon-maskable-512.png": (512, 0.8, 0, WHITE),
+asc/icons.py %%%     "apple-touch-icon.png": (180, 0.97, 0, WHITE), %%%     "apple-touch-icon.png": (180, 0.97, 0.18, WHITE),
+asc/icons.py %%%     "favicon-512.png": (512, 1, 0.25, None), %%%     "favicon-512.png": (512, 1, 0.25, WHITE),
+asc/icons.py %%%     "icon-512.png": (512, 0, 0, WHITE), %%%     "icon-512.png": (512, 1, 0, WHITE),
+asc/icons.py %%% return 0.0 if d >= 0.5 else 1.0 if d <= -0.5 else 0.5 - d %%% return 0.0 if d >= 0.5 else 1.0
+asc/dash.py %%% .replace("@V@", ICON_VER) %%% .replace("@X@", ICON_VER)
+asc/dash.py %%%         if self._public(self._path()): %%%         if self._public(urllib.parse.urlsplit(self.path).path):
+asc/dash.py %%% "start_url": f"./?v={ICON_VER}" %%% "start_url": "/"
 asc/live.py %%%                 if own_sid and s["session_id"] != own_sid: %%%                 if False:
 asc/live.py %%%     except (ValueError, RecursionError): %%%     except ValueError:
 asc/past.py %%%             except (ValueError, RecursionError): %%%             except ValueError:

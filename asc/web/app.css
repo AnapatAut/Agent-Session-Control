@@ -1,6 +1,7 @@
 :root { --bg: #fff; --fg: #1a1a1a; --muted: #666; --line: #ddd; --warn: #b3261e; }
 @media (prefers-color-scheme: dark) { :root { --bg: #141414; --fg: #eee; --muted: #999; --line: #333; --warn: #f2b8b5; } }
-body { background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif; margin: 0 16px; }
+body { background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif; margin: 0 16px;
+       padding-top: env(safe-area-inset-top); }  /* the installed app runs under the status bar */
 table { border-collapse: collapse; width: 100%; }
 td, th { border-bottom: 1px solid var(--line); padding: 4px 6px; text-align: left; vertical-align: top; }
 td.path { color: var(--muted); word-break: break-all; }
@@ -8,3 +9,18 @@ td.path { color: var(--muted); word-break: break-all; }
 #msg { white-space: pre-wrap; }
 button { margin-right: 4px; }
 section { overflow-x: auto; }
+
+/* The installed app's launch splash (splash.js): white, like the phone's own launch screen, which
+   it starts from (--sys-icon at --sys-top), then the icon grows to --big at the centre. */
+#splash { position: fixed; inset: 0; background: #fff; display: none; z-index: 99; transition: opacity .25s;
+          --sys-icon: 11vmin; --sys-top: 44%; --big: 42vmin; }
+#splash img { position: absolute; left: 50%; top: var(--sys-top); width: var(--sys-icon); height: var(--sys-icon);
+              transform: translate(-50%, -50%);
+              transition: width .35s cubic-bezier(.2,.7,.2,1), height .35s cubic-bezier(.2,.7,.2,1), top .35s cubic-bezier(.2,.7,.2,1); }
+#splash.grow img { width: var(--big); height: var(--big); top: 50%; }
+html.samsung #splash { --sys-icon: 15.3vmin; }
+html.ios #splash { --ios-start: 20vmin; --ios-top: 50%; }  /* both set from splash.js */
+html.ios #splash img { width: var(--ios-start); height: var(--ios-start); top: var(--ios-top); }
+html.ios #splash.grow img { width: var(--big); height: var(--big); top: 50%; }
+/* only the installed app on a phone: never in a browser tab or on a desktop */
+@media (display-mode: standalone) { html.android #splash, html.ios #splash { display: block; } }

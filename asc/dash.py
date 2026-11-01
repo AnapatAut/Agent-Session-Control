@@ -54,15 +54,42 @@ import threading
 import time
 import urllib.parse
 
-from . import cli, live, memory, past, registry, tmuxctl
+from . import cli, icons, live, memory, past, registry, tmuxctl
 from .registry import RegistryError
 
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
-STATIC = {"/app.js": "application/javascript", "/app.css": "text/css"}
+STATIC = {"/app.js": "application/javascript", "/splash.js": "application/javascript", "/app.css": "text/css"}
 MAX_BODY = 4096
 WEB_MODES = ("auto", "manual")
-CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; "
+# img-src data: for the iPhone startup image, which the page draws on a canvas (app.js).
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; "
        "frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+
+# --- the installable app (PWA) --------------------------------------------------------------
+# Icons are drawn by asc/icons.py. ICON_VER is in every icon URL and in the app's id:
+# browsers cache icons by URL, and Android builds the installed app once per id, so a new icon
+# reaches a phone only through a new id (a reinstall). Bump it whenever an icon file changes.
+ICON_VER = "1"
+# URLs are relative to the manifest, so the app works under a prefix too.
+MANIFEST = json.dumps({
+    # name: a zero-width space, as Android prints it under the icon on its launch screen, which
+    # cannot be turned off; short_name labels the launcher.
+    "name": "\u200b", "short_name": "Sessions",
+    "id": f"asctl?v={ICON_VER}", "start_url": f"./?v={ICON_VER}", "scope": "./", "display": "standalone",
+    "background_color": "#ffffff", "theme_color": "#ffffff",
+    "icons": [{"src": f"icon-{n}.png?v={ICON_VER}", "sizes": f"{n}x{n}", "type": "image/png"} for n in (192, 512)]
+    + [{"src": f"icon-maskable-{n}.png?v={ICON_VER}", "sizes": f"{n}x{n}", "type": "image/png", "purpose": "maskable"}
+       for n in (192, 512)]})
+# A worker makes the app installable. This one passes every request to the network and never
+# caches: the sessions must always be live.
+SW = """self.addEventListener('install', e => self.skipWaiting());
+self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
+self.addEventListener('fetch', e => { e.respondWith(fetch(e.request)); });
+"""
+# Served before the login check, by exact path only: the install checks fetch these outside the
+# page, and a 403 there turns the install into a plain bookmark. Nothing in them is private.
+PUBLIC = {"/manifest.json": "application/manifest+json", "/sw.js": "application/javascript",
+          "/favicon.svg": "image/svg+xml", **{"/" + n: "image/png" for n in icons.ICONS}}
 
 
 def config_path():
@@ -312,7 +339,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def address_string(self):
         return "unix"
 
-    def _send(self, code, body, ctype="application/json", extra=()):
+    def _send(self, code, body, ctype="application/json", extra=(), cache="no-store"):
         if isinstance(body, (dict, list)):
             body = json.dumps(body)
         if isinstance(body, str):
@@ -320,7 +347,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype + ("; charset=utf-8" if ctype.startswith(("text/", "application/j")) else ""))
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Frame-Options", "DENY")
@@ -377,7 +404,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._send(404, {"error": "not found"})
         return path
 
+    def _public(self, path):
+        """Answer a public PWA file; False when this request is not one (it then goes through
+        every check like any other)."""
+        if path not in PUBLIC or self.headers.get_all("Transfer-Encoding") or (
+                self.headers.get("Content-Length") or "0") != "0":
+            return False
+        if path == "/manifest.json":
+            self._send(200, MANIFEST, PUBLIC[path])
+        elif path == "/sw.js":
+            self._send(200, SW, PUBLIC[path])
+        elif path == "/favicon.svg":
+            with open(os.path.join(WEB, "favicon.svg"), "rb") as f:
+                self._send(200, f.read(), PUBLIC[path], cache="public, max-age=86400")
+        else:
+            self._send(200, icons.icon(path[1:]), PUBLIC[path], cache="public, max-age=86400")
+        return True
+
     def do_GET(self):
+        if self._public(self._path()):
+            return
         path = self._begin()
         if path is None:
             return
@@ -385,7 +431,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send(301, "", "text/plain", [("Location", self.server.cfg["prefix"] + "/")])
         if path == "/":
             with open(os.path.join(WEB, "index.html"), encoding="utf-8") as f:
-                page = f.read().replace("@TOKEN@", self.server.token)
+                page = f.read().replace("@TOKEN@", self.server.token).replace("@V@", ICON_VER)
             return self._send(200, page, "text/html")
         if path in STATIC:
             with open(os.path.join(WEB, path[1:]), "rb") as f:

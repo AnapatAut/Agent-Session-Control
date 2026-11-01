@@ -2,13 +2,27 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="asctl-token" content="@TOKEN@">
 <title>Agent Sessions</title>
+<!-- iOS colours its status bar from theme-color; Android takes the manifest's -->
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#141414" media="(prefers-color-scheme: dark)">
+<link rel="icon" type="image/svg+xml" href="favicon.svg?v=@V@">
+<link rel="icon" type="image/png" sizes="512x512" href="favicon-512.png?v=@V@">
+<link rel="apple-touch-icon" href="apple-touch-icon.png?v=@V@">
+<link rel="manifest" href="manifest.json?v=@V@">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Sessions">
 <link rel="stylesheet" href="app.css">
 <script src="app.js" defer></script>
 </head>
 <body>
+<!-- The installed app's launch splash: first in the body, so it paints before anything else -->
+<div id="splash"><img src="splash-512.png?v=@V@" alt=""></div>
+<script src="splash.js"></script>
 <header>
   <h1>Agent Sessions</h1>
   <div id="memory"></div>

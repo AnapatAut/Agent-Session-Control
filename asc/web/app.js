@@ -138,3 +138,31 @@ setInterval(() => { if (document.visibilityState === "visible") refresh(); }, 50
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refresh(); });
 refresh();
 loadPast();
+
+// The installed app: a worker makes it installable (sw.js passes everything to the network).
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+// iPhone: without a startup image of the exact screen size, iOS shows black before the first
+// paint, and Safari ignores the manifest for it. Draw plain white ones for this screen and common
+// neighbours (iOS wants an exact match; some models report the height off by the notch). Safari
+// takes them when the user taps "Add to Home Screen".
+(function iosStartupImages() {
+  if (!/iP(hone|ad|od)/.test(navigator.userAgent) || window.navigator.standalone) return;
+  const dpr = window.devicePixelRatio || 1;
+  const sizes = new Set([`${screen.width}x${screen.height}`]);
+  for (const [a, b] of [[390, 844], [393, 852], [402, 874], [430, 932], [440, 956], [375, 812], [414, 896],
+                        [428, 926], [375, 667], [414, 736]]) sizes.add(`${a}x${b}`);
+  for (const sz of sizes) {
+    const [w, h] = sz.split("x").map(Number);
+    for (const [cw, ch, orient] of [[w, h, "portrait"], [h, w, "landscape"]]) {
+      const c = document.createElement("canvas");
+      c.width = cw * dpr; c.height = ch * dpr;
+      const g = c.getContext("2d");
+      g.fillStyle = "#ffffff"; g.fillRect(0, 0, c.width, c.height);
+      const l = document.createElement("link");
+      l.rel = "apple-touch-startup-image"; l.href = c.toDataURL("image/png");
+      l.media = `screen and (device-width: ${w}px) and (device-height: ${h}px) and ` +
+                `(-webkit-device-pixel-ratio: ${dpr}) and (orientation: ${orient})`;
+      document.head.appendChild(l);
+    }
+  }
+})();
