@@ -185,6 +185,10 @@ v=$(px icon-maskable-512.png 26 27)  # on the corner's curve: a blend, so edges 
 [ "$(px apple-touch-icon.png 0 0)" = 3d3df5 ] && ok "apple-touch icon: full bleed" || bad "apple-touch corner: $(px apple-touch-icon.png 0 0)"
 [ "$(px favicon-512.png 0 0)" = 00000000 ] && [ "$(px favicon-512.png 256 4)" = 3d3df5ff ] && ok "favicon: transparent corners" || bad "favicon pixels"
 [ "$(px icon-192.png 96 96)" = ffffff ] && [ "$(px icon-512.png 256 256)" = ffffff ] && ok "the any icons are plain white" || bad "any icons not white"
+# Drawn once, then served from the cache (the server starts again after every idle exit).
+ic=$(ls "$HOME/.cache/agent-session-control/icons/"*-icon-maskable-512.png 2>/dev/null | head -1)
+[ -n "$ic" ] && [ "$(stat -c %a "$(dirname "$ic")")" = 700 ] && cmp -s "$ic" <(anon http://x/icon-maskable-512.png) \
+	&& ok "icons cached in a 0700 folder, the same bytes served" || bad "no icon cache: $ic"
 anon -D - -o /dev/null http://x/favicon.svg | seen -i '^content-type: image/svg+xml' && ok "favicon.svg" || bad "no favicon.svg"
 [ "$(acode -I http://x/sw.js)" = 200 ] && ok "HEAD on a public file" || bad "HEAD on a public file"
 r=""; for u in / /app.js /app.css /splash.js /api/state "/api/past?q=" /index.html /sw.js/ /./sw.js /%2e%2e/asc/dash.py /icon-1.png /favicon.ico; do
@@ -401,6 +405,8 @@ start_dash
 [ "$(code http://x/api/state)" = 404 ] && [ "$(code http://x/x/api/state)" = 404 ] && ok "outside the prefix: 404 (also a path as long as it)" || bad "outside the prefix served"
 [ "$(code http://x/u)" = 301 ] && dc -D - -o /dev/null http://x/u | seen -i '^location: /u/' && ok "the prefix without a slash redirects to /u/" || bad "no redirect for /u"
 TOK=$(token); [ ${#TOK} -ge 40 ] && ok "the page under the prefix" || bad "no page under the prefix"
+printf 'not a png' > "$ic"
+[ "$(anon http://x/u/icon-maskable-512.png | head -c 4 | od -An -tx1 | tr -d ' ')" = 89504e47 ] && ok "a cached file that is no PNG is drawn again" || bad "a broken cache file served"
 [ "$(acode http://x/u/manifest.json)" = 200 ] && [ "$(acode http://x/u/icon-192.png)" = 200 ] && ok "the app files under the prefix, without a login" || bad "app files under the prefix"
 [ "$(acode http://x/manifest.json)" = 403 ] && ok "and not outside it" || bad "the manifest served outside the prefix"
 stop_dash
@@ -474,6 +480,8 @@ asc/icons.py %%%     "apple-touch-icon.png": (180, 0.97, 0, WHITE), %%%     "app
 asc/icons.py %%%     "favicon-512.png": (512, 1, 0.25, None), %%%     "favicon-512.png": (512, 1, 0.25, WHITE),
 asc/icons.py %%%     "icon-512.png": (512, 0, 0, WHITE), %%%     "icon-512.png": (512, 1, 0, WHITE),
 asc/icons.py %%% return 0.0 if d >= 0.5 else 1.0 if d <= -0.5 else 0.5 - d %%% return 0.0 if d >= 0.5 else 1.0
+asc/icons.py %%%         if data.startswith(PNG_SIG): %%%         if data:
+asc/icons.py %%%         os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True) %%%         os.makedirs(os.path.dirname(path), exist_ok=True)
 asc/dash.py %%% .replace("@V@", ICON_VER) %%% .replace("@X@", ICON_VER)
 asc/dash.py %%%         if self._public(self._path()): %%%         if self._public(urllib.parse.urlsplit(self.path).path):
 asc/dash.py %%% "start_url": f"./?v={ICON_VER}" %%% "start_url": "/"

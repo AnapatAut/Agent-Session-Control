@@ -600,8 +600,6 @@ def serve(sock_path=None, idle=600):
                 time.sleep(1)
             srv.shutdown()
         threading.Thread(target=watch, daemon=True).start()
-    # Draw the icons now, the launch splash first, so an app launch never waits for one.
-    threading.Thread(target=lambda: [icons.icon(n) for n in ("splash-512.png", *icons.ICONS)], daemon=True).start()
     try:
         srv.serve_forever(poll_interval=0.5)
     finally:

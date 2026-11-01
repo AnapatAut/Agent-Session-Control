@@ -12,11 +12,17 @@ at any size without scaling down. Plates and sizes follow the installable-app re
   splash-512.png       the same tile, so the page's splash starts where Samsung's ends.
   apple-touch-icon.png full bleed (iOS rounds it itself; transparency would turn black).
   favicon-512.png      the tab icon, transparent outside the tile.
+Drawing the set takes about 1.5 s, and the dashboard starts again after every idle exit, so each
+PNG is kept in ~/.cache/agent-session-control/icons under a name that changes with this file.
 """
 import functools
+import hashlib
 import math
+import os
 import struct
 import zlib
+
+from . import live
 
 BLUE, LIME, WHITE = (0x3d, 0x3d, 0xf5), (0xd7, 0xf3, 0x4f), (0xff, 0xff, 0xff)
 # The glyph on a 32-unit grid, as in web/favicon.svg.
@@ -100,8 +106,36 @@ def png(rows, alpha):
             + chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b""))
 
 
+PNG_SIG = b"\x89PNG\r\n\x1a\n"
+# Changes whenever this file does, so a cached icon is never one drawn by an older version.
+with open(__file__, "rb") as _f:
+    _KEY = hashlib.sha256(_f.read()).hexdigest()[:16]
+
+
+def cache_path(name):
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(base, "agent-session-control", "icons", f"{_KEY}-{name}")
+
+
 @functools.lru_cache(maxsize=None)
 def icon(name):
-    """The PNG bytes of one of ICONS, drawn once per process."""
+    """The PNG bytes of one of ICONS: from the cache when it holds a PNG there, else drawn and
+    cached (a cache that cannot be written only costs the drawing)."""
+    path = cache_path(name)
+    f = live.open_regular(path)
+    if f:
+        with f:
+            data = f.read(1 << 20)
+        if data.startswith(PNG_SIG):
+            return data
     n, glyph, rad, plate = ICONS[name]
-    return png(pixels(n, glyph, rad, plate), plate is None)
+    data = png(pixels(n, glyph, rad, plate), plate is None)
+    try:
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+    return data

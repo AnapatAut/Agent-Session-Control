@@ -1,7 +1,8 @@
 # Throwaway machine for tests/sandbox.sh: Ubuntu 24.04 booting real systemd, with one user
 # (sbuser, linger on, so it has a systemd user manager) and the repo's tracked files in /opt/asc.
 # Never used in production. Packages are baked in: the test network has no route out.
-FROM ubuntu:24.04
+# Pinned by digest (a re-pointed tag cannot swap it). Bump: docker buildx imagetools inspect ubuntu:24.04
+FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       systemd systemd-sysv dbus dbus-user-session tmux jq python3 curl procps iproute2 ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
