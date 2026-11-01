@@ -25,9 +25,10 @@ cleanup() { [ -n "$DPID" ] && kill "$DPID" 2>/dev/null; tm kill-server 2>/dev/nu
 trap cleanup EXIT
 pass=0 fail=0
 ok()  { echo "  ok    $1"; pass=$((pass + 1)); }
-bad() { echo "  FAIL  $1"; fail=$((fail + 1)); }
+bad() { echo "  FAIL  $1"; fail=$((fail + 1)); [ -z "${TEST_FAILFAST:-}" ] || exit 1; }
 asctl() { "$REPO/bin/asctl" "$@"; }
 seen() { grep "$@" >/dev/null; }
+. "$REPO/tests/mutate.sh"
 # Put together at run time, so the privacy check does not read them as real ones.
 E=@ N=.ts
 LOGIN="someone${E}example.com" HOST="machine.example${N}.net"
@@ -196,6 +197,12 @@ r=$(printf 'GET /sw.js HTTP/1.1\nHost: localhost\nTransfer-Encoding: chunked\n\n
 [ "$r" = 403 ] && ok "a public path, chunked: 403" || bad "a public path, chunked: $r"
 seen -F 'href="manifest.json?v=' "$T/page" && seen -F 'src="splash-512.png?v=' "$T/page" && ! seen -F '@V@' "$T/page" \
 	&& ok "the page links the manifest and icons, versioned" || bad "page: no manifest link or @V@ left"
+# Width, height or top animate on the main thread (a busy page makes them stutter); transform
+# and opacity run on the compositor.
+seen -E 'transition: transform' "$REPO/asc/web/app.css" && ! seen -E 'transition:[^;]*\b(width|height|top|left)\b' "$REPO/asc/web/app.css" \
+	&& ok "the splash animates only transform and opacity" || bad "the splash animates a property the compositor cannot"
+seen -F 'rel="preload" href="splash.js"' "$T/page" && seen -F 'rel="preload" href="splash-512.png?v=' "$T/page" \
+	&& ok "the splash script and image are preloaded" || bad "splash not preloaded"
 seen -F 'serviceWorker.register("sw.js")' "$REPO/asc/web/app.js" && ok "the page registers the worker (relative, works under a prefix)" || bad "no worker registration"
 
 echo "== state"
@@ -429,17 +436,7 @@ fi
 # DASH_MUTANTS=1: break the server one way at a time, in a copy; each must make this test fail.
 if [ "${DASH_MUTANTS:-}" = 1 ]; then
 	echo "== mutants"
-	while IFS= read -r m; do
-		[ -n "$m" ] || continue
-		f=${m%%' %%% '*}; rest=${m#*' %%% '}; old=${rest%%' %%% '*}; new=${rest#*' %%% '}
-		d=$(mktemp -d -p "$T") || exit 2
-		cp -r "$REPO/asc" "$REPO/bin" "$REPO/tests" "$d/"
-		body=$(<"$d/$f")
-		[[ $body == *"$old"* ]] || { bad "mutant does not apply: $f: $old"; continue; }
-		printf '%s\n' "${body/"$old"/"$new"}" > "$d/$f"
-		out=$(HOME="$REPO_HOME" DASH_MUTANTS='' bash "$d/tests/dash.sh" 2>&1)
-		seen '  FAIL  ' <<<"$out" && ok "mutant caught: $f: $old" || bad "mutant missed: $f: $old"
-	done <<'MUTANTS'
+	run_mutants dash.sh DASH_MUTANTS <<'MUTANTS'
 asc/dash.py %%% len(logins) == 1 and %%% len(logins) >= 1 and
 asc/dash.py %%%         if not (len(logins) == 1 and logins[0] == cfg["login"]): %%%         if not len(logins) == 1:
 asc/dash.py %%% len(fwd) == 1 and fwd[0] == cfg["host"] and %%% True and

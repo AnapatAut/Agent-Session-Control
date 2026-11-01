@@ -11,16 +11,15 @@ button { margin-right: 4px; }
 section { overflow-x: auto; }
 
 /* The installed app's launch splash (splash.js): white, like the phone's own launch screen, which
-   it starts from (--sys-icon at --sys-top), then the icon grows to --big at the centre. */
+   it starts from (the icon scaled to --k, its centre moved by --dy), then the icon grows to full
+   size at the centre. Only transform and opacity change, which the compositor animates without
+   layout, so a busy page cannot make it stutter. */
 #splash { position: fixed; inset: 0; background: #fff; display: none; z-index: 99; transition: opacity .25s;
-          --sys-icon: 11vmin; --sys-top: 44%; --big: 42vmin; }
-#splash img { position: absolute; left: 50%; top: var(--sys-top); width: var(--sys-icon); height: var(--sys-icon);
-              transform: translate(-50%, -50%);
-              transition: width .35s cubic-bezier(.2,.7,.2,1), height .35s cubic-bezier(.2,.7,.2,1), top .35s cubic-bezier(.2,.7,.2,1); }
-#splash.grow img { width: var(--big); height: var(--big); top: 50%; }
-html.samsung #splash { --sys-icon: 15.3vmin; }
-html.ios #splash { --ios-start: 20vmin; --ios-top: 50%; }  /* both set from splash.js */
-html.ios #splash img { width: var(--ios-start); height: var(--ios-start); top: var(--ios-top); }
-html.ios #splash.grow img { width: var(--big); height: var(--big); top: 50%; }
+          --k: calc(11 / 42); --dy: -6vh; }  /* Chrome's own launch icon: 11vmin at 44% of the height */
+#splash img { position: absolute; left: 50%; top: 50%; width: 42vmin; height: 42vmin; will-change: transform;
+              transform: translate(-50%, -50%) translateY(var(--dy)) scale(var(--k));
+              transition: transform .35s cubic-bezier(.2,.7,.2,1); }
+#splash.grow img { transform: translate(-50%, -50%); }
+html.samsung #splash { --k: calc(15.3 / 42); }  /* Samsung Internet shows the whole maskable tile */
 /* only the installed app on a phone: never in a browser tab or on a desktop */
 @media (display-mode: standalone) { html.android #splash, html.ios #splash { display: block; } }

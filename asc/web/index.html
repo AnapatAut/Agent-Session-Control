@@ -17,6 +17,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Sessions">
 <link rel="stylesheet" href="app.css">
+<!-- fetched with the stylesheet, not after it: the splash must be ready at the first paint -->
+<link rel="preload" href="splash.js" as="script">
+<link rel="preload" href="splash-512.png?v=@V@" as="image">
 <script src="app.js" defer></script>
 </head>
 <body>

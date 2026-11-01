@@ -23,7 +23,7 @@ cleanup() { tm kill-server 2>/dev/null; rm -rf "$T"; }
 trap cleanup EXIT
 pass=0 fail=0
 ok()  { echo "  ok    $1"; pass=$((pass + 1)); }
-bad() { echo "  FAIL  $1"; fail=$((fail + 1)); }
+bad() { echo "  FAIL  $1"; fail=$((fail + 1)); [ -z "${TEST_FAILFAST:-}" ] || exit 1; }
 asctl() { "$REPO/bin/asctl" "$@"; }
 # What asctl writes to stderr (its exit status is checked separately, if at all).
 errof() { { "$REPO/bin/asctl" "$@" >/dev/null; } 2>&1; true; }
@@ -32,6 +32,7 @@ jqe() { jq -r "$1" "$REG"; }
 # grep that reads all its input: grep -q stops at the first match, and the writer's broken
 # pipe would then fail the pipeline (pipefail), taking the wrong branch of a check.
 seen() { grep "$@" >/dev/null; }
+. "$REPO/tests/mutate.sh"
 # The pid of the live fake claude in a tmux session, waiting up to 10 s.
 claude_in() {
 	local i pp
@@ -248,17 +249,7 @@ asctl note "$id2" -- "-starts with a dash" >/dev/null && ok "a note may start wi
 # ASC_MUTANTS=1: break asctl one way at a time, in a copy; each must make this test fail.
 if [ "${ASC_MUTANTS:-}" = 1 ]; then
 	echo "== mutants"
-	while IFS= read -r m; do
-		[ -n "$m" ] || continue
-		f=${m%%' %%% '*}; rest=${m#*' %%% '}; old=${rest%%' %%% '*}; new=${rest#*' %%% '}
-		d=$(mktemp -d -p "$T") || exit 2
-		cp -r "$REPO/asc" "$REPO/bin" "$REPO/tests" "$d/"
-		body=$(<"$d/$f")
-		[[ $body == *"$old"* ]] || { bad "mutant does not apply: $f: $old"; continue; }
-		printf '%s\n' "${body/"$old"/"$new"}" > "$d/$f"
-		out=$(HOME="$REPO_HOME" ASC_MUTANTS='' bash "$d/tests/asc.sh" 2>&1)
-		grep -q '  FAIL  ' <<<"$out" && ok "mutant caught: $f: $old" || bad "mutant missed: $f: $old"
-	done <<'MUTANTS'
+	run_mutants asc.sh ASC_MUTANTS <<'MUTANTS'
 asc/live.py %%% and proc_start is not None and st[2] == str(proc_start) %%% 
 asc/live.py %%% st is not None and st[0] == "claude" and %%% st is not None and
 asc/live.py %%%                 if s["status"] == "busy": %%%                 if False:
