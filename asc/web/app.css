@@ -1,7 +1,7 @@
 /* The look of the serve dashboard on :8989: light, white rounded cards, pills and a bottom sheet. */
 :root { --bg: #f1f1f4; --card: #fff; --ink: #17171c; --mute: #7c7c88; --faint: #b3b3bd; --line: #ececf1; --well: #f6f6f9;
         --blue: #3d3df5; --lime: #d7f34f; --dark: #1a1a1f; --red: #e5484d; --red-soft: #fdecec;
-        --amber: #b7791f; --amber-soft: #fff4dc; --green: #178a43; }
+        --amber: #b7791f; --amber-soft: #fff4dc; }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; background: var(--bg); color: var(--ink); -webkit-font-smoothing: antialiased;
              font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans Thai", sans-serif;
@@ -131,9 +131,9 @@ details.top[open] summary::after { transform: rotate(90deg); }
 .state .d { font-size: 12.5px; color: var(--mute); margin-top: 2px; }
 .btns { flex: none; display: flex; align-items: center; gap: 10px; }
 .btn.rcb { flex: none; min-height: 0; height: 52px; min-width: 64px; padding: 0 16px; font-size: 16px; color: var(--mute); }
-.btn.rcb[aria-pressed="true"] { background: var(--green); color: #fff; }
+.btn.rcb[aria-pressed="true"] { background: var(--lime); color: var(--ink); }
 .btn.pw { flex: none; min-height: 0; width: 52px; height: 52px; padding: 0; border-radius: 50%; display: grid; place-items: center; color: #fff; }
-.btn.pw.on { background: var(--green); } .btn.pw.off { background: var(--red); }
+.btn.pw.on { background: var(--lime); color: var(--ink); } .btn.pw.off { background: var(--red); }
 .btn.pw svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
 .rcd { font-size: 12px; color: var(--mute); margin-top: 8px; overflow-wrap: anywhere; }
 .warn { font-size: 13px; font-weight: 600; border-radius: 14px; padding: 10px 12px; margin-top: 10px; line-height: 1.4;

@@ -423,7 +423,7 @@ function favSheet(e) {
   const title = on ? "On · " + l.label : (l.group === "attention" ? "Off · " + l.label : "Off");
   const rcDesc = (on ? (e.rc_live ? "Live now" : "Not live now") + (e.rc !== e.rc_live ? " · changes at its next start" : "")
                      : "Used when it starts") + (e.rc ? " · title " + (e.rc_title || e.tmux) : "");
-  // its state, and beside it the two actions used most: rc (green while on) and power (green on, red off)
+  // its state, and beside it the two actions used most: rc (lime while on) and power (lime on, red off)
   // rc shows the live state of a running claude (a tap on grey tries again), else the setting
   const rcOn = on ? e.rc_live : e.rc;
   const rcb = btn("rc", "rcb", () => act({ action: "rc", on: !rcOn, ...ref }), wait);
