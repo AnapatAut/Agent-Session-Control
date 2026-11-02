@@ -410,19 +410,18 @@ function powerIcon() {
 }
 function kv(pairs) {
   const d = el("dl", null, "kv");
-  for (const [k, v] of pairs) if (v !== undefined && v !== null && v !== "") d.append(el("dt", k), el("dd", v, k === "tmux" || k === "Session id" ? "mono" : ""));
+  for (const [k, v] of pairs) {
+    if (v === undefined || v === null || v === "") continue;
+    const dd = el("dd", v, k === "tmux" || k === "Session id" ? "mono" : "");
+    dd.dataset.k = k;
+    d.append(el("dt", k), dd);
+  }
   return d;
-}
-
-function favDesc(e) {
-  return isOn(e) ? [e.last_on ? "since " + when(e.last_on) : "", size(e.mem_kb)].filter(Boolean).join(" · ")
-                 : (e.last_off ? "since " + when(e.last_off) : "");
 }
 
 function favSheet(e) {
   const l = look(e), ref = { id: e.id4, tmux: e.tmux }, on = isOn(e), wait = pending.has(e.id4);
   const out = [el("h2", e.name), el("div", "#" + e.id4 + " · " + tilde(e.cwd), "s2 mono")];
-  const title = on ? "On · " + l.label : (l.group === "attention" ? "Off · " + l.label : "Off");
   const rcDesc = (on ? (e.rc_live ? "Live now" : "Not live now") + (e.rc !== e.rc_live ? " · changes at its next start" : "")
                      : "Used when it starts") + (e.rc ? " · title " + (e.rc_title || e.tmux) : "");
   // its state, and beside it the two actions used most: rc (lime while on) and power (lime on, red off)
@@ -442,9 +441,7 @@ function favSheet(e) {
   pwb.append(powerIcon());
   pwb.setAttribute("aria-label", on ? "On: turn it off" : "Off: turn it on");
   pwb.title = on ? "Turn off" : "Turn on";
-  out.push(kids(el("div", null, "top2"),
-    kids(el("div", null, "state"), el("div", title, "t " + (on ? "" : l.dot)), el("div", favDesc(e), "d")),
-    kids(el("div", null, "btns"), rcb, pwb)));
+  out.push(kids(el("div", null, "btns"), pwb, rcb));  // the power button tells on or off
   out.push(el("div", "Remote control " + (e.rc ? "on" : "off") + " · " + rcDesc, "rcd"));
   if (l.why) out.push(el("div", l.why, "warn " + (l.dot === "bad" ? "bad" : "")));
   if (on && e.busy) out.push(el("div", "Busy: " + e.busy + ". Off asks before forcing it.", "warn"));
@@ -480,7 +477,7 @@ function favSheet(e) {
   out.push(kids(el("div", null, "field"), ta, count), save);
 
   out.push(el("span", "SESSION", "lab"), kv([
-    ["Status", on ? statusText(e) : ""], ["Permissions", perm], ["tmux", e.tmux], ["Session id", e.session_id], ["Claudes", e.claudes > 1 ? e.claudes : ""],
+    ["Status", on ? statusText(e) : l.label.replace(/^off since.*/, "Off")], ["Memory", on ? size(e.mem_kb) : ""], ["Permissions", perm], ["tmux", e.tmux], ["Session id", e.session_id], ["Claudes", e.claudes > 1 ? e.claudes : ""],
     ["Last on", full(e.last_on)], ["Last off", full(e.last_off)]]));
   out.push(kids(el("div", null, "acts"),
     btn("Copy attach", "", async () => {
@@ -539,7 +536,8 @@ function renderSheet() {
   const id = sheetOf.kind === "fav" ? item.id4 : item.session_id;
   const sig = sheetOf.kind + ":" + pending.has(id) + ":" + JSON.stringify({ ...item, mem_kb: 0 });
   if (sig === sheetSig) {
-    if (sheetOf.kind === "fav") sheet.querySelector(".state .d").textContent = favDesc(item);
+    const mem = sheet.querySelector('dd[data-k="Memory"]');  // the one figure that moves on its own
+    if (mem && item.mem_kb) mem.textContent = size(item.mem_kb);
     return;
   }
   sheetSig = sig;
