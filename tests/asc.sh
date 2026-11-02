@@ -19,7 +19,8 @@ mem() { printf 'MemTotal: %s kB\nMemAvailable: %s kB\nSwapTotal: 0 kB\nSwapFree:
 export ASC_MEMINFO="$T/meminfo"
 mem 32000000 16000000
 tm() { tmux -L "$ASC_TMUX_SOCKET" -f /dev/null "$@"; }
-cleanup() { tm kill-server 2>/dev/null; rm -rf "$T"; }
+# kill-server has a time limit: it once hung for hours on a stuck test server (and with it this run)
+cleanup() { timeout -k 2 10 tmux -L "$ASC_TMUX_SOCKET" -f /dev/null kill-server 2>/dev/null; rm -rf "$T"; }
 trap cleanup EXIT
 pass=0 fail=0
 ok()  { echo "  ok    $1"; pass=$((pass + 1)); }

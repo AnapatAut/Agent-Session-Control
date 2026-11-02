@@ -21,7 +21,8 @@ mem 32000000 16000000
 export PATH="$REPO/tests/dash/bin:$PATH"  # a fake tailscale: the operator setting
 tm() { tmux -L "$ASC_TMUX_SOCKET" -f /dev/null "$@"; }
 DPID=
-cleanup() { [ -n "$DPID" ] && kill "$DPID" 2>/dev/null; tm kill-server 2>/dev/null; rm -rf "$T"; }
+# kill-server has a time limit: it once hung for hours on a stuck test server (and with it this run)
+cleanup() { [ -n "$DPID" ] && kill "$DPID" 2>/dev/null; timeout -k 2 10 tmux -L "$ASC_TMUX_SOCKET" -f /dev/null kill-server 2>/dev/null; rm -rf "$T"; }
 trap cleanup EXIT
 pass=0 fail=0
 ok()  { echo "  ok    $1"; pass=$((pass + 1)); }
