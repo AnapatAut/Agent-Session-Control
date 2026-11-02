@@ -269,6 +269,7 @@ def _snapshot():
             "id4": e["id4"], "name": e["name"], "tmux": e["tmux"], "cwd": e["cwd"],
             "session_id": e.get("session_id"), "rc": bool(e.get("rc")), "rc_title": e.get("rc_title") or "",
             "rc_live": bool(s and s["rc"]), "claude_name": s["name"] if s else "",  # its name since it started
+            "claude_name_kept": bool(s and s["peer_name"]),  # one a restart does not change
             "mode": e.get("mode", "auto"), "resurrect": bool(e.get("resurrect")),
             # the mode claude last ran in (its transcript), and what a start would use
             "mode_used": cli.last_mode(e["session_id"]) if e.get("session_id") else None,

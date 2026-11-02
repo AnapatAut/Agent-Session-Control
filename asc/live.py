@@ -113,6 +113,9 @@ def read_sessions(home=None):
         s = {"file": path, "ok": bool(ok), "pid": pid, "session_id": sid, "cwd": raw.get("cwd"),
              "name": raw.get("name") if isinstance(raw.get("name"), str) else "",
              "derived": raw.get("nameSource") == "derived",  # a made-up name (folder-NN), not one given
+             # a name claude took over --name: from its own record of an old background job
+             # (~/.claude/jobs/<id>/state.json), applied again at every start
+             "peer_name": raw.get("nameSource") == "peer",
              "status": raw.get("status") if raw.get("status") in ("busy", "idle", "shell", "waiting") else "unknown",
              "rc": bool(raw.get("bridgeSessionId")), "kind": raw.get("kind"),
              # why claude waits ("dialog open", "input needed", ...), and when its status last changed

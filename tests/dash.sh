@@ -293,7 +293,10 @@ rm -f "$HOME/fake-busy"
 [ "$(post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"Bad Name"}' | tail -1)" = 400 ] && ok "rename to a bad name: 400" || bad "a bad name accepted"
 asctl mode "$id" auto >/dev/null
 [ "$(post '{"action":"on","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] || bad "on before the rename failed"
-state | jq -e --arg t "$TM" '.favorites[0].claude_name == $t' >/dev/null && ok "state: the name its claude goes by" || bad "state: claude_name: $(state | jq -c '.favorites[0].claude_name')"
+state | jq -e --arg t "$TM" '.favorites[0] | .claude_name == $t and .claude_name_kept == false' >/dev/null && ok "state: the name its claude goes by" || bad "state: claude_name: $(state | jq -c '.favorites[0].claude_name')"
+touch "$HOME/fake-peer-name"; sleep 0.6
+state | jq -e '.favorites[0].claude_name_kept == true' >/dev/null && ok "state: a name claude keeps from its own job record (a restart does not change it)" || bad "state: claude_name_kept not set"
+rm -f "$HOME/fake-peer-name"; sleep 0.6
 out=$(post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"db"}')
 [ "$(tail -1 <<<"$out")" = 200 ] && seen 'renamed to db-[0-9]* and restarted' <<<"$out" && state | jq -e '.favorites[0] | (.tmux | startswith("db-")) and .claude_name == .tmux' >/dev/null \
 	&& ok "rename from the page restarts an idle claude: its name follows" || bad "rename: $out / $(state | jq -c '.favorites[0] | {tmux, claude_name}')"

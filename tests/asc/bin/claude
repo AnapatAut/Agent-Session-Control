@@ -69,6 +69,7 @@ write() {
 	[ -n "$rc" ] && bridge=',"bridgeSessionId":"'"$rc"'"'
 	[ -e "$HOME/fake-rc" ] && bridge=',"bridgeSessionId":"session_fake"'
 	bridge+=$src
+	[ -e "$HOME/fake-peer-name" ] && bridge+=',"nameSource":"peer"'
 	# $HOME/fake-task: a command running, as claude runs one (a child bash sourcing its shell snapshot)
 	if [ -e "$HOME/fake-task" ] && [ -z "$task" ]; then
 		bash -c "source $HOME/.claude/shell-snapshots/fake.sh 2>/dev/null || true && sleep 120 && pwd >/dev/null" & task=$!

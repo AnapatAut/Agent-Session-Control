@@ -117,7 +117,7 @@ def guard(s):
     pane = s["pane"]["pane_id"]
     if tmuxctl.pane_in_mode(pane):
         return "its pane is in copy mode"
-    t = prompt_text(screen(pane))
+    t = prompt_text(steady(pane))
     if t is None:
         return "its screen does not show claude's prompt (a dialog or a menu is open?)"
     if t:
@@ -138,7 +138,7 @@ def take_back(pane, cmd):
     """Remove what asctl typed, only when the prompt holds nothing but (a start of) it."""
     if tmuxctl.pane_in_mode(pane):
         tmuxctl.send_pane(pane, "-X", "cancel")
-    t = prompt_text(screen(pane))
+    t = prompt_text(steady(pane))
     if t and cmd.startswith(t):
         tmuxctl.send_pane(pane, *["BSpace"] * len(t))
         t = wait_for(lambda: prompt_text(screen(pane)) == "", 2) and ""

@@ -449,7 +449,9 @@ function favSheet(e) {
   pwb.setAttribute("aria-label", on ? "On: turn it off" : "Off: turn it on");
   pwb.title = on ? "Turn off" : "Turn on";
   out.push(kids(el("div", null, "btns"), pwb, rcb));  // the power button tells on or off
-  if (on && e.claude_name && e.claude_name !== e.tmux) {  // renamed while it ran: the name comes with a restart
+  if (on && e.claude_name && e.claude_name !== e.tmux && e.claude_name_kept) {
+    out.push(el("div", `Claude keeps the name ${e.claude_name} from an old job record of its own; a restart does not change it.`, "warn"));
+  } else if (on && e.claude_name && e.claude_name !== e.tmux) {  // renamed while it ran: the name comes with a restart
     out.push(kids(el("div", null, "warn"), el("div", `Still running as ${e.claude_name}. Restart to use the new name.`),
       btn("Restart", "", async () => {
         if (!await ask({ title: `Restart ${e.tmux}?`, text: "Its claude stops and starts again on the same conversation. Only when it is idle and runs no command or subagent.", ok: "Restart" })) return;
