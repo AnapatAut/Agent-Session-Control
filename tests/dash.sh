@@ -22,7 +22,7 @@ export PATH="$REPO/tests/dash/bin:$PATH"  # a fake tailscale: the operator setti
 tm() { tmux -L "$ASC_TMUX_SOCKET" -f /dev/null "$@"; }
 DPID=
 # kill-server has a time limit: it once hung for hours on a stuck test server (and with it this run)
-cleanup() { [ -n "$DPID" ] && kill "$DPID" 2>/dev/null; timeout -k 2 10 tmux -L "$ASC_TMUX_SOCKET" -f /dev/null kill-server 2>/dev/null; rm -rf "$T"; }
+cleanup() { [ -n "$DPID" ] && kill "$DPID" 2>/dev/null; timeout -k 2 10 tmux -L "$ASC_TMUX_SOCKET" -f /dev/null kill-server 2>/dev/null; rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$ASC_TMUX_SOCKET"; rm -rf "$T"; }
 trap cleanup EXIT
 pass=0 fail=0
 ok()  { echo "  ok    $1"; pass=$((pass + 1)); }
@@ -320,6 +320,13 @@ seen 'claude and its claude.ai title too' <<<"$out" && state | jq -e --arg t "$T
 [ "$(post '{"action":"restart","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 400 ] && ok "no restart action from the page" || bad "the page can restart"
 post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'","force":true}' >/dev/null
 [ "$(post '{"action":"forget","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] && state | jq -e '.favorites | length == 0' >/dev/null && ok "forget" || bad "forget failed"
+ev=$(dc "http://x/api/events?id=$id")
+jq -e '.keep_days == 7 and (.events | length > 5) and ([.events[] | select(.kind != "mode") | .by] | all(. == "page"))
+	and any(.events[]; .kind == "mode" and .by == "cli")
+	and ([.events[].kind] | index("fav") and index("off") and index("on") and index("rename") and index("forget") and index("refused"))
+	and .events[0].kind == "forget"' <<<"$ev" >/dev/null && ok "events: the page's actions by page (asctl's own by cli), newest first" || bad "events: $(jq -c '[.events[] | [.kind, .by]]' <<<"$ev")"
+dc "http://x/api/events" | jq -e '.events | length > 5' >/dev/null && ok "events: all of them without an id" || bad "events: all"
+[ "$(dc -o /dev/null -w '%{http_code}' "http://x/api/events?id=12")" = 400 ] && ok "events: a bad id is 400" || bad "events: bad id accepted"
 
 echo "== past conversations"
 mkdir -p "$HOME/.claude/projects/-x"
@@ -508,6 +515,8 @@ fi
 if [ "${DASH_MUTANTS:-}" = 1 ]; then
 	echo "== mutants"
 	run_mutants dash.sh DASH_MUTANTS <<'MUTANTS'
+asc/dash.py %%% , env=dict(os.environ, ASC_BY="page")) %%% )
+asc/dash.py %%%             if q is not None and not registry.ID4_RE.fullmatch(q): %%%             if False:
 asc/dash.py %%% len(logins) == 1 and %%% len(logins) >= 1 and
 asc/dash.py %%%         if not (len(logins) == 1 and logins[0] == cfg["login"]): %%%         if not len(logins) == 1:
 asc/dash.py %%% len(fwd) == 1 and fwd[0] == cfg["host"] and %%% True and
@@ -550,7 +559,7 @@ asc/icons.py %%%         os.makedirs(os.path.dirname(path), mode=0o700, exist_ok
 asc/dash.py %%% .replace("@V@", ICON_VER) %%% .replace("@X@", ICON_VER)
 asc/dash.py %%%         if self._public(self._path()): %%%         if self._public(urllib.parse.urlsplit(self.path).path):
 asc/dash.py %%% "start_url": f"./?v={ICON_VER}" %%% "start_url": "/"
-asc/live.py %%%                 if own_sid and s["session_id"] != own_sid: %%%                 if False:
+asc/live.py %%%                 if own_sid and own_sid not in (s["session_id"], (s.get("host") or {}).get("session_id")): %%%                 if False:
 asc/live.py %%%     except (ValueError, RecursionError): %%%     except ValueError:
 asc/past.py %%%             except (ValueError, RecursionError): %%%             except ValueError:
 asc/past.py %%%     if not stat.S_ISREG(st.st_mode): %%%     if False:

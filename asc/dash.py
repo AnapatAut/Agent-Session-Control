@@ -55,7 +55,7 @@ import threading
 import time
 import urllib.parse
 
-from . import cli, icons, live, memory, past, registry, tmuxctl
+from . import cli, events, icons, live, memory, past, registry, tmuxctl
 from .registry import RegistryError
 
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
@@ -354,7 +354,7 @@ def _text(v):
 
 def run_asctl(argv):
     r = subprocess.run([os.path.join(cli.HERE, "bin", "asctl")] + argv, capture_output=True, text=True,
-                       timeout=90, stdin=subprocess.DEVNULL)
+                       timeout=90, stdin=subprocess.DEVNULL, env=dict(os.environ, ASC_BY="page"))
     return r.returncode == 0, r.stdout.strip(), r.stderr.strip()
 
 
@@ -475,6 +475,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/state":
             state, _ = snapshot()
             return self._send(200, dict(state, login=self.server.cfg["login"], home=os.path.expanduser("~")))
+        if path == "/api/events":
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("id", [None])[0]
+            if q is not None and not registry.ID4_RE.fullmatch(q):
+                return self._send(400, {"error": "id must be a 4-digit id"})
+            return self._send(200, {"events": events.read(q, 200), "keep_days": events.KEEP_DAYS})
         if path == "/api/past":
             q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("q", [""])[0]
             _, exclude = snapshot()

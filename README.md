@@ -36,7 +36,13 @@ asctl rename 0421 db        # db-0421; a running claude, when idle, gets /rename
                             # which claude also sends to its claude.ai session (the rc title)
 asctl restart 0421          # off and on again (--resume), only when idle and running nothing
 asctl forget 0421
+asctl events 0421           # what happened to it (on, off, rename, refused, ended, ...), kept 7 days
 ```
+
+Every action is logged in `~/.local/state/agent-session-control/events.jsonl` (0600; one JSON
+line each: time, who (cli, page, watch, boot), what, text). A refused action is logged as
+`refused`, one that went wrong after changing something as `failed`. The file is trimmed to
+7 days and 2 MB; logging never stops an action.
 
 It never starts a tmux server itself (the server would belong to asctl's process); a later
 phase adds `asctl-tmux.service` to own it. Every tmux target is exact (`=name`, `=name:`), every

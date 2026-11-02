@@ -23,11 +23,13 @@
                                    resurrect start always has rc
   asctl note ID TEXT               a note shown with it ("" clears it)
   asctl forget ID                  drop the favorite; a running session is left alone
+  asctl events [ID] [--limit N]    what happened, oldest first (kept 7 days; asc/events.py)
   asctl dash [--socket P] [--idle S]
                                    the dashboard server, on a unix socket (see asc/dash.py)
 ID is the 4-digit id or the full NAME-ID. Nothing here starts a tmux server: it would then
 belong to asctl's own process (a later phase adds asctl-tmux.service for that).
 """
+import contextlib
 import datetime
 import glob
 import json
@@ -37,7 +39,7 @@ import sys
 import time
 import uuid
 
-from . import live, memory, rclive, registry, tmuxctl
+from . import events, live, memory, rclive, registry, tmuxctl
 from .registry import RegistryError
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -45,6 +47,36 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def out(*a):
     print(*a, flush=True)
+
+
+def say(kind, e, msg, **extra):
+    """Print what was done and log it as an event of the entry e."""
+    out(msg)
+    events.log(kind, e, msg, **extra)
+
+
+class ActionFailed(RegistryError):
+    """An action that went wrong after it had changed something (logged as failed, not refused)."""
+
+
+@contextlib.contextmanager
+def refusals(e, what):
+    """Log an action on e that was refused or failed (the error still goes to the caller)."""
+    try:
+        yield
+    except ActionFailed as x:
+        events.log("failed", e, f"{what}: {x}")
+        raise
+    except RegistryError as x:
+        events.log("refused", e, f"{what}: {x}")
+        raise
+    except Exception as x:
+        events.log("failed", e, f"{what}: {type(x).__name__}: {x}")
+        raise
+
+
+# Commands that change something: each is logged when refused or failed (main).
+ACTIONS = {"fav", "on", "off", "rename", "restart", "mode", "rc", "resurrect", "forget"}
 
 
 def exit_file(id4):
@@ -278,7 +310,7 @@ def cmd_fav(args):
             "resurrect": False, "want_on": bool(s), "note": "", "created": t,
             "last_on": t if s else None, "last_off": None,
         }
-    out(f"favorited {id4} {tmux} ({cwd})")
+    say("fav", data["entries"][id4], f"favorited {id4} {tmux} ({cwd})", session=sid)
     return 0
 
 
@@ -320,12 +352,12 @@ def wait_started(e, timeout=40):
 
 
 def cmd_on(args):
-    id4 = registry.find(registry.load(), args.id)["id4"]
-    with registry.entry_lock(id4):
-        return _on(id4, args.force_memory)
+    e = registry.find(registry.load(), args.id)
+    with registry.entry_lock(e["id4"]):
+        return _on(e["id4"], args.force_memory)
 
 
-def _on(id4, force_memory, say=True):
+def _on(id4, force_memory, loud=True):
     """On, with the entry's lock held."""
     e = registry.find(registry.load(), id4)
     server = tmuxctl.server_pid()
@@ -357,26 +389,29 @@ def _on(id4, force_memory, say=True):
     wrap = os.path.join(HERE, "bin", "asctl-wrap")
     r = tmuxctl.new_session(e["tmux"], e["cwd"], [wrap, exit_file(e["id4"])] + argv)
     if r.returncode != 0:
-        raise RegistryError(f"tmux new-session failed: {r.stderr.strip()}")
+        raise ActionFailed(f"tmux new-session failed: {r.stderr.strip()} (it is marked on)")
     if tmuxctl.server_pid() != server:
         # The server ended between the check and new-session, which then started one of its
         # own under asctl. Close that session: the new server, empty, exits with it.
         tmuxctl.kill_session(e["tmux"])
-        raise RegistryError("the tmux server ended while starting; nothing was started")
+        raise ActionFailed("the tmux server ended while starting; nothing was started (it is marked on)")
     s = wait_started(e)
     if not s:
-        out(f"{e['tmux']}: tmux session started, but no claude came up (see: tmux attach -t ={e['tmux']})")
+        say("failed", e, f"{e['tmux']}: tmux session started, but no claude came up (see: tmux attach -t ={e['tmux']})")
         return 1
+    events.log("on", e, f"claude {s['pid']}, session {s['session_id']}" + (" (past the memory gate)" if force_memory else ""),
+               mode=argv[argv.index("--permission-mode") + 1], rc="--remote-control" in argv)
     if s["session_id"] != e["session_id"]:
         with registry.changing() as data:
             x = registry.find(data, e["id4"])
             x["lineage"] = ([x["session_id"]] + x.get("lineage", []))[:5]
             x["session_id"] = s["session_id"]
+        events.log("followed", e, f"session {e['session_id']} is now {s['session_id']} (claude chose it at start)")
     if "--remote-control" in argv and (e.get("rc_title") or e["tmux"]) == e["tmux"]:
         why = send_title(s, e["tmux"])
         if why:
-            out(f"{e['tmux']}: its name not sent to claude.ai: {why}")
-    if say:
+            say("rc", e, f"{e['tmux']}: its name not sent to claude.ai: {why}")
+    if loud:
         out(f"on: {e['tmux']} (claude {s['pid']}, session {s['session_id']})")
     return 0
 
@@ -393,12 +428,12 @@ def send_title(s, name, wait=20):
 
 
 def cmd_off(args):
-    id4 = registry.find(registry.load(), args.id)["id4"]
-    with registry.entry_lock(id4):
-        return _off(id4, args.force)
+    e = registry.find(registry.load(), args.id)
+    with registry.entry_lock(e["id4"]):
+        return _off(e["id4"], args.force)
 
 
-def _off(id4, force, say=True):
+def _off(id4, force, loud=True):
     """Off, with the entry's lock held."""
     e = registry.find(registry.load(), id4)
     lv = live.live()
@@ -421,7 +456,8 @@ def _off(id4, force, say=True):
         # Checked again just before the signal: the claude may have been moved out meanwhile.
         panes = {p["pane_pid"] for p in tmuxctl.panes(e["tmux"])}
         if not live.alive(s["pid"], s["proc_start"]) or not panes.intersection(live.ancestors(s["pid"])):
-            raise RegistryError(f"claude {s['pid']} changed or left {e['tmux']!r} while checking; nothing signalled")
+            raise ActionFailed(f"claude {s['pid']} changed or left {e['tmux']!r} while checking; nothing signalled "
+                               f"(it is marked off)")
         os.kill(s["pid"], signal.SIGTERM)
         for _ in range(100):
             if not live.alive(s["pid"], s["proc_start"]):
@@ -429,11 +465,14 @@ def _off(id4, force, say=True):
             time.sleep(0.1)
         else:
             out(f"claude {s['pid']} still runs 10 s after SIGTERM; closing its tmux session anyway")
+        ended = f"claude {s['pid']} " + ("ended" if not live.alive(s["pid"], s["proc_start"]) else "still ran after SIGTERM")
         if job and live.alive(job["pid"], job["proc_start"]):
-            out(f"its background job (claude {job['pid']}, session {job['session_id']}) runs on in Claude Code")
+            ended += f"; its background job (claude {job['pid']}, session {job['session_id']}) runs on in Claude Code"
+            out(ended)
     if up:
         tmuxctl.kill_session(e["tmux"])
-    if say:
+    events.log("off", e, (ended if s else "no claude ran") + (", forced" if force else ""))
+    if loud:
         out(f"off: {e['tmux']}")
     return 0
 
@@ -455,20 +494,20 @@ def _restart(id4):
     why = live.busy_reason(e["tmux"], lv, own_sid=e.get("session_id"))
     if why:
         raise RegistryError(f"busy: {why}")
-    _off(id4, False, say=False)
+    _off(id4, False, loud=False)
     try:
         # it was just running, so its memory is there: no memory gate
-        return _on(id4, True, say=False)
+        return _on(id4, True, loud=False)
     except RegistryError as x:
-        raise RegistryError(f"it is off now, and turning it on again failed: {x}")
+        raise ActionFailed(f"it is off now, and turning it on again failed: {x}")
 
 
 def cmd_restart(args):
-    id4 = registry.find(registry.load(), args.id)["id4"]
-    with registry.entry_lock(id4, wait=True):
-        r = _restart(id4)
+    e = registry.find(registry.load(), args.id)
+    with registry.entry_lock(e["id4"], wait=True):
+        r = _restart(e["id4"])
     if r == 0:
-        out(f"restarted: {registry.find(registry.load(), id4)['tmux']} (same conversation)")
+        say("restart", e, f"restarted: {e['tmux']} (same conversation)")
     return r
 
 
@@ -486,25 +525,27 @@ def cmd_rename(args):
                     raise RegistryError(f"could not rename tmux session {e['tmux']!r}")
             if e.get("rc_title") == e["tmux"]:
                 e["rc_title"] = new
+            old = e["tmux"]
             e["name"], e["tmux"] = name, new
         s = live_in(e)
         if not s or s["name"] == new:
-            out(f"renamed: {new}")
+            say("rename", e, f"renamed: {new}", old=old)
         elif not args.restart:
             # /rename: claude takes the name at once and sends it to its claude.ai session (a
             # restart would not: --resume reconnects to that session, which keeps its title)
             why = rclive.rename(s, new)
             if why:
-                out(f"renamed to {new}; claude's own name not changed now: {why}. Rename again once it is idle")
+                say("rename", e, f"renamed to {new}; claude's own name not changed now: {why}. Rename again once it is idle", old=old)
             else:
-                out(f"renamed to {new}, claude and its claude.ai title too")
+                say("rename", e, f"renamed to {new}, claude and its claude.ai title too", old=old)
         else:
             try:
                 if _restart(id4) != 0:
+                    events.log("rename", e, f"renamed to {new}; the restart did not bring claude back", old=old)
                     return 1
-                out(f"renamed to {new} and restarted (same conversation)")
+                say("rename", e, f"renamed to {new} and restarted (same conversation)", old=old)
             except RegistryError as x:
-                out(f"renamed to {new}; not restarted now: {x}. Restart it once idle (asctl restart {id4})")
+                say("rename", e, f"renamed to {new}; not restarted now: {x}. Restart it once idle (asctl restart {id4})", old=old)
     return 0
 
 
@@ -514,7 +555,7 @@ def cmd_mode(args):
     with registry.changing() as data:
         e = registry.find(data, args.id)
         e["mode"] = args.mode
-    out(f"{e['tmux']}: mode {args.mode} (used when its transcript names none)")
+    say("mode", e, f"{e['tmux']}: mode {args.mode} (used when its transcript names none)")
     return 0
 
 
@@ -533,12 +574,12 @@ def cmd_rc(args):
         head = f"{e['tmux']}: rc {args.state}" + (f", title {e.get('rc_title') or e['tmux']!r}" if on else "")
         s = None if args.next_start else live_in(e)
         if not s:
-            out(head + " from its next start")
+            say("rc", e, head + " from its next start")
         elif s["rc"] == on:
-            out(head + (" (live already)" if on else " (not live already)"))
+            say("rc", e, head + (" (live already)" if on else " (not live already)"))
         else:
             why = rclive.switch(s, on, e.get("rc_title") or e["tmux"])
-            out(head + (f" from its next start; not changed now: {why}" if why else (", live now" if on else ", off now")))
+            say("rc", e, head + (f" from its next start; not changed now: {why}" if why else (", live now" if on else ", off now")))
     return 0
 
 
@@ -550,7 +591,7 @@ def cmd_resurrect(args):
         e["resurrect"] = args.state == "on"
         if e["resurrect"]:
             e["rc"] = True
-    out(f"{e['tmux']}: resurrect {args.state}" + (" (rc on)" if e["resurrect"] else ""))
+    say("resurrect", e, f"{e['tmux']}: resurrect {args.state}" + (" (rc on)" if e["resurrect"] else ""))
     return 0
 
 
@@ -568,7 +609,18 @@ def cmd_forget(args):
     with registry.entry_lock(id4, wait=True), registry.changing() as data:
         e = registry.find(data, args.id)
         del data["entries"][e["id4"]]
-    out(f"forgot {e['id4']} {e['tmux']} (anything running was left alone)")
+    say("forget", e, f"forgot {e['id4']} {e['tmux']} (anything running was left alone)")
+    return 0
+
+
+def cmd_events(args):
+    id4 = registry.find(registry.load(), args.id)["id4"] if args.id else None
+    evs = events.read(id4, args.limit)
+    if not evs:
+        out("no events" + (f" for {id4}" if id4 else "") + f" (kept {events.KEEP_DAYS} days)")
+    for r in reversed(evs):
+        when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r["t"]))
+        out(f"{when}  {r.get('by', '?'):<5} {r['kind']:<9} {r.get('tmux') or '-':<24} {r.get('text', '')}")
     return 0
 
 
@@ -626,13 +678,24 @@ def main(argv=None):
     a.add_argument("id")
     a.add_argument("mode")
     a.set_defaults(f=cmd_mode)
+    a = sub.add_parser("events")
+    a.add_argument("id", nargs="?")
+    a.add_argument("--limit", type=int, default=50)
+    a.set_defaults(f=cmd_events)
     a = sub.add_parser("dash")
     a.add_argument("--socket")
     a.add_argument("--idle", type=int, default=600, help="exit after this many idle seconds (0: never)")
     a.set_defaults(f=cmd_dash)
     args = p.parse_args(argv)
     try:
-        return args.f(args)
+        if args.cmd not in ACTIONS:
+            return args.f(args)
+        try:
+            e = registry.find(registry.load(), args.id) if args.cmd != "fav" else None
+        except RegistryError:
+            e = None
+        with refusals(e, args.cmd + ("" if e or args.cmd == "fav" else f" {args.id}")):
+            return args.f(args)
     except RegistryError as e:
         print(f"asctl: {e}", file=sys.stderr)
         return 1

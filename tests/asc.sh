@@ -20,7 +20,7 @@ export ASC_MEMINFO="$T/meminfo"
 mem 32000000 16000000
 tm() { tmux -L "$ASC_TMUX_SOCKET" -f /dev/null "$@"; }
 # kill-server has a time limit: it once hung for hours on a stuck test server (and with it this run)
-cleanup() { timeout -k 2 10 tmux -L "$ASC_TMUX_SOCKET" -f /dev/null kill-server 2>/dev/null; rm -rf "$T"; }
+cleanup() { timeout -k 2 10 tmux -L "$ASC_TMUX_SOCKET" -f /dev/null kill-server 2>/dev/null; rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$ASC_TMUX_SOCKET"; rm -rf "$T"; }
 trap cleanup EXIT
 pass=0 fail=0
 ok()  { echo "  ok    $1"; pass=$((pass + 1)); }
@@ -289,7 +289,9 @@ sfile "$jp" "$JS" "$(start_of "$jp")" ',"kind":"bg","jobId":"cccc0001","status":
 errof off "$id7" | seen 'is working' && ok "off refused: the job is working" || bad "off ignored a working job"
 errof restart "$id7" | seen 'background job' && ok "restart refused: its pane shows a background job" || bad "restart with a job: $(errof restart "$id7")"
 sfile "$jp" "$JS" "$(start_of "$jp")" ',"kind":"bg","jobId":"cccc0001","status":"idle"'
-o=$(asctl off "$id7"); st=$(ps -o stat= -p "$p7")  # ended: gone, or a zombie not yet collected
+EVF="$HOME/.local/state/agent-session-control/events.jsonl"; offs() { jq -s '[.[] | select(.kind == "off")] | length' "$EVF"; }
+c7=$(offs); o=$(asctl off "$id7"); st=$(ps -o stat= -p "$p7")  # ended: gone, or a zombie not yet collected
+[ "$(offs)" = $((c7 + 1)) ] && tail -1 "$EVF" | seen 'runs on in Claude Code' && ok "off with a job: one off event, the job named in it" || bad "off events with a job: $c7 then $(offs)"
 [[ -z $st || $st == Z* ]] && kill -0 "$jp" 2>/dev/null && seen 'runs on in Claude Code' <<<"$o" && ok "off ends the claude in the pane, not the job (and says so)" || bad "off with a job: $o"
 # a job's daemon can be a child of the claude that started it, so inside its pane
 tm new-session -d -s daemonhome -- bash -c "exec -a claude '$T/versions/2.1.316' -c 'sleep 300; true'"
@@ -397,6 +399,65 @@ asctl note "$id2" "$(head -c 501 /dev/zero | tr '\0' x)" >/dev/null 2>&1 && bad 
 asctl note "$id2" -- "-starts with a dash" >/dev/null && ok "a note may start with -" || bad "a note starting with - refused"
 
 
+echo "== event log"
+EV="$HOME/.local/state/agent-session-control/events.jsonl"
+[ "$(stat -c %a "$EV")" = 600 ] && ok "events.jsonl mode 0600" || bad "events.jsonl mode $(stat -c %a "$EV")"
+jq -e -s 'all(.t > 0 and (.kind | type) == "string" and .by == "cli")' "$EV" >/dev/null && ok "every line is JSON with a time, a kind and who (cli)" || bad "bad event lines"
+for k in fav on off rename mode rc resurrect; do
+	jq -e -s --arg k "$k" 'any(.kind == $k)' "$EV" >/dev/null || bad "no $k event logged"
+done
+jq -e -s --arg i "$id2" 'any(.kind == "refused" and .id4 == $i and (.text | test("^on: memory: 5.0% available")))' "$EV" >/dev/null \
+	&& ok "a refused on is logged with why" || bad "refused on not logged"
+jq -e -s --arg i "$id2" 'any(.kind == "on" and .id4 == $i and (.text | test("past the memory gate")))' "$EV" >/dev/null \
+	&& ok "an on past the memory gate says so" || bad "forced on not marked"
+asctl events "$id2" | tail -1 | seen -E "^[0-9-]{10} [0-9:]{8}  cli +(off|rc|resurrect|mode|rename) +chat-$id2 " && ok "asctl events ID: its events, oldest first" || bad "asctl events: $(asctl events "$id2" | tail -2)"
+ASC_BY=page asctl mode "$id2" auto >/dev/null; ASC_BY='x"y' asctl mode "$id2" auto >/dev/null
+tail -2 "$EV" | jq -s -e '.[0].by == "page" and .[1].by == "cli"' >/dev/null && ok "who: ASC_BY page kept, anything else is cli" || bad "who wrong: $(tail -2 "$EV")"
+# Pruned: lines past 7 days and broken lines go; past 2 MB the oldest half goes.
+{ printf '{"t": 1000, "kind": "on", "by": "cli", "text": "ancient"}\nnot json\n'; cat "$EV"; } > "$EV.x" && mv "$EV.x" "$EV"
+asctl mode "$id2" auto >/dev/null
+! seen -e ancient -e 'not json' "$EV" && seen '"mode"' "$EV" && ok "pruned: an event past 7 days and a broken line" || bad "not pruned: $(head -2 "$EV")"
+n=$(wc -l < "$EV")
+python3 -c 'import json,sys,time; t=int(time.time()); sys.stdout.writelines(json.dumps({"t": t, "kind": "on", "by": "cli", "text": "x" * 200}) + "\n" for _ in range(11000))' >> "$EV"
+asctl mode "$id2" auto >/dev/null
+sz=$(stat -c %s "$EV"); [ "$sz" -le 1100000 ] && [ "$(stat -c %a "$EV")" = 600 ] && tail -1 "$EV" | seen '"mode"' && ok "pruned past 2 MB to under 1 MB, the newest kept ($sz bytes)" || bad "size not bounded: $sz"
+asctl events | wc -l | seen -x 50 && ok "asctl events: the latest 50" || bad "events limit"
+# A symlink in its place is not followed; the action still works.
+mv "$EV" "$EV.keep"; ln -s "$T/elsewhere" "$EV"
+out=$( { asctl mode "$id2" auto >/dev/null; } 2>&1 ); r=$?
+[ $r = 0 ] && [ ! -e "$T/elsewhere" ] && seen 'event not logged' <<<"$out" && ok "a symlinked events.jsonl is not written through; the action goes on" || bad "symlink: rc=$r $out"
+rm -f "$EV"; mv "$EV.keep" "$EV"
+# A FIFO in its place: refused at once, never waited on.
+mv "$EV" "$EV.keep"; mkfifo "$EV"
+out=$( { timeout 10 "$REPO/bin/asctl" mode "$id2" auto >/dev/null; } 2>&1 ); r=$?
+[ $r = 0 ] && seen 'not a regular file' <<<"$out" && ok "a FIFO as events.jsonl: refused at once, the action goes on" || bad "FIFO: rc=$r $out"
+rm -f "$EV"; mv "$EV.keep" "$EV"
+# One event per off; a refusal of any action is logged, an error after a change as failed.
+c0=$(jq -s '[.[] | select(.kind == "off")] | length' "$EV"); asctl off "$id2" >/dev/null
+[ "$(jq -s '[.[] | select(.kind == "off")] | length' "$EV")" = $((c0 + 1)) ] && ok "one off, one off event" || bad "off events: $c0 then $(jq -s '[.[] | select(.kind == "off")] | length' "$EV")"
+tm new-session -d -s "taken-$id2" -- sleep 300
+asctl rename "$id2" taken >/dev/null 2>&1
+tail -1 "$EV" | jq -e --arg i "$id2" '.kind == "refused" and .id4 == $i and (.text | startswith("rename: tmux session"))' >/dev/null && ok "a refused rename is logged" || bad "refused rename: $(tail -1 "$EV")"
+tm kill-session -t "=taken-$id2"
+asctl on 9999 >/dev/null 2>&1; tail -1 "$EV" | jq -e '.kind == "refused" and (.text | startswith("on 9999: no favorite"))' >/dev/null && ok "an action on an unknown id: refused, logged" || bad "unknown id: $(tail -1 "$EV")"
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import cli, events
+e = {"id4": "0000", "tmux": "x-0000"}
+try:
+    with cli.refusals(e, "on"): raise cli.ActionFailed("half done")
+except cli.ActionFailed: pass
+r = events.read(limit=1)[0]; assert r["kind"] == "failed" and r["text"] == "on: half done", r' "$REPO" && ok "an error after a change is logged as failed" || bad "failed kind"
+# Odd lines never break a read: a far-future or NaN time, a list as who, a lone surrogate.
+printf '%s\n' '{"t": 1e20, "kind": "on", "by": "cli"}' '{"t": NaN, "kind": "on"}' '{"t": 5, "kind": "on", "by": []}' >> "$EV"
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import events
+events.log("mode", {"id4": "0000", "tmux": "s\udce9-0000"}, "folder /tmp/\udce9 \u202e!")
+r = events.read(limit=1)[0]; assert r["tmux"] == "s -0000" and r["text"] == "folder /tmp/   !", r
+assert events.read(limit=0) == [] and events.read(limit=-1) == []' "$REPO" && ok "a lone surrogate and bidi controls become spaces; limit 0 is none" || bad "surrogate or limit"
+asctl events >/dev/null && ok "asctl events reads past odd lines" || bad "asctl events broke on odd lines"
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import events
+assert events._clean("a\x1b[31mb\nc\x7f") == "a [31mb c "
+try: events.log("nonsense")
+except ValueError: pass
+else: raise SystemExit(1)' "$REPO" && ok "event text: control characters become spaces; an unknown kind is a bug" || bad "event text not cleaned"
 # ASC_MUTANTS=1: break asctl one way at a time, in a copy; each must make this test fail.
 if [ "${ASC_MUTANTS:-}" = 1 ]; then
 	echo "== mutants"
@@ -467,6 +528,17 @@ asc/cli.py %%%         job, s = (s, s["host"]) if s.get("host") else (None, s) %
 asc/cli.py %%%     if s.get("host"): %%%     if False:
 asc/cli.py %%%     if m is None or (at is not None and s.get("started_at") and at < s["started_at"]): %%%     if m is None:
 asc/cli.py %%%         if not s or s["name"] == new: %%%         if True:
+asc/events.py %%%     if size <= MAX_BYTES and _time(first) >= time.time() - KEEP_DAYS * 86400: %%%     if True:
+asc/events.py %%%     keep = [l for l in lines if _time(l) >= cut] %%%     keep = lines
+asc/events.py %%%     while keep and sum(map(len, keep)) > MAX_BYTES // 2 and size > MAX_BYTES: %%%     while False:
+asc/events.py %%%     fd = os.open(p, flags | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, 0o600) %%%     fd = os.open(p, flags | os.O_CLOEXEC, 0o600)
+asc/events.py %%%     if not stat.S_ISREG(os.fstat(fd).st_mode): %%%     if False:
+asc/events.py %%%     return t if ok and 0 < t <= time.time() + 86400 else 0 %%%     return t if ok else 0
+asc/cli.py %%%         events.log("failed", e, f"{what}: {x}") %%%         events.log("refused", e, f"{what}: {x}")
+asc/cli.py %%%             out(ended) %%%             say("off", e, ended)
+asc/events.py %%%     return b if b in BY else "cli" %%%     return b or "cli"
+asc/events.py %%%     return "".join(" " if unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp", "Cs") else c %%%     return "".join(" " if unicodedata.category(c) in ("Cc",) else c
+asc/cli.py %%%         events.log("refused", e, f"{what}: {x}") %%%         pass
 asc/cli.py %%%         elif not args.restart: %%%         elif False:
 MUTANTS
 fi
