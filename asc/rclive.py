@@ -184,10 +184,15 @@ def rename(s, name, confirm=5):
     claude.ai session (the rc title there): None when done, else why not."""
     if not TITLE.fullmatch(name):
         return "the name has characters asctl does not type (only letters, digits, space, . _ -)"
+    said = f"Session renamed to: {name}"
+    seen = lambda: plain(screen(s["pane"]["pane_id"])).count(said)
+    n = seen()
     why = enter(s, f"/rename {name}", no_menu)
     if why:
         return why
-    if not wait_for(lambda: (session(s["pid"]) or {}).get("name") == name, confirm):
+    # claude's answer under the command: the session file alone says nothing when the name is
+    # the same (a rename only to send it to claude.ai again)
+    if not wait_for(lambda: seen() > n and (session(s["pid"]) or {}).get("name") == name, confirm):
         return "typed, but its session file does not show the new name yet; check the session"
     return None
 
