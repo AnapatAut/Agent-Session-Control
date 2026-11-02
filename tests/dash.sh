@@ -168,7 +168,7 @@ echo "== the installable app (PWA)"
 anon() { curl -s --unix-socket "$SOCK" -H "Host: localhost" "$@"; }
 acode() { anon -o /dev/null -w '%{http_code}' "$@"; }
 m=$(anon "http://x$PREFIX/manifest.json?v=1")
-jq -e '.display == "standalone" and .short_name == "Sessions" and (.start_url | startswith("./?v="))
+jq -e '.display == "standalone" and .short_name == "Sessions" and .x_title == "Agent Session Control" and (.start_url | startswith("./?v="))
 	and .scope == "./" and (.id | test("v=")) and (.icons | length == 4)' <<<"$m" >/dev/null \
 	&& ok "the manifest, without a login: standalone, relative URLs, versioned id" || bad "manifest: $m"
 anon -D - -o /dev/null "http://x/manifest.json" | seen -i '^content-type: application/manifest+json' && ok "the manifest's type" || bad "manifest type wrong"

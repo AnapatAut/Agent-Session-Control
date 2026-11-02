@@ -74,8 +74,9 @@ ICON_VER = "1"
 # URLs are relative to the manifest, so the app works under a prefix too.
 MANIFEST = json.dumps({
     # name: a zero-width space, as Android prints it under the icon on its launch screen, which
-    # cannot be turned off; short_name labels the launcher.
-    "name": "\u200b", "short_name": "Sessions",
+    # cannot be turned off; short_name labels the launcher. x_title: the full name, for readers
+    # that list serve ports and are refused the page (serve-dash reads it first); browsers ignore it.
+    "name": "\u200b", "short_name": "Sessions", "x_title": "Agent Session Control",
     "id": f"asctl?v={ICON_VER}", "start_url": f"./?v={ICON_VER}", "scope": "./", "display": "standalone",
     "background_color": "#ffffff", "theme_color": "#ffffff",
     "icons": [{"src": f"icon-{n}.png?v={ICON_VER}", "sizes": f"{n}x{n}", "type": "image/png"} for n in (192, 512)]
