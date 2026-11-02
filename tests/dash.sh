@@ -120,6 +120,11 @@ start_dash && ok "dash listens on its socket" || bad "no socket: $(cat "$T/dash.
 [ "$(stat -c %a "$T/run/asctl")" = 700 ] && ok "socket folder 0700" || bad "socket folder $(stat -c %a "$T/run/asctl")"
 [ "$(code http://x/api/state)" = 200 ] && ok "the right login and host: 200" || bad "the right login and host: $(code http://x/api/state)"
 [ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Host: $HOST" http://x/api/state)" = 403 ] && ok "no login header: 403" || bad "no login header let in"
+r=$(curl -s -D - --unix-socket "$SOCK" -H "Host: $HOST" http://x/)
+seen '^HTTP/1.[01] 403' <<<"$r" && seen -i '^content-type: text/html' <<<"$r" && seen '<title>Agent Sessions</title>' <<<"$r" \
+	&& seen 'href="favicon.svg?v=' <<<"$r" && ! seen -i 'asctl-token\|@TOKEN@\|<script' <<<"$r" \
+	&& ok "the page refused: 403 with its title and tab icon only (no token, no script)" || bad "refused page: $r"
+curl -s --unix-socket "$SOCK" -H "Host: $HOST" http://x/api/state | seen -x '{"error": "forbidden"}' && ok "the API refused: plain JSON 403" || bad "refused API body changed"
 [ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Tailscale-User-Login: other${E}example.com" -H "Host: $HOST" -H "$XFH" -H "$XFF" http://x/api/state)" = 403 ] && ok "another login: 403" || bad "another login let in"
 [ "$(raw "Host: $HOST" "Tailscale-User-Login: $LOGIN")" = 200 ] && ok "raw request with the right headers: 200" || bad "raw request refused"
 [ "$(raw "Host: $HOST" "Tailscale-User-Login: $LOGIN" "Tailscale-User-Login: $LOGIN")" = 403 ] && ok "the login header twice: 403" || bad "a doubled login header let in"
@@ -256,7 +261,7 @@ jq -e --arg i "$id" '.favorites[0] | .tmux == "das-\($i)" and .state == "on" and
 jq -e '.active | length == 0' <<<"$s" >/dev/null && ok "state: no longer in the not-favorited list" || bad "state: still listed as not favorited"
 jq -e --arg l "$LOGIN" --arg h "$HOME" '.login == $l and .home == $h and .favorites[0].rc_live == false' <<<"$s" >/dev/null && ok "state: the login, the home folder, remote control not live" || bad "state: login, home or rc_live wrong: $(jq -c '{login, home, rc_live: .favorites[0].rc_live}' <<<"$s")"
 touch "$HOME/fake-rc" "$HOME/fake-wait"; sleep 0.6
-state | jq -e '.favorites[0] | .rc_live == true and .status == "waiting" and .busy == ""' >/dev/null && ok "state: remote control live, waiting (not busy)" || bad "state: rc_live/waiting wrong: $(state | jq -c '.favorites[0] | {rc_live, status, busy}')"
+state | jq -e '.favorites[0] | .rc_live == true and .status == "waiting" and .busy == "" and .waiting_for == "dialog open" and (.status_at | type) == "number"' >/dev/null && ok "state: remote control live, waiting (not busy), why and since when" || bad "state: rc_live/waiting wrong: $(state | jq -c '.favorites[0] | {rc_live, status, busy}')"
 rm -f "$HOME/fake-rc" "$HOME/fake-wait"; sleep 0.6
 touch "$HOME/fake-busy"; sleep 0.6
 out=$(post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'"}')
@@ -516,6 +521,7 @@ asc/dash.py %%% if st.st_uid != os.getuid() or st.st_mode & 0o022: %%% if st.st_
 asc/dash.py %%%             _private(d, os.stat(d)) %%%             pass
 asc/dash.py %%%             d = os.path.dirname(os.path.realpath(p)) %%%             d = os.path.dirname(p)
 asc/icons.py %%% os.O_NOFOLLOW, 0o600), "wb") %%% os.O_NOFOLLOW, 0o644), "wb")
+asc/dash.py %%%             if self.command in ("GET", "HEAD") and self._path() == "/": %%%             if True:
 MUTANTS
 fi
 

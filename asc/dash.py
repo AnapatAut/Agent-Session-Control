@@ -91,6 +91,15 @@ self.addEventListener('fetch', e => { e.respondWith(fetch(e.request)); });
 # page, and a 403 there turns the install into a plain bookmark. Nothing in them is private.
 PUBLIC = {"/manifest.json": "application/manifest+json", "/sw.js": "application/javascript",
           "/favicon.svg": "image/svg+xml", **{"/" + n: "image/png" for n in icons.ICONS}}
+# The page's refusal: its title and tab icon only, as every page has them (a reader such as
+# serve-dash, which fetches pages from this machine and so is always refused, shows them).
+# Nothing else: no token, no data, not why it was refused.
+REFUSED_PAGE = (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
+                f'<meta name="viewport" content="width=device-width, initial-scale=1">'
+                f'<title>Agent Sessions</title>'
+                f'<link rel="icon" type="image/svg+xml" href="favicon.svg?v={ICON_VER}">'
+                f'<link rel="icon" type="image/png" sizes="512x512" href="favicon-512.png?v={ICON_VER}">'
+                f'</head><body><p>Not allowed.</p></body></html>')
 
 
 def config_path():
@@ -263,13 +272,15 @@ def _snapshot():
             "want_on": bool(e.get("want_on")), "note": e.get("note") or "",
             "last_on": e.get("last_on"), "last_off": e.get("last_off"), "state": st,
             "pid": s["pid"] if s else None, "status": s["status"] if s else None,
+            "waiting_for": s["waiting_for"] if s else "", "status_at": s["status_at"] if s else None,
             "busy": live.busy_reason(e["tmux"], lv, kids, panes, e.get("session_id")) if e["tmux"] in up else "",
             "claudes": sum(1 for x in lv if x["pane"] and x["pane"]["session"] == e["tmux"]),
             "rss_kb": sum(live.tree_rss_kb(p["pane_pid"], kids) for p in panes),
             "attach": f"tmux attach -t ={e['tmux']}",
         })
     active = [{"pid": s["pid"], "session_id": s["session_id"], "name": s["name"], "cwd": s["cwd"],
-               "status": s["status"], "tmux": s["pane"]["session"] if s["pane"] else None,
+               "status": s["status"], "waiting_for": s["waiting_for"], "status_at": s["status_at"],
+               "tmux": s["pane"]["session"] if s["pane"] else None,
                "pane": s["pane"]["pane_id"] if s["pane"] else None,
                "duplicate": count.get(s["session_id"], 0) > 1}
               for s in lv if s["session_id"] not in fav_sids and not (s["pane"] and s["pane"]["session"] in fav_tmux)]
@@ -406,7 +417,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         why = self._refusal()
         if why:
             self.log_message("refused: %s", why)
-            self._send(403, {"error": "forbidden"})
+            if self.command in ("GET", "HEAD") and self._path() == "/":
+                self._send(403, REFUSED_PAGE, "text/html")
+            else:
+                self._send(403, {"error": "forbidden"})
             return None
         self.server.touch()  # only allowed requests keep the server from its idle exit
         if self.headers.get_all("Transfer-Encoding") or (

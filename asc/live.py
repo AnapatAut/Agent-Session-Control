@@ -113,6 +113,9 @@ def read_sessions(home=None):
              "name": raw.get("name") if isinstance(raw.get("name"), str) else "",
              "status": raw.get("status") if raw.get("status") in ("busy", "idle", "shell", "waiting") else "unknown",
              "rc": bool(raw.get("bridgeSessionId")), "kind": raw.get("kind"),
+             # why claude waits ("dialog open", "input needed", ...), and when its status last changed
+             "waiting_for": raw.get("waitingFor")[:40] if isinstance(raw.get("waitingFor"), str) else "",
+             "status_at": raw.get("statusUpdatedAt") // 1000 if type(raw.get("statusUpdatedAt")) is int else None,
              "proc_start": raw.get("procStart")}
         s["live"] = bool(ok) and alive(pid, s["proc_start"])
         s["text"] = "" if ok else _text(path)

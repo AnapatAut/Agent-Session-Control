@@ -43,6 +43,13 @@ function when(ts) {
   if (diff === 1) return "yesterday " + hm(d);
   return d.toLocaleDateString([], { day: "numeric", month: "short", year: d.getFullYear() === now.getFullYear() ? undefined : "numeric" });
 }
+// What claude itself last wrote: its status, why it waits, and since when (to the second).
+function statusText(x) {
+  if (!x.status) return "";
+  const [label] = STATUS[x.status] || STATUS.unknown;
+  return label + (x.waiting_for ? " (" + x.waiting_for + ")" : "") +
+    (x.status_at ? " since " + new Date(x.status_at * 1000).toLocaleTimeString() : "");
+}
 function ago(ts) {
   const s = Date.now() / 1000 - ts;
   if (s < 3600) return Math.max(1, Math.round(s / 60)) + " min ago";
@@ -441,7 +448,7 @@ function favSheet(e) {
   out.push(kids(el("div", null, "field"), ta, count), save);
 
   out.push(el("span", "SESSION", "lab"), kv([
-    ["tmux", e.tmux], ["Session id", e.session_id], ["Claudes", e.claudes > 1 ? e.claudes : ""],
+    ["Claude says", on ? statusText(e) : ""], ["tmux", e.tmux], ["Session id", e.session_id], ["Claudes", e.claudes > 1 ? e.claudes : ""],
     ["Last on", when(e.last_on)], ["Last off", when(e.last_off)]]));
   out.push(kids(el("div", null, "acts"),
     btn("Copy attach", "", async () => {
@@ -474,7 +481,7 @@ function activeSheet(x) {
   return [el("h2", x.name || "Unnamed claude"), el("div", tilde(x.cwd), "s2 mono"),
     x.duplicate ? el("div", "Another claude holds the same session id.", "warn bad") : null,
     el("span", "SESSION", "lab"),
-    kv([["Status", label], ["tmux", x.tmux || "not in tmux"], ["Pid", x.pid], ["Session id", x.session_id]]),
+    kv([["Claude says", statusText(x) || label], ["tmux", x.tmux || "not in tmux"], ["Pid", x.pid], ["Session id", x.session_id]]),
     el("div", "Not a favorite: a reboot will not bring it back. Favorite it to turn it on and off here.", "res"),
     kids(el("div", null, "acts"), favoriteButton(x.session_id))];
 }
