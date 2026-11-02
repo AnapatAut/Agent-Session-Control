@@ -121,7 +121,7 @@ start_dash && ok "dash listens on its socket" || bad "no socket: $(cat "$T/dash.
 [ "$(code http://x/api/state)" = 200 ] && ok "the right login and host: 200" || bad "the right login and host: $(code http://x/api/state)"
 [ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Host: $HOST" http://x/api/state)" = 403 ] && ok "no login header: 403" || bad "no login header let in"
 r=$(curl -s -D - --unix-socket "$SOCK" -H "Host: $HOST" http://x/)
-seen '^HTTP/1.[01] 403' <<<"$r" && seen -i '^content-type: text/html' <<<"$r" && seen '<title>Agent Sessions</title>' <<<"$r" \
+seen '^HTTP/1.[01] 403' <<<"$r" && seen -i '^content-type: text/html' <<<"$r" && seen '<title>Agent Session Control</title>' <<<"$r" \
 	&& seen 'href="favicon.svg?v=' <<<"$r" && ! seen -i 'asctl-token\|@TOKEN@\|<script' <<<"$r" \
 	&& ok "the page refused: 403 with its title and tab icon only (no token, no script)" || bad "refused page: $r"
 curl -s --unix-socket "$SOCK" -H "Host: $HOST" http://x/api/state | seen -x '{"error": "forbidden"}' && ok "the API refused: plain JSON 403" || bad "refused API body changed"

@@ -97,7 +97,7 @@ PUBLIC = {"/manifest.json": "application/manifest+json", "/sw.js": "application/
 # Nothing else: no token, no data, not why it was refused.
 REFUSED_PAGE = (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
                 f'<meta name="viewport" content="width=device-width, initial-scale=1">'
-                f'<title>Agent Sessions</title>'
+                f'<title>Agent Session Control</title>'
                 f'<link rel="icon" type="image/svg+xml" href="favicon.svg?v={ICON_VER}">'
                 f'<link rel="icon" type="image/png" sizes="512x512" href="favicon-512.png?v={ICON_VER}">'
                 f'</head><body><p>Not allowed.</p></body></html>')
