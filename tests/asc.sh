@@ -308,7 +308,7 @@ out=$(asctl rc "$id2" on --title "a@b"); seen 'not changed now: its title has ch
 asctl rc "$id2" on --title "x;" >/dev/null 2>&1 && bad "a title ending with ; accepted" || ok "a title ending with ; refused (tmux would drop it)"
 asctl rc "$id2" on --title "My chat" --next-start >/dev/null
 touch "$HOME/fake-menu-on"
-out=$(asctl rc "$id2" on); seen 'not changed now: something opened under its prompt (a menu?); nothing was sent' <<<"$out" && [ -z "$(bridge)" ] && empty \
+out=$(asctl rc "$id2" on); seen 'not changed now: a menu opened under its prompt; nothing was sent' <<<"$out" && [ -z "$(bridge)" ] && empty \
 	&& ok "on: a menu under the prompt: Enter not pressed, the prompt cleared" || bad "menu on: $out"
 rm -f "$HOME/fake-menu-on"
 touch "$HOME/fake-mangle"
@@ -376,7 +376,8 @@ asc/rclive.py %%% rules[-1] - rules[-2] == 2 else None %%% rules[-1] - rules[-2]
 asc/cli.py %%%         s = None if args.next_start else live_in(e) %%%         s = live_in(e)
 asc/cli.py %%%         elif s["rc"] == on: %%%         elif False:
 asc/rclive.py %%%     if prompt_text(scr) != cmd: %%%     if False:
-asc/rclive.py %%%     elif on and under(scr) != before: %%%     elif False:
+asc/rclive.py %%%     elif on and menu(under(scr)) - menu(before): %%%     elif False:
+asc/rclive.py %%%     elif on and menu(under(scr)) - menu(before): %%%     elif on and under(scr) != before:
 asc/rclive.py %%%     elif not on and not offers_cmd(scr): %%%     elif False:
 asc/rclive.py %%%     if t and cmd.startswith(t): %%%     if t:
 asc/rclive.py %%%             if not dialog_open(pid, scr) or selected(scr, DISCONNECT): %%%             if not dialog_open(pid, scr):

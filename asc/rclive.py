@@ -26,6 +26,19 @@ CMD = "/remote-control"
 DISCONNECT = "Disconnect this session"
 
 
+def steady(pane, tries=10, gap=0.15):
+    """The pane's screen once two captures in a row match: a capture in the middle of a redraw
+    can show half a frame (a quoted Disconnect line without the dialog under it)."""
+    scr = screen(pane)
+    for _ in range(tries):
+        time.sleep(gap)
+        nxt = screen(pane)
+        if nxt == scr:
+            break
+        scr = nxt
+    return scr
+
+
 def plain(line):
     return ANSI.sub("", line).replace("\xa0", " ")
 
@@ -57,6 +70,11 @@ def under(scr):
     lines = scr.rstrip("\n").split("\n")
     i = box(lines)
     return [] if i is None else [plain(l).rstrip() for l in lines[i + 2:]]
+
+
+def menu(lines):
+    """The command menu's entries among lines under the box ("/name  what it does")."""
+    return {l.strip() for l in lines if re.match(r"(?:[❯›>]\s*)?/[A-Za-z]", l.strip())}
 
 
 def offers_cmd(scr):
@@ -138,18 +156,20 @@ def switch(s, on, title, confirm=10):
         return why
     pid, pane = s["pid"], s["pane"]["pane_id"]
     cmd = f"{CMD} {title}" if on else CMD
-    before = under(screen(pane))
+    before = under(steady(pane))
     tmuxctl.type_pane(pane, cmd)
     wait_for(lambda: prompt_text(screen(pane)) == cmd, 2)
-    scr = screen(pane)
+    scr = steady(pane)
     if prompt_text(scr) != cmd:
         why = "its prompt did not show the command as typed"
     elif tmuxctl.pane_in_mode(pane):
         why = "its pane went into copy mode"
     elif status(pid) != "idle":
         why = "claude did not stay idle"
-    elif on and under(scr) != before:
-        why = "something opened under its prompt (a menu?)"
+    elif on and menu(under(scr)) - menu(before):
+        # a menu would take Enter for its own entry; other changes there are claude's own (its
+        # mode line drops "← 1 agent" once the prompt holds text)
+        why = "a menu opened under its prompt"
     elif not on and not offers_cmd(scr):
         why = "its command menu did not offer /remote-control first"
     if why:
@@ -159,12 +179,12 @@ def switch(s, on, title, confirm=10):
         if not wait_for(lambda: dialog_open(pid, screen(pane)), 5):
             return "no Disconnect dialog appeared; check the session"
         for _ in range(3):
-            scr = screen(pane)
+            scr = steady(pane)
             if not dialog_open(pid, scr) or selected(scr, DISCONNECT):
                 break
             tmuxctl.send_pane(pane, "Up")
             time.sleep(0.3)
-        scr = screen(pane)
+        scr = steady(pane)
         if not dialog_open(pid, scr):
             return "its dialog closed before Disconnect was chosen; check the session"
         if not selected(scr, DISCONNECT):

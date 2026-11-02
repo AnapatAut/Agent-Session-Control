@@ -289,7 +289,7 @@ def cmd_on(args):
         return _on(id4, args.force_memory)
 
 
-def _on(id4, force_memory):
+def _on(id4, force_memory, say=True):
     """On, with the entry's lock held."""
     e = registry.find(registry.load(), id4)
     server = tmuxctl.server_pid()
@@ -336,7 +336,8 @@ def _on(id4, force_memory):
             x = registry.find(data, e["id4"])
             x["lineage"] = ([x["session_id"]] + x.get("lineage", []))[:5]
             x["session_id"] = s["session_id"]
-    out(f"on: {e['tmux']} (claude {s['pid']}, session {s['session_id']})")
+    if say:
+        out(f"on: {e['tmux']} (claude {s['pid']}, session {s['session_id']})")
     return 0
 
 
@@ -346,7 +347,7 @@ def cmd_off(args):
         return _off(id4, args.force)
 
 
-def _off(id4, force):
+def _off(id4, force, say=True):
     """Off, with the entry's lock held."""
     e = registry.find(registry.load(), id4)
     lv = live.live()
@@ -378,7 +379,8 @@ def _off(id4, force):
             out(f"claude {s['pid']} still runs 10 s after SIGTERM; closing its tmux session anyway")
     if up:
         tmuxctl.kill_session(e["tmux"])
-    out(f"off: {e['tmux']}")
+    if say:
+        out(f"off: {e['tmux']}")
     return 0
 
 
@@ -396,10 +398,10 @@ def _restart(id4):
     why = live.busy_reason(e["tmux"], lv, own_sid=e.get("session_id"))
     if why:
         raise RegistryError(f"busy: {why}")
-    _off(id4, False)
+    _off(id4, False, say=False)
     try:
         # it was just running, so its memory is there: no memory gate
-        return _on(id4, True)
+        return _on(id4, True, say=False)
     except RegistryError as x:
         raise RegistryError(f"it is off now, and turning it on again failed: {x}")
 
@@ -407,7 +409,10 @@ def _restart(id4):
 def cmd_restart(args):
     id4 = registry.find(registry.load(), args.id)["id4"]
     with registry.entry_lock(id4, wait=True):
-        return _restart(id4)
+        r = _restart(id4)
+    if r == 0:
+        out(f"restarted: {registry.find(registry.load(), id4)['tmux']} (same conversation)")
+    return r
 
 
 def cmd_rename(args):
@@ -431,12 +436,12 @@ def cmd_rename(args):
         elif not args.restart:
             out(f"renamed: {new} (claude's own name and rc title change at its next start)")
         else:
-            out(f"renamed: {new}; restarting its claude for its new name")
             try:
-                return _restart(id4)
+                if _restart(id4) != 0:
+                    return 1
+                out(f"renamed to {new} and restarted (same conversation)")
             except RegistryError as x:
-                out(f"not restarted now: {x}. Its claude keeps its old name and rc title until its next "
-                    f"start (asctl restart {id4} once it is idle)")
+                out(f"renamed to {new}; not restarted now: {x}. Restart it once idle (asctl restart {id4})")
     return 0
 
 

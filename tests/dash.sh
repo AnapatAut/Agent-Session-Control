@@ -295,7 +295,7 @@ asctl mode "$id" auto >/dev/null
 [ "$(post '{"action":"on","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] || bad "on before the rename failed"
 state | jq -e --arg t "$TM" '.favorites[0].claude_name == $t' >/dev/null && ok "state: the name its claude goes by" || bad "state: claude_name: $(state | jq -c '.favorites[0].claude_name')"
 out=$(post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"db"}')
-[ "$(tail -1 <<<"$out")" = 200 ] && seen 'restarting' <<<"$out" && state | jq -e '.favorites[0] | (.tmux | startswith("db-")) and .claude_name == .tmux' >/dev/null \
+[ "$(tail -1 <<<"$out")" = 200 ] && seen 'renamed to db-[0-9]* and restarted' <<<"$out" && state | jq -e '.favorites[0] | (.tmux | startswith("db-")) and .claude_name == .tmux' >/dev/null \
 	&& ok "rename from the page restarts an idle claude: its name follows" || bad "rename: $out / $(state | jq -c '.favorites[0] | {tmux, claude_name}')"
 TM="db-$id"
 [ "$(post '{"action":"restart","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] && ok "restart from the page" || bad "restart from the page failed"

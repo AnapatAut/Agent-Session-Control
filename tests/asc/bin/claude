@@ -104,7 +104,7 @@ draw() {
 			echo "  /remote-control      Connect this session to claude.ai"
 			echo "  /resume              Resume a conversation"
 		else
-			echo "  fake status line"
+			if [ -z "$buf" ]; then echo "  fake status line · ← 1 agent"; else echo "  fake status line"; fi  # as claude: it drops "← 1 agent" while text is typed
 		fi
 	fi
 }
