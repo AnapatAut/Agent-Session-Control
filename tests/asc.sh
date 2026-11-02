@@ -398,7 +398,7 @@ asc/rclive.py %%%     if prompt_text(scr) != cmd: %%%     if False:
 asc/rclive.py %%% if menu(under(scr)) - menu(before) else None %%% if False else None
 asc/rclive.py %%% if menu(under(scr)) - menu(before) else None %%% if under(scr) != before else None
 asc/rclive.py %%%         None if offers_cmd(scr) else %%%         None if True else
-asc/rclive.py %%%     if not wait_for(lambda: (session(s["pid"]) or {}).get("name") == name, confirm): %%%     if False:
+asc/rclive.py %%%     if not wait_for(lambda: seen() > n and (session(s["pid"]) or {}).get("name") == name, confirm): %%%     if False:
 asc/cli.py %%%             why = rclive.rename(s, new) %%%             why = None
 asc/cli.py %%%     if "--remote-control" in argv and %%%     if False and
 asc/rclive.py %%%     if t and cmd.startswith(t): %%%     if t:
