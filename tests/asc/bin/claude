@@ -30,6 +30,7 @@ for a in "$@"; do
 	prev=$a
 done
 [ -n "$sid" ] || sid=$(cat /proc/sys/kernel/random/uuid)
+src=""; [ -n "$name" ] || { name="${PWD##*/}-1a"; src=',"nameSource":"derived"'; }  # claude makes one up
 trusted="$HOME/fake-trusted"
 if ! grep -qxF "$PWD" "$trusted" 2>/dev/null; then
 	sel=0
@@ -67,6 +68,7 @@ write() {
 	[ $dialog = 1 ] && status=waiting
 	[ -n "$rc" ] && bridge=',"bridgeSessionId":"'"$rc"'"'
 	[ -e "$HOME/fake-rc" ] && bridge=',"bridgeSessionId":"session_fake"'
+	bridge+=$src
 	[ "$status" != "$was" ] && { was=$status; at=$(now_ms); }  # statusUpdatedAt: when it changed
 	bridge+=',"statusUpdatedAt":'$at; [ $status = waiting ] && bridge+=',"waitingFor":"dialog open"'
 	printf '{"pid":%s,"sessionId":"%s","cwd":"%s","kind":"interactive","name":"%s","status":"%s","procStart":"%s"%s}\n' \

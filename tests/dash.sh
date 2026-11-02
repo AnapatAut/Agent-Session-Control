@@ -298,20 +298,28 @@ TM="db-$id"
 echo "== past conversations"
 mkdir -p "$HOME/.claude/projects/-x"
 P1=22222222-3333-4444-8555-666666666666 P2=33333333-4444-4555-8666-777777777777
-printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n{"type":"custom-title","customTitle":"first name"}\n{"type":"custom-title","customTitle":"<b>Old</b> & talk"}\n' "$W" "$P1" > "$HOME/.claude/projects/-x/$P1.jsonl"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n{"type":"custom-title","customTitle":"first name"}\n{"type":"custom-title","customTitle":"<b>Old</b> & talk"}\n{"type":"ai-title","aiTitle":"not this"}\n' "$W" "$P1" > "$HOME/.claude/projects/-x/$P1.jsonl"
 { printf '{"type":"user","cwd":"/srv/api","sessionId":"%s"}\n' "$P2"; head -c 200000 /dev/zero | tr '\0' ' '; printf '\n{"type":"agent-name","agentName":"api work"}\n'; } > "$HOME/.claude/projects/-x/$P2.jsonl"
 touch -d '1 hour ago' "$HOME/.claude/projects/-x/$P2.jsonl"
+P4=44444444-5555-4666-8777-000000000004
+printf '{"type":"user","cwd":"/srv/x","sessionId":"%s"}\n{"type":"ai-title","aiTitle":"Old summary"}\n{"type":"ai-title","aiTitle":"Earlyoom setup"}\n' "$P4" > "$HOME/.claude/projects/-x/$P4.jsonl"
+touch -d '2 hours ago' "$HOME/.claude/projects/-x/$P4.jsonl"
 pj=$(dc "http://x/api/past")
 jq -e --arg a "$P1" --arg b "$P2" '[.past[].session_id] | index($a) < index($b)' <<<"$pj" >/dev/null && ok "past: newest first" || bad "past: order wrong: $pj"
 jq -e --arg a "$P1" '.past[] | select(.session_id == $a) | .title == "<b>Old</b> & talk"' <<<"$pj" >/dev/null && ok "past: the latest title, sent as raw text (the page sets it as text)" || bad "past: title changed"
 jq -e --arg b "$P2" '.past[] | select(.session_id == $b) | .title == "api work" and .cwd == "/srv/api"' <<<"$pj" >/dev/null && ok "past: title from the end of a big transcript, folder from its start" || bad "past: big transcript read wrong"
-jq -e '.past | length == 1' <<<"$(dc "http://x/api/past?q=SRV")" >/dev/null && ok "past: search by folder, any case" || bad "past: search wrong"
+jq -e --arg d "$P4" '.past[] | select(.session_id == $d) | .title == "Earlyoom setup"' <<<"$pj" >/dev/null && ok "past: without a title given, claude's own (the last ai-title)" || bad "past: ai-title not used"
+jq -e '.past | length == 2' <<<"$(dc "http://x/api/past?q=SRV")" >/dev/null && ok "past: search by folder, any case" || bad "past: search wrong"
 tm new-session -d -s dev2 -c "$W" -- "$ASC_CLAUDE" --session-id "$P2"
 claude_in dev2 >/dev/null
 asctl fav "$P1" >/dev/null
 pj=$(dc "http://x/api/past")
 jq -e --arg b "$P2" '[.past[].session_id] | index($b) == null' <<<"$pj" >/dev/null && ok "past: a running conversation is not listed" || bad "past: a running one listed"
 jq -e --arg a "$P1" '[.past[].session_id] | index($a) == null' <<<"$pj" >/dev/null && ok "past: a favorite is not listed" || bad "past: a favorite listed"
+state | jq -e --arg b "$P2" '.active[] | select(.session_id == $b) | .name == "api work" and (.claude_name | endswith("-1a"))' >/dev/null && ok "a running claude with a made-up name goes by its title" || bad "active: made-up name shown: $(state | jq -c .active)"
+tm new-session -d -s dev4 -c "$W" -- "$ASC_CLAUDE" --session-id "$P4" --name given; claude_in dev4 >/dev/null
+state | jq -e --arg d "$P4" '.active[] | select(.session_id == $d) | .name == "given"' >/dev/null && ok "a name given to claude stays, over its title" || bad "active: a given name replaced: $(state | jq -c .active)"
+tm kill-session -t =dev4
 
 echo "== the client must be another machine"
 nox() { curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Tailscale-User-Login: $LOGIN" -H "Host: localhost" -H "$XFH" "$@" http://x/api/state; }
@@ -520,7 +528,7 @@ asc/dash.py %%% "start_url": f"./?v={ICON_VER}" %%% "start_url": "/"
 asc/live.py %%%                 if own_sid and s["session_id"] != own_sid: %%%                 if False:
 asc/live.py %%%     except (ValueError, RecursionError): %%%     except ValueError:
 asc/past.py %%%             except (ValueError, RecursionError): %%%             except ValueError:
-asc/past.py %%%         if not stat.S_ISREG(st.st_mode): %%%         if False:
+asc/past.py %%%     if not stat.S_ISREG(st.st_mode): %%%     if False:
 asc/dash.py %%%         if not serve_is_ours(): %%%         if False:
 asc/dash.py %%% op in (None, "", pwd.getpwuid(os.getuid()).pw_name) %%% True
 asc/dash.py %%%         ok = r.returncode == 0 and op in %%%         ok = op in
@@ -528,6 +536,10 @@ asc/dash.py %%%     if stat.S_IMODE(os.stat(path).st_mode) & 0o022: %%%     if F
 asc/tmuxctl.py %%% timeout=timeout, stdin=subprocess.DEVNULL) %%% stdin=subprocess.DEVNULL)
 asc/dash.py %%%  + (["--force-memory"] if a.get("force_memory") is True else []) %%%  + (["--force-memory"] if a.get("force_memory") else [])
 asc/dash.py %%%         if not isinstance(a.get("on"), bool): %%%         if False:
+asc/past.py %%%         elif r.get("type") == "ai-title" and %%%         elif False and
+asc/past.py %%% (title or ai or "") %%% (ai or title or "")
+asc/dash.py %%% (s["derived"] or not s["name"]) and past.title %%% False and past.title
+asc/dash.py %%% (s["derived"] or not s["name"]) and past.title %%% True and past.title
 asc/past.py %%%                 title = t %%%                 title = title or t
 asc/past.py %%%     out.sort(key=lambda c: c["mtime"], reverse=True) %%%     out.sort(key=lambda c: c["mtime"])
 asc/dash.py %%% if st.st_uid != os.getuid() or st.st_mode & 0o022: %%% if st.st_uid != os.getuid():

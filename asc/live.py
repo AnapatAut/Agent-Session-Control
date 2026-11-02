@@ -111,6 +111,7 @@ def read_sessions(home=None):
               and (raw.get("pidDomain") is None or raw.get("pidDomain") == domain))
         s = {"file": path, "ok": bool(ok), "pid": pid, "session_id": sid, "cwd": raw.get("cwd"),
              "name": raw.get("name") if isinstance(raw.get("name"), str) else "",
+             "derived": raw.get("nameSource") == "derived",  # a made-up name (folder-NN), not one given
              "status": raw.get("status") if raw.get("status") in ("busy", "idle", "shell", "waiting") else "unknown",
              "rc": bool(raw.get("bridgeSessionId")), "kind": raw.get("kind"),
              # why claude waits ("dialog open", "input needed", ...), and when its status last changed

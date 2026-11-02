@@ -282,7 +282,9 @@ def _snapshot():
             "mem_kb": sum(live.tree_mem_kb(p["pane_pid"], kids) for p in panes),
             "attach": f"tmux attach -t ={e['tmux']}",
         })
-    active = [{"pid": s["pid"], "session_id": s["session_id"], "name": s["name"], "cwd": s["cwd"],
+    # a claude with a made-up name (folder-NN) goes by its conversation's title, as the Claude apps list it
+    active = [{"pid": s["pid"], "session_id": s["session_id"], "claude_name": s["name"], "cwd": s["cwd"],
+               "name": (s["derived"] or not s["name"]) and past.title(s["session_id"]) or s["name"],
                "status": s["status"], "waiting_for": s["waiting_for"], "status_at": s["status_at"],
                "tmux": s["pane"]["session"] if s["pane"] else None,
                "pane": s["pane"]["pane_id"] if s["pane"] else None,

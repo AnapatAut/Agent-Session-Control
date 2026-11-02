@@ -2,7 +2,8 @@
 
 Each transcript is read once per change (cached by mtime and size), and only its first and
 last 64 KB: the folder from the first record that has `cwd`, the title from the last
-`custom-title` or `agent-name` record seen. Search looks at titles and folders, never content.
+`custom-title` or `agent-name` record seen, else the last `ai-title` (claude's own summary, also the
+name the Claude apps list). Search looks at titles and folders, never content.
 """
 import glob
 import json
@@ -45,7 +46,7 @@ def _records(path, size):
 
 
 def _read(path, size):
-    cwd = title = None
+    cwd = title = ai = None
     for r in _records(path, size):
         if cwd is None and isinstance(r.get("cwd"), str):
             cwd = r["cwd"]
@@ -53,7 +54,41 @@ def _read(path, size):
             t = r.get("customTitle") or r.get("agentName")
             if isinstance(t, str):
                 title = t
-    return {"cwd": cwd or "", "title": title or ""}
+        elif r.get("type") == "ai-title" and isinstance(r.get("aiTitle"), str):
+            ai = r["aiTitle"]
+    return {"cwd": cwd or "", "title": (title or ai or "")[:200]}
+
+
+def _info(path):
+    """The transcript's {cwd, title}, read again only when it changed; None if no regular file."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return None
+    if not stat.S_ISREG(st.st_mode):
+        return None  # a symlink, FIFO or device: never opened
+    key = (st.st_mtime_ns, st.st_size)
+    with _lock:
+        hit = _cache.get(path)
+    if hit and hit[0] == key:
+        return dict(hit[1], mtime=int(st.st_mtime))
+    try:
+        info = _read(path, st.st_size)
+    except OSError:
+        return None
+    with _lock:
+        _cache[path] = (key, info)
+    return dict(info, mtime=int(st.st_mtime))
+
+
+def title(sid, home=None):
+    """The title of a running conversation, or ""."""
+    home = home or os.path.expanduser("~")
+    for path in glob.glob(os.path.join(home, ".claude", "projects", "*", f"{sid}.jsonl")):
+        info = _info(path)
+        if info and info["title"]:
+            return info["title"]
+    return ""
 
 
 def conversations(home=None):
@@ -64,26 +99,11 @@ def conversations(home=None):
         sid = os.path.basename(path)[:-6]
         if not UUID_RE.fullmatch(sid):
             continue
-        try:
-            st = os.lstat(path)
-        except OSError:
+        info = _info(path)
+        if info is None:
             continue
-        if not stat.S_ISREG(st.st_mode):
-            continue  # a symlink, FIFO or device: never opened
-        key = (st.st_mtime_ns, st.st_size)
-        with _lock:
-            hit = _cache.get(path)
-        if hit and hit[0] == key:
-            info = hit[1]
-        else:
-            try:
-                info = _read(path, st.st_size)
-            except OSError:
-                continue
-            with _lock:
-                _cache[path] = (key, info)
         seen.add(path)
-        out.append({"session_id": sid, "cwd": info["cwd"], "title": info["title"], "mtime": int(st.st_mtime)})
+        out.append({"session_id": sid, "cwd": info["cwd"], "title": info["title"], "mtime": info["mtime"]})
     with _lock:
         for p in [p for p in _cache if p not in seen]:
             del _cache[p]

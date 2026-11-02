@@ -519,7 +519,8 @@ function activeSheet(x) {
   return [el("h2", x.name || "Unnamed claude"), el("div", tilde(x.cwd), "s2 mono"),
     x.duplicate ? el("div", "Another claude holds the same session id.", "warn bad") : null,
     el("span", "SESSION", "lab"),
-    kv([["Status", statusText(x) || label], ["tmux", x.tmux || "not in tmux"], ["Pid", x.pid], ["Session id", x.session_id]]),
+    kv([["Status", statusText(x) || label], ["Claude's name", x.claude_name !== x.name ? x.claude_name : ""],
+        ["tmux", x.tmux || "not in tmux"], ["Pid", x.pid], ["Session id", x.session_id]]),
     el("div", "Not a favorite: a reboot will not bring it back. Favorite it to turn it on and off here.", "res"),
     kids(el("div", null, "acts"), favoriteButton(x.session_id))];
 }
