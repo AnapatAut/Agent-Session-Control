@@ -49,7 +49,7 @@ def read_json(path, limit=1 << 20):
 
 
 def proc_stat(pid):
-    """(name, ppid, starttime) of a PID, or None."""
+    """(name, ppid, starttime, state) of a PID, or None."""
     try:
         with open(f"/proc/{pid}/stat", encoding="utf-8", errors="replace") as f:
             s = f.read()
@@ -60,14 +60,16 @@ def proc_stat(pid):
         return None
     rest = s[j + 2:].split()
     try:
-        return s[i + 1:j], int(rest[1]), rest[19]
+        return s[i + 1:j], int(rest[1]), rest[19], rest[0]
     except (IndexError, ValueError):
         return None
 
 
 def alive(pid, proc_start):
     st = proc_stat(pid)
-    return st is not None and st[0] == "claude" and proc_start is not None and st[2] == str(proc_start)
+    # a zombie has ended: it only waits for its parent (tmux) to collect it
+    return (st is not None and st[0] == "claude" and st[3] not in ("Z", "X")
+            and proc_start is not None and st[2] == str(proc_start))
 
 
 def _pid_domain():

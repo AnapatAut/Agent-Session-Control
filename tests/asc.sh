@@ -73,7 +73,8 @@ asctl list | seen "^$id  das-$id .*on " && ok "list: on" || bad "list: not on: $
 echo "== off"
 asctl off "$id" >/dev/null && ok "off" || bad "off failed"
 tm has-session -t "=das-$id" 2>/dev/null && bad "tmux session still there after off" || ok "its tmux session closed"
-kill -0 "$pid" 2>/dev/null && bad "claude still runs after off" || ok "claude ended"
+runs() { local st; st=$(ps -o stat= -p "$1" 2>/dev/null) && [[ $st != Z* ]]; }  # a zombie has ended
+runs "$pid" && bad "claude still runs after off" || ok "claude ended"
 [ "$(jqe ".entries[\"$id\"].want_on")" = false ] && ok "want_on false after off" || bad "want_on not false after off"
 asctl list | seen "^$id .* off " && ok "list: off" || bad "list: not off"
 
@@ -234,6 +235,55 @@ asctl on "$id2" >/dev/null; tail -1 "$HOME/claude-args.log" | seen -- '--remote-
 asctl off "$id2" --force >/dev/null
 asctl rc "$id2" off >/dev/null; asctl on "$id2" >/dev/null
 tail -1 "$HOME/claude-args.log" | seen -- '--remote-control' && bad "rc off still passed --remote-control" || ok "rc off: no --remote-control"
+echo "== rc now: typed into an idle claude (asc/rclive.py)"
+pane=$(tm list-panes -t "=chat-$id2:" -F '#{pane_id}')
+bridge() { jq -r 'select(.name == "chat-'"$id2"'") | .bridgeSessionId // ""' "$HOME"/.claude/sessions/*.json; }
+screen() { tm capture-pane -p -t "$pane"; }
+out=$(asctl rc "$id2" on); seen 'live now' <<<"$out" && [ -n "$(bridge)" ] && seen -x "pid=[0-9]* line: /remote-control My chat" "$HOME/claude-args.log" \
+	&& ok "rc on: /remote-control with its title typed, confirmed from the session file" || bad "rc on live: $out / $(bridge)"
+out=$(asctl rc "$id2" on); seen 'live already' <<<"$out" && [ "$(grep -c 'line: /remote-control' "$HOME/claude-args.log")" = 1 ] && ok "rc on while live: nothing typed" || bad "rc on again: $out"
+out=$(asctl rc "$id2" off); seen 'off now' <<<"$out" && [ -z "$(bridge)" ] && seen 'rc: disconnected' "$HOME/claude-args.log" && [ "$(jqe ".entries[\"$id2\"].rc")" = false ] \
+	&& ok "rc off: the dialog, Disconnect selected and confirmed" || bad "rc off live: $out / $(bridge)"
+tm send-keys -t "$pane" -l "half typed"; sleep 0.5
+out=$(asctl rc "$id2" on); seen 'not changed now: something is typed in its prompt' <<<"$out" && [ -z "$(bridge)" ] && screen | seen 'half typed' \
+	&& [ "$(jqe ".entries[\"$id2\"].rc")" = true ] && ok "text in its prompt: nothing typed, the setting saved for the next start" || bad "typed prompt: $out / $(screen | tail -3)"
+tm send-keys -t "$pane" BSpace BSpace BSpace BSpace BSpace BSpace BSpace BSpace BSpace BSpace; sleep 0.5
+touch "$HOME/fake-busy"; sleep 0.6
+out=$(asctl rc "$id2" on); seen 'not changed now: claude is busy' <<<"$out" && [ -z "$(bridge)" ] && ok "busy: nothing typed" || bad "busy: $out"
+rm -f "$HOME/fake-busy"; sleep 0.6
+tm copy-mode -t "$pane"
+out=$(asctl rc "$id2" on); seen 'not changed now: its pane is in copy mode' <<<"$out" && [ -z "$(bridge)" ] && ok "copy mode: nothing typed" || bad "copy mode: $out"
+tm send-keys -t "$pane" -X cancel
+out=$(asctl rc "$id2" on --next-start); seen 'from its next start$' <<<"$out" && [ -z "$(bridge)" ] && ok "--next-start: only the setting" || bad "--next-start: $out"
+touch "$HOME/fake-hint"; tm send-keys -t "$pane" x BSpace; sleep 0.5
+screen | seen 'Try "fix lint"' && out=$(asctl rc "$id2" on) && seen 'live now' <<<"$out" && [ -n "$(bridge)" ] && ok "a dim placeholder counts as an empty prompt" || bad "placeholder: $out"
+rm -f "$HOME/fake-hint"
+empty() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import rclive; sys.exit(rclive.prompt_text(rclive.screen(sys.argv[2])) != "")' "$REPO" "$pane"; }
+touch "$HOME/fake-menu-first"
+out=$(asctl rc "$id2" off); seen 'not changed now: its command menu did not offer /remote-control first; nothing was sent' <<<"$out" && [ -n "$(bridge)" ] && empty \
+	&& ! seen 'remote-controller' "$HOME/claude-args.log" && ok "off: another command first in the menu: Enter not pressed, the prompt cleared" || bad "menu first: $out"
+rm -f "$HOME/fake-menu-first"
+touch "$HOME/fake-slow-dialog"
+out=$(asctl rc "$id2" off); seen 'off now' <<<"$out" && [ -z "$(bridge)" ] && empty \
+	&& ok "off: a slow dialog, its lines quoted in the transcript: waited for the dialog itself" || bad "slow dialog: $out / $(screen | tail -4)"
+rm -f "$HOME/fake-slow-dialog"
+out=$(asctl rc "$id2" on --title "a@b"); seen 'not changed now: its title has characters asctl does not type' <<<"$out" && [ -z "$(bridge)" ] && ok "a title with @ (a file menu) is not typed" || bad "title @: $out"
+asctl rc "$id2" on --title "x;" >/dev/null 2>&1 && bad "a title ending with ; accepted" || ok "a title ending with ; refused (tmux would drop it)"
+asctl rc "$id2" on --title "My chat" --next-start >/dev/null
+touch "$HOME/fake-menu-on"
+out=$(asctl rc "$id2" on); seen 'not changed now: something opened under its prompt (a menu?); nothing was sent' <<<"$out" && [ -z "$(bridge)" ] && empty \
+	&& ok "on: a menu under the prompt: Enter not pressed, the prompt cleared" || bad "menu on: $out"
+rm -f "$HOME/fake-menu-on"
+touch "$HOME/fake-mangle"
+out=$(asctl rc "$id2" on); seen "its prompt now holds 'x/remote-control My chat'; check it" <<<"$out" && [ -z "$(bridge)" ] && screen | seen 'x/remote-control My chat' \
+	&& ok "the prompt not showing the command as typed: Enter not pressed, text not ours left alone" || bad "mangle: $out"
+rm -f "$HOME/fake-mangle"; tm send-keys -t "$pane" $(printf 'BSpace %.0s' $(seq 1 30)); sleep 0.5
+touch "$HOME/fake-two-lines"; tm send-keys -t "$pane" x BSpace; sleep 0.5
+out=$(asctl rc "$id2" on); seen "not changed now: its screen does not show claude's prompt" <<<"$out" && [ -z "$(bridge)" ] \
+	&& ok "a prompt of two lines (the first empty) is not empty" || bad "two lines: $out"
+rm -f "$HOME/fake-two-lines"; tm send-keys -t "$pane" x BSpace; sleep 0.5
+[ "$(grep -c 'line: ' "$HOME/claude-args.log")" = 4 ] && ok "nothing else ever reached its prompt" || bad "lines entered: $(grep 'line: ' "$HOME/claude-args.log")"
+asctl rc "$id2" off --next-start >/dev/null  # the tests below start from rc off
 asctl off "$id2" --force >/dev/null
 asctl rc "$id2" on --title=-x >/dev/null 2>&1 && bad "a title starting with - accepted" || ok "a title starting with - refused (claude would read an option)"
 asctl rc "$id2" on --title "$(printf 'a\tb')" >/dev/null 2>&1 && bad "a title with a control character accepted" || ok "a title with a control character refused"
@@ -280,6 +330,21 @@ asc/cli.py %%%         if not args.force_memory: %%%         if False:
 asc/cli.py %%%             e["rc"] = True %%%             pass
 asc/cli.py %%%  or (resurrect and e.get("resurrect")) %%%  or False
 asc/registry.py %%%     if not t or t.startswith("-"): %%%     if not t:
+asc/rclive.py %%%     if now["status"] != "idle": %%%     if now["status"] == "busy" and False:
+asc/rclive.py %%%         return "its pane is in copy mode" %%%         pass
+asc/rclive.py %%%     if t: %%%     if False:
+asc/rclive.py %%% plain(DIM.sub("", lines[i])) %%% plain(lines[i])
+asc/rclive.py %%% cmd = f"{CMD} {title}" if on else CMD %%% cmd = CMD
+asc/rclive.py %%% rules[-1] - rules[-2] == 2 else None %%% rules[-1] - rules[-2] >= 2 else None
+asc/cli.py %%%         s = None if args.next_start else live_in(e) %%%         s = live_in(e)
+asc/cli.py %%%         elif s["rc"] == on: %%%         elif False:
+asc/rclive.py %%%     if prompt_text(scr) != cmd: %%%     if False:
+asc/rclive.py %%%     elif on and under(scr) != before: %%%     elif False:
+asc/rclive.py %%%     elif not on and not offers_cmd(scr): %%%     elif False:
+asc/rclive.py %%%     if t and cmd.startswith(t): %%%     if t:
+asc/rclive.py %%%             if not dialog_open(pid, scr) or selected(scr, DISCONNECT): %%%             if not dialog_open(pid, scr):
+asc/rclive.py %%%     l = next((l for l in reversed(bottom(scr)) if label in l), "") %%%     l = next((l for l in bottom(scr) if "❯" in l and label in l), "")
+asc/rclive.py %%%     return status(pid) == "waiting" and prompt_text(scr) is None and %%%     return
 MUTANTS
 fi
 

@@ -10,7 +10,9 @@
   asctl off ID [--force]           end it: claude gets SIGTERM, then its tmux session closes
   asctl rename ID NAME             a new name (the tmux session too, if it runs)
   asctl mode ID auto|manual|skip   permission mode for the next start (skip: no prompts)
-  asctl rc ID on|off [--title T]   remote control (and its title) from the next start
+  asctl rc ID on|off [--title T] [--next-start]
+                                   remote control (and its title); a running claude also
+                                   now, when idle (asc/rclive.py), unless --next-start
   asctl resurrect ID on|off        bring it back after a reboot; on turns rc on too, and a
                                    resurrect start always has rc
   asctl note ID TEXT               a note shown with it ("" clears it)
@@ -28,7 +30,7 @@ import sys
 import time
 import uuid
 
-from . import live, memory, registry, tmuxctl
+from . import live, memory, rclive, registry, tmuxctl
 from .registry import RegistryError
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -351,12 +353,23 @@ def cmd_rc(args):
     if args.state not in ("on", "off"):
         raise RegistryError("rc is on or off")
     title = registry.check_title(args.title) if args.title is not None else None
-    with registry.changing() as data:
-        e = registry.find(data, args.id)
-        e["rc"] = args.state == "on"
-        if title is not None:
-            e["rc_title"] = title
-    out(f"{e['tmux']}: rc {args.state}" + (f", title {e.get('rc_title')!r}" if e["rc"] else "") + " from its next start")
+    on = args.state == "on"
+    id4 = registry.find(registry.load(), args.id)["id4"]
+    with registry.entry_lock(id4, wait=True):  # after a start or stop that is running
+        with registry.changing() as data:
+            e = registry.find(data, id4)
+            e["rc"] = on
+            if title is not None:
+                e["rc_title"] = title
+        head = f"{e['tmux']}: rc {args.state}" + (f", title {e.get('rc_title') or e['tmux']!r}" if on else "")
+        s = None if args.next_start else live_in(e)
+        if not s:
+            out(head + " from its next start")
+        elif s["rc"] == on:
+            out(head + (" (live already)" if on else " (not live already)"))
+        else:
+            why = rclive.switch(s, on, e.get("rc_title") or e["tmux"])
+            out(head + (f" from its next start; not changed now: {why}" if why else (", live now" if on else ", off now")))
     return 0
 
 
@@ -418,6 +431,7 @@ def main(argv=None):
     a.add_argument("id")
     a.add_argument("state")
     a.add_argument("--title")
+    a.add_argument("--next-start", action="store_true", help="only the setting: never type into a running claude")
     a.set_defaults(f=cmd_rc)
     a = sub.add_parser("resurrect")
     a.add_argument("id")

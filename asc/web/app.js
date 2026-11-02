@@ -156,14 +156,14 @@ function draw() {
   // memory
   const m = s.memory, used = m.total_kb ? 100 - m.avail_pct : 0;
   $("mem").classList.toggle("warn", m.warn);
-  $("mem-pct").textContent = m.total_kb ? m.avail_pct + "% free" : "unknown";
+  $("mem-pct").textContent = m.total_kb ? Math.round(used) + "% used" : "unknown";
   $("mem-used").style.width = Math.max(0, Math.min(100, used)) + "%";
   const onKb = s.favorites.filter(isOn).reduce((a, e) => a + (e.rss_kb || 0), 0);
-  $("mem-det").replaceChildren(document.createTextNode(`${size(m.avail_kb)} of ${size(m.total_kb)} free`), el("br"),
+  $("mem-det").replaceChildren(document.createTextNode(`${size(m.total_kb - m.avail_kb)} of ${size(m.total_kb)} used`), el("br"),
     document.createTextNode(`${s.on} on use ${size(onKb) || "0 MB"}`));
 
   const warn = [];
-  if (m.warn) warn.push("Memory is below 15% free; a start needs 20%.");
+  if (m.warn) warn.push("Memory is over 85% used; a start needs it at most 80% used.");
   if (!s.server) warn.push("No tmux server is running.");
   if (s.unknown_files) warn.push(`${s.unknown_files} session file(s) in a format asctl does not know.`);
   $("banner").hidden = !warn.length;
@@ -213,6 +213,61 @@ function drawPast() {
   sweepRows("past:");
 }
 
+// --- our own confirm and prompt ---------------------------------------------------------------
+// The browser's own confirm and prompt boxes look like another site's and name it in their title. This
+// card resolves true/false for a question, or the text/null with input: {value, check(v) -> error}.
+function ask({ title, text = "", ok = "OK", danger = false, input = null }) {
+  if (ask.cancel) ask.cancel();
+  return new Promise((done) => {
+    const inp = $("dlg-in"), okb = $("dlg-ok"), nob = $("dlg-no"), err = $("dlg-err");
+    $("dlg-t").textContent = title;
+    $("dlg-m").textContent = text;
+    $("dlg-m").hidden = !text;
+    okb.textContent = ok;
+    okb.className = "btn " + (danger ? "dz" : "p");
+    inp.hidden = !input;
+    if (input) { inp.value = input.value || ""; inp.setAttribute("aria-label", title); }
+    const check = () => {
+      const why = input ? input.check(inp.value) : "";
+      err.textContent = why || "";
+      okb.disabled = !!why;
+      return !why;
+    };
+    check();
+    const prev = document.activeElement;
+    // everything else out of reach (the sheet too); put back as it was
+    const outside = [...document.body.children].filter((c) => c.id !== "dscrim" && c.id !== "toast");
+    const was = outside.map((c) => c.inert);
+    for (const c of outside) c.inert = true;
+    $("dscrim").hidden = false;
+    const finish = (v) => {
+      $("dscrim").hidden = true;
+      outside.forEach((c, i) => { c.inert = was[i]; });
+      document.removeEventListener("keydown", key, true);
+      okb.onclick = nob.onclick = inp.oninput = $("dscrim").onclick = null;
+      ask.cancel = null;
+      if (prev && prev.isConnected) prev.focus({ preventScroll: true });
+      done(v);
+    };
+    const no = () => finish(input ? null : false);
+    // a second tap of the one that opened it (Turn off, then Force off at the same spot) is not a yes
+    const opened = performance.now();
+    const yes = () => { if (performance.now() - opened > 400 && check()) finish(input ? inp.value : true); };
+    const key = (ev) => {
+      if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); no(); }
+      else if (ev.key === "Enter" && ev.target === inp) { ev.preventDefault(); yes(); }
+    };
+    document.addEventListener("keydown", key, true);  // before the sheet's Escape
+    okb.onclick = yes;
+    nob.onclick = no;
+    inp.oninput = check;
+    $("dscrim").onclick = (ev) => { if (ev.target === $("dscrim")) no(); };
+    ask.cancel = no;
+    // a risky OK never has the focus first: Enter or a stray tap must not confirm it
+    (input ? inp : danger ? nob : okb).focus();
+  });
+}
+
 // --- talking to the server -------------------------------------------------------------------
 function toast(text) {
   const t = $("toast");
@@ -240,11 +295,13 @@ async function act(body) {
     j = { ok: false, error: "the dashboard did not answer (" + e.message + ")" };
   }
   if (!j.ok && body.action === "off" && !body.force && /busy/.test(j.error || "") &&
-      window.confirm(`${body.tmux}: ${j.error}\n\nForce it off anyway? Everything in it ends.`)) {
+      await ask({ title: `${body.tmux} is busy`, text: j.error + "\n\nForce it off anyway? Everything in it ends.",
+                  ok: "Force off", danger: true })) {
     return act({ ...body, force: true });
   }
   if (!j.ok && body.action === "on" && !body.force_memory && /^memory:/.test(j.error || "") &&
-      window.confirm(`${body.tmux}: ${j.error}\n\nStart it anyway? earlyoom may then end other sessions.`)) {
+      await ask({ title: "Memory is short", text: `${j.error}\n\nStart ${body.tmux} anyway? earlyoom may then end other sessions.`,
+                  ok: "Start anyway", danger: true })) {
     return act({ ...body, force_memory: true });
   }
   pending.delete(id);
@@ -333,7 +390,7 @@ function favSheet(e) {
   out.push(kids(el("div", null, "bigsw"), kids(el("div"), el("div", title, "t " + (on ? "" : l.dot)), el("div", favDesc(e), "d")),
     sw(on, on ? "Turn off" : "Turn on", async () => {
       if (on) {
-        if (!window.confirm(`Turn ${e.tmux} off? What runs in tmux session ${e.tmux} ends.`)) return;
+        if (!await ask({ title: `Turn ${e.tmux} off?`, text: `What runs in its tmux session ends.`, ok: "Turn off", danger: true })) return;
         await act({ action: "off", ...ref });
       } else {
         await act({ action: "on", ...ref });
@@ -392,13 +449,13 @@ function favSheet(e) {
       catch (err) { toast(e.attach); }
     }),
     btn("Rename", "", async () => {
-      const name = window.prompt(`New name for ${e.tmux} (a-z, 0-9 and -, up to 31; the id stays)`, e.name);
+      const name = await ask({ title: `Rename ${e.tmux}`, text: `The id stays: it becomes NAME-${e.id4}.`, ok: "Rename",
+        input: { value: e.name, check: (v) => /^[a-z0-9][a-z0-9-]{0,30}$/.test(v) ? "" : "a-z, 0-9 and -, starting with a letter or digit, up to 31" } });
       if (name === null || name === e.name) return;
-      if (!/^[a-z0-9][a-z0-9-]{0,30}$/.test(name)) { toast("Refused: a-z, 0-9 and -, starting with a letter or digit, up to 31."); return; }
       await act({ action: "rename", name, ...ref });
     }, wait),
     btn("Forget", "danger", async () => {
-      if (!window.confirm(`Forget ${e.tmux}? A running session is left alone; only the favorite goes.`)) return;
+      if (!await ask({ title: `Forget ${e.tmux}?`, text: "A running session is left alone; only the favorite goes.", ok: "Forget", danger: true })) return;
       const j = await act({ action: "forget", ...ref });
       if (j.ok) closeSheet();
     }, wait)));
@@ -481,7 +538,7 @@ function openSheet(kind, key) {
   if (!sheetOf) return;
   if (first) opener = document.activeElement;
   // the page behind is out of reach (Tab, screen readers) while the sheet is open
-  for (const c of document.body.children) if (c.id !== "scrim" && c.id !== "toast") c.inert = true;
+  for (const c of document.body.children) if (c.id !== "scrim" && c.id !== "toast" && c.id !== "dscrim") c.inert = true;
   $("scrim").classList.add("on");
   $("sheet").scrollTop = 0;
   $("sheet").querySelector(".x").focus();
@@ -489,6 +546,7 @@ function openSheet(kind, key) {
 }
 function closeSheet(fromBack) {
   if (!sheetOf) return;
+  if (ask.cancel) ask.cancel();
   sheetOf = null;
   noteDraft = null;
   $("scrim").classList.remove("on");

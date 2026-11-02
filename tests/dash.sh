@@ -156,6 +156,7 @@ grep -E '<script>|<script [^>]*>[^<]' "$T/page" >/dev/null && bad "the page has 
 [ "$(code http://x/app.js)" = 200 ] && [ "$(code http://x/app.css)" = 200 ] && ok "app.js and app.css served" || bad "static files missing"
 # Reading outerHTML (to compare two rows) is fine; any way of turning a string into HTML is not.
 grep -nE '(inner|outer)HTML[[:space:]]*\+?=|insertAdjacentHTML|document\.write|createContextualFragment|DOMParser|srcdoc' "$REPO/asc/web/app.js" "$REPO/asc/web/splash.js" >/dev/null && bad "app.js writes HTML from strings" || ok "app.js sets text only (no innerHTML)"
+grep -nE '\b(window\.)?(confirm|prompt|alert)\(' "$REPO/asc/web/app.js" >/dev/null && bad "app.js uses the browser's own dialogs" || ok "app.js asks with its own dialog (no confirm, prompt or alert)"
 
 echo "== the installable app (PWA)"
 # No login: as an install check fetches the manifest, worker and icons, outside the page.

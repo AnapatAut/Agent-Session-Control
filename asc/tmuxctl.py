@@ -73,3 +73,23 @@ def capture(name):
 
 def send_key(name, key):
     return run("send-keys", "-t", "=" + name + ":", key)
+
+
+# By pane id (%N): one exact pane, never the session's active one by chance.
+def capture_pane(pane, escapes=False):
+    r = run("capture-pane", "-p", *(["-e"] if escapes else []), "-t", pane)
+    return r.stdout if r.returncode == 0 else ""
+
+
+def pane_in_mode(pane):
+    r = run("display-message", "-p", "-t", pane, "#{pane_in_mode}")
+    return r.returncode != 0 or r.stdout.strip() != "0"  # unknown counts as in a mode
+
+
+def send_pane(pane, *keys):
+    return run("send-keys", "-t", pane, *keys)
+
+
+def type_pane(pane, text):
+    """Text as typed, key names not read (-l)."""
+    return run("send-keys", "-t", pane, "-l", text)

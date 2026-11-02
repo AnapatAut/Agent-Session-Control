@@ -122,6 +122,8 @@ def check_title(title):
     t = _plain(title, "title", 80).strip()
     if not t or t.startswith("-"):
         raise RegistryError("bad title: empty, or starts with -")
+    if t.endswith(";"):  # tmux reads a final ";" as the end of its command and drops it
+        raise RegistryError("bad title: ends with ;")
     return t
 
 
