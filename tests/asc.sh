@@ -359,7 +359,7 @@ if [ "${ASC_MUTANTS:-}" = 1 ]; then
 asc/live.py %%% and proc_start is not None and st[2] == str(proc_start) %%% 
 asc/live.py %%% st is not None and st[0] == "claude" and %%% st is not None and
 asc/live.py %%%                 if s["status"] == "busy": %%%                 if False:
-asc/live.py %%%                     return f"pane {p['pane_id']} runs a claude asctl cannot read ({pid})" %%%                     continue
+asc/live.py %%%                     return f"it runs a claude asctl cannot read (pid {pid})" %%%                     continue
 asc/live.py %%%             if name in WRAPPERS: %%%             if True:
 asc/live.py %%%             if name == "claude": %%%             if False:
 asc/live.py %%% base == str(pid) and %%% 
