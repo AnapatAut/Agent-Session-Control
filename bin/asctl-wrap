@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Runs in the pane asctl starts: claude with the arguments asctl chose, then a record of how it
-# ended (exit code, time, boot id) for asctl, then a login shell so the pane stays open.
+# ended (exit code, time, boot id, and this pane's PID, which the login shell keeps) for asctl,
+# then a login shell so the pane stays open.
 # 143 (SIGTERM) or 137 (SIGKILL) means a signal ended it; 0 means the user did (/exit, Ctrl-C).
 #   asctl-wrap EXIT-FILE CLAUDE [ARG…]
 f=$1; shift
 "$@"
 rc=$?
-printf '%s %s %s\n' "$rc" "$(date +%s)" "$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" > "$f.tmp" && mv -f "$f.tmp" "$f"
+# 0600, in a subshell: the login shell after it keeps the user's own umask
+(umask 077; printf '%s %s %s %s\n' "$rc" "$(date +%s)" "$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" "$$" > "$f.tmp") && mv -f "$f.tmp" "$f"
 exec "${SHELL:-/bin/bash}" -l

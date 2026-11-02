@@ -18,6 +18,12 @@ export FAKE_BASH="$T/fakebash/claude"
 mem() { printf 'MemTotal: %s kB\nMemAvailable: %s kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n' "$1" "$2" > "$T/meminfo"; }
 export ASC_MEMINFO="$T/meminfo"
 mem 32000000 16000000
+# Memory pressure counters as the watcher reads them (asc/memory.py): PSI full total (µs), pages
+# swapped in and out, OOM kills.
+vm() { printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=%s\n' "$1" > "$T/pressure"
+	printf 'nr_free_pages 1\npswpin %s\npswpout %s\noom_kill %s\n' "$2" "$3" "$4" > "$T/vmstat"; }
+export ASC_PRESSURE="$T/pressure" ASC_VMSTAT="$T/vmstat"
+vm 0 0 0 0
 tm() { tmux -L "$ASC_TMUX_SOCKET" -f /dev/null "$@"; }
 # kill-server has a time limit: it once hung for hours on a stuck test server (and with it this run)
 cleanup() { timeout -k 2 10 tmux -L "$ASC_TMUX_SOCKET" -f /dev/null kill-server 2>/dev/null; rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$ASC_TMUX_SOCKET"; rm -rf "$T"; }
@@ -458,6 +464,231 @@ assert events._clean("a\x1b[31mb\nc\x7f") == "a [31mb c "
 try: events.log("nonsense")
 except ValueError: pass
 else: raise SystemExit(1)' "$REPO" && ok "event text: control characters become spaces; an unknown kind is a bug" || bad "event text not cleaned"
+echo "== watcher: memory, sizes, following, a pending rename, duplicates"
+SD="$HOME/.local/state/agent-session-control"
+watch() { ASC_BY=watch asctl watch; }
+evn() { jq -s --arg k "$1" '[.[] | select(.kind == $k)] | length' "$SD/events.jsonl"; }
+last() { jq -s -c --arg k "$1" '[.[] | select(.kind == $k)] | last' "$SD/events.jsonl"; }
+# Seed 6 min of samples (as if the watcher had run every 30 s), from the fake readings now.
+# (Runs of the tests come seconds apart, so samples taken since stay inside the 8 min kept.)
+seed() { python3 -I -c 'import sys, time; sys.path.insert(0, sys.argv[1]); from asc import memory, registry
+s = memory.sample(); now = int(time.time())
+registry.write_private(registry.state_dir() + "/memory.json", [dict(s, t=now - 30 * i) for i in range(12, 0, -1)])' "$REPO"; }
+watch && jq -e 'length == 1 and .[0].avail_pct == 50 and .[0].oom_kill == 0 and (.[0].boot | length) > 0' "$SD/memory.json" >/dev/null \
+	&& [ "$(stat -c %a "$SD/memory.json" "$SD/watch.json" | sort -u)" = 600 ] && ok "watch: a memory sample kept, its files 0600" || bad "watch: no sample: $(cat "$SD/memory.json")"
+flock "$SD/watch.lock" sleep 2 & fl=$!; sleep 0.3
+watch; [ "$(jq length "$SD/memory.json")" = 1 ] && ok "watch: a run while another holds the lock does nothing" || bad "watch ran twice at once"
+wait $fl
+python3 -I -c 'import sys, time; sys.path.insert(0, sys.argv[1]); from asc import memory, registry
+s = memory.sample(); now = int(time.time())
+registry.write_private(registry.state_dir() + "/memory.json", [dict(s, t=now - 600), dict(s, t=now - 400), dict(s, boot="old"), dict(s, t=now + 99)])' "$REPO"
+watch; jq -e 'length == 2 and .[1].t - .[0].t >= 400 and .[1].t - .[0].t < 420' "$SD/memory.json" >/dev/null && ok "watch: samples kept 8 min, this boot's only, none from the future" || bad "samples kept: $(jq -c '[.[] | [.t, .boot]]' "$SD/memory.json")"
+for _ in $(seq 1 125); do watch; done
+[ "$(jq length "$SD/memory.json")" = 120 ] && ok "watch: at most 120 samples" || bad "samples kept: $(jq length "$SD/memory.json")"
+m0=$(evn memory); mem 32000000 3200000; watch; watch
+[ "$(evn memory)" = $((m0 + 1)) ] && last memory | seen 'memory low: 10.0% available' && ok "memory under 15%: one warning, not one per run" || bad "memory warning: $(evn memory) $(last memory)"
+mem 32000000 4900000; watch; [ "$(evn memory)" = $((m0 + 1)) ] && ok "15.3%: still warned (back only 1 point over)" || bad "memory warning flaps"
+mem 32000000 16000000; watch; last memory | seen 'memory back: 50.0% available' && ok "memory back: logged once" || bad "memory back: $(last memory)"
+# A favorite started by asctl in its own session
+WS=eeeeeeee-0000-4000-8000-00000000000a
+tm new-session -d -s w -c "$W" -- "$ASC_CLAUDE" --session-id "$WS"
+pw=$(claude_in w); asctl fav "$pw" --name wat >/dev/null; idw=$(jq -r '.entries[] | select(.name == "wat") | .id4' "$REG")
+asctl off "$idw" >/dev/null; asctl on "$idw" >/dev/null; pw=$(claude_in "wat-$idw")
+watch; [ "$(jq ".entries[\"$idw\"].rss_kb" "$REG")" -gt 0 ] && ok "watch: the favorite's memory kept as rss_kb" || bad "rss_kb: $(jq ".entries[\"$idw\"].rss_kb" "$REG")"
+WS2=eeeeeeee-0000-4000-8000-00000000000b
+echo "$WS2" > "$HOME/fake-branch-$WS"; sleep 0.8; watch
+jq -e --arg i "$idw" --arg a "$WS" --arg b "$WS2" '.entries[$i] | .session_id == $b and .lineage[0] == $a' "$REG" >/dev/null && last followed | seen "now holds session $WS2" \
+	&& ok "followed: a new session id in its own pane (a branch), the old one in lineage" || bad "branch not followed: $(jq -c ".entries[\"$idw\"] | {session_id, lineage}" "$REG")"
+echo "$SID2" > "$HOME/fake-branch-$WS2"; sleep 0.8; f0=$(evn followed); watch
+[ "$(jq -r ".entries[\"$idw\"].session_id" "$REG")" = "$WS2" ] && [ "$(evn followed)" = "$f0" ] && ok "not followed: a session id another favorite holds" || bad "followed into another favorite's session"
+echo "$WS2" > "$HOME/fake-branch-$SID2"; sleep 0.8
+mkdir -p "$T/moved"; echo "$T/moved" > "$HOME/fake-cd-$WS2"; sleep 0.8; watch
+[ "$(jq -r ".entries[\"$idw\"].cwd" "$REG")" = "$T/moved" ] && last followed | seen "moved to $T/moved" && ok "followed: a new folder (/cd)" || bad "cd not followed: $(jq -r ".entries[\"$idw\"].cwd" "$REG")"
+echo /nonexistent > "$HOME/fake-cd-$WS2"; sleep 0.8; watch
+[ "$(jq -r ".entries[\"$idw\"].cwd" "$REG")" = "$T/moved" ] && ok "not followed: a folder that does not exist" || bad "followed a missing folder"
+rm -f "$HOME/fake-cd-$WS2"
+touch "$HOME/fake-busy"; sleep 0.6
+asctl rename "$idw" wat2 | seen 'The watcher sends it once claude is idle' && [ "$(jq -r ".entries[\"$idw\"].rename_pending" "$REG")" = "wat2-$idw" ] \
+	&& ok "rename while busy: pending" || bad "rename pending: $(jq -r ".entries[\"$idw\"].rename_pending" "$REG")"
+watch; watch; watch; watch; [ "$(jq -r .name "$HOME/.claude/sessions/$pw.json")" = "wat-$idw" ] && [ "$(jq -r ".entries[\"$idw\"].rename_pending" "$REG")" = "wat2-$idw" ] \
+	&& ok "watch: nothing typed while claude works, however long (the rename stays pending)" || bad "renamed while busy, or pending dropped"
+rm -f "$HOME/fake-busy"; sleep 0.6; watch
+[ "$(jq -r .name "$HOME/.claude/sessions/$pw.json")" = "wat2-$idw" ] && [ "$(jq -r ".entries[\"$idw\"].rename_pending" "$REG")" = null ] && last rename | seen "took the name wat2-$idw" \
+	&& ok "watch: the pending rename sent once idle, then cleared" || bad "pending rename: $(jq -r .name "$HOME/.claude/sessions/$pw.json")"
+tm new-session -d -s twin -c "$W" -- "$ASC_CLAUDE" --resume "$WS2"; claude_in twin >/dev/null
+d0=$(evn duplicate); watch; watch
+[ "$(evn duplicate)" = $((d0 + 1)) ] && last duplicate | jq -e --arg i "$idw" '.id4 == $i and (.text | test("2 live claudes"))' >/dev/null \
+	&& ok "duplicate: logged once, on its favorite" || bad "duplicate: $(evn duplicate) $(last duplicate)"
+[ "$(jq -r ".entries[\"$idw\"].session_id" "$REG")" = "$WS2" ] && ok "a duplicate is never followed or touched" || bad "duplicate changed the entry"
+tm kill-session -t =twin
+
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import memory
+b = memory.boot_id(); S = lambda t, p=50, **k: dict({"t": t, "boot": b, "avail_pct": p, "oom_kill": 0, "psi_full_us": 0, "pswpin": 0, "pswpout": 0}, **k)
+full = [S(1000 + 30 * i) for i in range(12)]          # 1000 .. 1330
+assert memory.steady(full, now=1340) == "", memory.steady(full, now=1340)
+assert "gap" in memory.steady(full[:4] + full[7:], now=1340)   # 1090 -> 1210
+assert "no recent" in memory.steady(full, now=1500)
+assert "under 5 min" in memory.steady(full[4:], now=1340)
+assert "down to 19" in memory.steady(full[:5] + [S(1150, 19)] + full[6:], now=1340)
+assert memory.steady([S(t, boot="old") for t in range(1000, 1340, 30)], now=1340)
+ev = [S(1000), S(1030, oom_kill=1)]
+assert memory.evidence(ev, 1010) == (True, "1 OOM kill(s)"), memory.evidence(ev, 1010)
+assert memory.evidence([S(1000), S(1030, psi_full_us=200000)], 1010)[1] == "stalled on memory 0.2 s"
+assert memory.evidence([S(1000), S(1030, pswpin=3000)], 1010)[1] == "11 MB swapped"
+assert memory.evidence([S(1000, 12), S(1030)], 1010)[1] == "12% available"
+assert memory.evidence([S(1000), S(1030, psi_full_us=50000, pswpin=100)], 1010)[0] is False
+assert memory.evidence([S(1000), S(1200, oom_kill=1)], 1010)[0] is None   # too far apart
+assert memory.evidence([S(1000)], 1010)[0] is None and memory.evidence([S(1020)], 1010)[0] is None
+assert memory.evidence([S(1000), S(1010, oom_kill=1)], 1010)[0] is None   # same second: not after
+assert memory.evidence([S(1000), S(1010, oom_kill=1), S(1040, oom_kill=1)], 1010) == (True, "1 OOM kill(s)")
+assert memory._ok(S(1)) and not memory._ok(S(1, oom_kill="3")) and not memory._ok(S(1, p=float("nan"))) and not memory._ok(S(1, p=True))' "$REPO" \
+	&& ok "steady and evidence: gaps, a dip, another boot, each kind of pressure, samples too far apart" || bad "steady/evidence rules"
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import live, tmuxctl
+tmuxctl.panes = lambda *a, **k: None
+assert live.busy_reason("x", []) == "tmux did not list its panes"' "$REPO" && ok "busy: tmux not answering counts as busy" || bad "tmux failure read as not busy"
+
+echo "== watcher: a claude that ended with its tmux session up"
+# OOM kills seen: a counter that only grows, as the kernel's does
+oomk=0; bump() { oomk=$((oomk + 1)); vm 0 0 0 "$oomk"; }
+ended() { last ended | jq -r .text; }
+asctl events "$idw" >/dev/null
+kill -TERM "$pw"; sleep 1.2; watch
+ended | seen '^claude ended, exit 143 (a signal), its tmux session up; .*not started again: auto-restart is off' && ok "ended by SIGTERM: logged, auto-restart off by default" || bad "ended: $(ended)"
+e0=$(evn ended); watch; [ "$(evn ended)" = "$e0" ] && ok "an end is logged once" || bad "logged again"
+asctl auto-restart on | seen 'auto-restart on' && [ "$(jq -r .settings.auto_restart "$REG")" = true ] && ok "auto-restart on" || bad "auto-restart on failed"
+watch; last waiting | jq -r .text | seen 'no memory pressure seen' && ok "no memory pressure seen: not started, said once" || bad "waiting: $(last waiting)"
+w0=$(evn waiting); watch; [ "$(evn waiting)" = "$w0" ] && ok "waiting said once" || bad "waiting repeated"
+asctl off "$idw" --force >/dev/null; asctl on "$idw" >/dev/null; pw=$(claude_in "wat2-$idw")
+seed; watch; bump; kill -TERM "$pw"; sleep 1.2; watch
+pn=$(claude_in "wat2-$idw") && [ "$pn" != "$pw" ] && last restarted | jq -r .text | seen 'started again after exit 143 (1 OOM kill' && [ "$(jq ".entries[\"$idw\"].auto_restarted > 0" "$REG")" = true ] \
+	&& ok "restarted: ended by a signal, an OOM kill seen, memory steady" || bad "not restarted: $(ended) / $(last waiting) / $(last restarted)"
+last on | jq -e '.by == "watch"' >/dev/null && ok "its on is by watch" || bad "on by: $(last on)"
+pw=$pn; bump; watch; kill -TERM "$pw"; sleep 1.2; bump; watch
+ended | seen 'started again under 30 min ago' && ok "not again within 30 min" || bad "30 min: $(ended)"
+python3 -I -c 'import sys, json; sys.path.insert(0, sys.argv[1]); from asc import registry
+with registry.changing() as d: d["entries"][sys.argv[2]]["auto_restarted"] = 1' "$REPO" "$idw"
+tm send-keys -t "=wat2-$idw:" 'sleep 300' Enter; sleep 0.8; seed; watch
+last waiting | jq -r .text | seen "its pane's shell runs something" && ! claude_in "wat2-$idw" >/dev/null 2>&1 && ok "its pane runs something: not started" || bad "busy pane: $(last waiting)"
+tm send-keys -t "=wat2-$idw:" C-c; sleep 0.5; mem 32000000 4800000; watch
+last waiting | jq -r .text | seen 'memory: ' && ok "memory short: waiting" || bad "memory gate: $(last waiting)"
+mem 32000000 16000000; watch
+last waiting | jq -r .text | seen 'memory: down to 15.0% available in the last 5 min' && ok "after a dip, waits for 5 min steady" || bad "steady: $(last waiting)"
+rk() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import registry
+with registry.changing() as d: d["entries"][sys.argv[2]]["rss_kb"] = int(sys.argv[3])' "$REPO" "$idw" "$1"; }
+rk 13000000; seed; watch
+last waiting | jq -r .text | seen 'would leave' && ! claude_in "wat2-$idw" >/dev/null 2>&1 && ok "steady, but no room for its size: waiting" || bad "room check: $(last waiting)"
+rk 400000
+seed; bump; watch; pn=$(claude_in "wat2-$idw") && ok "steady again: started" || bad "not started when steady: $(last waiting)"
+# An end with no sample after it yet: told by the next run, not taken as "no pressure".
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import registry
+with registry.changing() as d: d["entries"][sys.argv[2]]["auto_restarted"] = 1' "$REPO" "$idw"
+pw=$pn; seed; bump; watch; kill -TERM "$pw"; sleep 1.2
+printf '143 %s %s %s\n' "$(( $(date +%s) + 3 ))" "$(cat /proc/sys/kernel/random/boot_id)" "$(tm display -p -t "=wat2-$idw:" '#{pane_pid}')" > "$SD/exit/$idw"; watch
+ended | seen 'no memory samples around that time' || bad "no sample after: $(ended)"
+bump; sleep 3.5; watch; pn=$(claude_in "wat2-$idw") && last restarted | seen '1 OOM kill' && ok "no sample after the end yet: asked again next run, then started" || bad "evidence not asked again: $(last waiting)"
+pw=$pn; watch; kill -INT "$pw"; sleep 1.2; bump; watch
+ended | seen 'exit 0, .*not started again: it did not end by a signal' && ok "exit 0 (the user ended it): never started again" || bad "exit 0: $(ended)"
+printf '143 %s some-other-boot\n' "$(date +%s)" > "$SD/exit/$idw"; watch
+ended | seen 'not started again: it ended before this boot' && ok "an exit of another boot: not started again" || bad "other boot: $(ended)"
+: > "$HOME/no-boot"; printf '143 %s\n' "$(( $(date +%s) + 1 ))" > "$SD/exit/$idw"; ASC_BOOT_ID="$HOME/no-boot" watch
+ended | seen 'not started again: it ended before this boot' && ok "no boot id, here or in the record: not taken as this boot" || bad "empty boot: $(ended)"
+rm -f "$SD/exit/$idw"; watch
+ended | seen 'no exit record' && ok "no exit record: logged, not started" || bad "no record: $(ended)"
+bootid=$(cat /proc/sys/kernel/random/boot_id); ppid_=$(tm display -p -t "=wat2-$idw:" '#{pane_pid}')
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import registry
+with registry.changing() as d: d["entries"][sys.argv[2]]["auto_restarted"] = 1' "$REPO" "$idw"
+printf '143 %s %s %s\n' "$(( $(date +%s) - 3700 ))" "$bootid" "$ppid_" > "$SD/exit/$idw"; seed; watch
+ended | seen 'it ended over 60 min ago' && ok "an end over an hour old: not started again" || bad "age: $(ended)"
+printf '143 %s %s %s\n' "$(date +%s)" "$bootid" 1 > "$SD/exit/$idw"; seed; bump; sleep 1.1; watch
+ended | seen 'runs another process than the one asctl started' && ok "its pane is not the shell asctl-wrap left: not started" || bad "pane pid: $(ended)"
+printf '143 %s %s %s\n' "$(date +%s)" "$bootid" "$ppid_" > "$SD/exit/$idw"; seed; bump; tm copy-mode -t "=wat2-$idw:"; sleep 1.1; watch
+ended | seen 'copy mode' && ok "its pane scrolled back: not started" || bad "copy mode: $(ended)"
+tm send-keys -t "=wat2-$idw:" -X cancel
+python3 -I -c 'import sys, time; sys.path.insert(0, sys.argv[1]); from asc import cli, tmuxctl, registry
+e = registry.find(registry.load(), sys.argv[2]); p = tmuxctl.panes(e["tmux"])[0]
+tmuxctl.client_activity = lambda s: [int(time.time()) - 5]
+assert "typed" in cli.pane_free(e, p["pane_id"], p["pane_pid"])
+tmuxctl.client_activity = lambda s: None
+assert "clients" in cli.pane_free(e, p["pane_id"], p["pane_pid"])
+tmuxctl.client_activity = lambda s: [int(time.time()) - 500]
+assert cli.pane_free(e, p["pane_id"], p["pane_pid"]) == ""' "$REPO" "$idw" && ok "someone typing in it (a recent key from a client): not started" || bad "client activity check"
+rm -f "$SD/exit/$idw"
+# Odd values never crash a run nor pass for evidence.
+python3 -I -c 'import sys, json; sys.path.insert(0, sys.argv[1]); from asc import registry
+p = registry.state_dir() + "/watch.json"; d = json.load(open(p))
+d["ended"][sys.argv[2]] = {"key": "x", "reason": "", "has": "yes"}; json.dump(d, open(p, "w"))
+with registry.changing() as r: r["settings"] = ["on"]; r["entries"][sys.argv[2]]["rss_kb"] = "big"' "$REPO" "$idw"
+f0=$(evn failed); watch; watch
+[ "$(evn failed)" = "$f0" ] && ok "odd watch.json, settings and rss_kb: no crash, no failed events" || bad "odd values: $(last failed)"
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import watch, events, registry
+def boom(*a): raise RuntimeError("boom")
+watch.cli.live_in = boom
+st = watch._state(registry.state_dir()); n = len(registry.load()["entries"])
+c = lambda: sum(1 for r in events.read(limit=10000) if r["kind"] == "failed" and r["text"] == "watch: RuntimeError: boom")
+c0 = c(); watch._run(st); c1 = c(); watch._run(st); c2 = c()
+assert c1 - c0 == n and c2 == c1, (n, c0, c1, c2)
+watch.cli.live_in = lambda *a: None; watch._run(st)
+assert not st["failed"], st["failed"]' "$REPO" && ok "an error with one entry: logged once while it lasts, the others go on" || bad "failed dedupe"
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import registry
+with registry.changing() as r: r["settings"] = {"auto_restart": True}; r["entries"][sys.argv[2]]["rss_kb"] = 400000' "$REPO" "$idw"
+# A restart keeps the session (the dead pane runs claude again), so whoever is attached stays.
+printf '%s\n' "$T/moved" >> "$HOME/fake-trusted"
+asctl off "$idw" --force >/dev/null; asctl on "$idw" >/dev/null; pw=$(claude_in "wat2-$idw")
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import registry
+with registry.changing() as d: d["entries"][sys.argv[2]]["auto_restarted"] = 1' "$REPO" "$idw"
+born=$(tm display -p -t "=wat2-$idw:" '#{session_created} #{pane_id}')
+seed; bump; watch; kill -TERM "$pw"; sleep 1.2; bump; watch
+pn=$(claude_in "wat2-$idw") && [ "$(tm display -p -t "=wat2-$idw:" '#{session_created} #{pane_id}')" = "$born" ] \
+	&& ok "restart in place: the same session and pane" || bad "restart in place: $born vs $(tm display -p -t "=wat2-$idw:" '#{session_created} #{pane_id}') / $(ended) / $(last waiting) / $(last failed)"
+pw=$pn
+# Each check On makes still holds, and a refusal stamps nothing (it is tried again next run).
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import registry
+with registry.changing() as d: d["entries"][sys.argv[2]]["auto_restarted"] = 1' "$REPO" "$idw"
+seed; bump; watch; kill -TERM "$pw"; sleep 1.2; bump; mv "$T/moved" "$T/moved.x"; watch
+last waiting | jq -r .text | seen "folder $T/moved does not exist" && tm has-session -t "=wat2-$idw" && [ "$(jq ".entries[\"$idw\"].auto_restarted" "$REG")" = 1 ] \
+	&& ok "On refuses (folder gone): its session kept, nothing stamped, said once" || bad "folder gone: $(last waiting) / $(jq ".entries[\"$idw\"].auto_restarted" "$REG")"
+mv "$T/moved.x" "$T/moved"
+tm split-window -t "=wat2-$idw:" -- sleep 300; seed; watch
+last waiting | jq -r .text | seen 'has 2 panes' && ok "a session of 2 panes: not started again" || bad "2 panes: $(last waiting)"
+tm kill-pane -t "$(tm list-panes -t "=wat2-$idw:" -F '#{pane_id} #{pane_current_command}' | awk '$2 == "sleep" {print $1}')"
+w1=$(evn waiting); mem 32000000 4800000; watch; mem 32000000 4700000; watch
+[ "$(evn waiting)" = $((w1 + 1)) ] && ok "waiting: the same reason with other numbers is said once" || bad "waiting repeats: $w1 -> $(evn waiting)"
+mem 32000000 16000000
+# Its lock held by an action: the watcher leaves it to the next run.
+flock "$SD/locks/$idw" sleep 3 & fl=$!; sleep 0.3; seed; watch
+claude_in "wat2-$idw" >/dev/null 2>&1 && bad "started while an action held it" || ok "an entry an action holds: left alone"
+wait $fl; seed; watch; pw=$(claude_in "wat2-$idw") && ok "and started once the action is done" || bad "not started after the lock: $(last waiting)"
+# A claude started by hand in the pane after an end: that end is never acted on again.
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import registry
+with registry.changing() as d: d["entries"][sys.argv[2]]["auto_restarted"] = 1' "$REPO" "$idw"
+seed; bump; watch; kill -TERM "$pw"; sleep 1.2; bump
+python3 -I -c 'import sys, time; sys.path.insert(0, sys.argv[1]); from asc import registry
+with registry.changing() as d: d["entries"][sys.argv[2]]["auto_restarted"] = int(time.time())' "$REPO" "$idw"
+watch; sleep 1.1; tm send-keys -t "=wat2-$idw:" "exec $ASC_CLAUDE --resume $WS2 --name wat2-$idw" Enter; ph=$(claude_in "wat2-$idw"); watch
+[ ! -e "$SD/exit/$idw" ] && ok "a claude started by hand after the end: the old exit record dropped" || bad "stale exit record kept: $(cat "$SD/exit/$idw")"
+# A second claude in its session: nothing there is sure to be about it (no rename typed).
+touch "$HOME/fake-busy"; sleep 0.6; asctl rename "$idw" wat3 >/dev/null; rm -f "$HOME/fake-busy"
+[ "$(jq -r ".entries[\"$idw\"].rename_pending" "$REG")" = "wat3-$idw" ] || bad "rename not pending: $(jq -r .name "$HOME/.claude/sessions/$ph.json")"
+cw=$(jq -r ".entries[\"$idw\"].cwd" "$REG")
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import registry
+with registry.changing() as d: d["entries"][sys.argv[2]]["cwd"] = sys.argv[3]' "$REPO" "$idw" "$HOME"
+tm new-window -t "=wat3-$idw:" -c "$W" -- "$ASC_CLAUDE" --session-id eeeeeeee-0000-4000-8000-00000000000c
+for _ in $(seq 1 25); do asctl live | seen eeeeeeee-0000-4000-8000-00000000000c && break; sleep 0.2; done; watch
+[ "$(jq -r ".entries[\"$idw\"].cwd" "$REG")" = "$HOME" ] && ok "a second claude in the session: its folder not followed" || bad "followed with two claudes there: $(last followed)"
+[ "$(jq -r .name "$HOME/.claude/sessions/$ph.json")" = "wat2-$idw" ] && ok "a second claude in the session: no rename typed" || bad "renamed with two claudes there: $(last rename) / $(asctl live) / $(tm list-panes -s -t "=wat3-$idw:" -F '#{window_index} #{pane_id} #{pane_pid} #{pane_current_command} #{pane_dead}') / $(tm capture-pane -p -t "=wat3-$idw:1" | head -5)"
+tm kill-window -t "=wat3-$idw:1"; sleep 0.5; watch
+[ "$(jq -r .name "$HOME/.claude/sessions/$ph.json")" = "wat3-$idw" ] && ok "alone again: the pending rename sent" || bad "pending rename after: $(jq -r .name "$HOME/.claude/sessions/$ph.json")"
+[ "$(jq -r ".entries[\"$idw\"].cwd" "$REG")" = "$cw" ] && ok "and its folder followed again" || bad "folder after: $(jq -r ".entries[\"$idw\"].cwd" "$REG") (want $cw)"
+# Broken state files: the run goes on, from scratch.
+echo '{"ended": [], "rename_tries": {"x": "y"}, "dups": 5}' > "$SD/watch.json"
+python3 -c 'import json, sys, time; print(json.dumps([{"t": int(time.time()) - 30, "boot": "", "avail_pct": 50, "oom_kill": "3"}, {"t": "x"}, 7]))' > "$SD/memory.json"
+watch && jq -e '.ended | type == "object"' "$SD/watch.json" >/dev/null && jq -e 'all(.[]; (.oom_kill | type) != "string")' "$SD/memory.json" >/dev/null \
+	&& ok "broken watch.json and memory.json: the run goes on, odd samples dropped" || bad "broken state: $(cat "$SD/watch.json")"
+tm kill-session -t "=wat3-$idw"; idw_t=wat3
+asctl off "$idw" --force >/dev/null; watch
+claude_in "wat3-$idw" >/dev/null 2>&1 && bad "off, and started anyway" || ok "off: the watcher leaves it off"
+[ "$(jq -r ".entries[\"$idw\"].want_on" "$REG")" = false ] && ok "want_on only changed by off" || bad "want_on changed"
+asctl auto-restart off >/dev/null
 # ASC_MUTANTS=1: break asctl one way at a time, in a copy; each must make this test fail.
 if [ "${ASC_MUTANTS:-}" = 1 ]; then
 	echo "== mutants"
@@ -485,7 +716,7 @@ asc/cli.py %%% ["--resume", e["session_id"]] if e.get("started") else %%% ["--se
 asc/registry.py %%% fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB) %%% fcntl.LOCK_EX
 asc/registry.py %%% MODES = {"auto": "auto", "manual": "manual", "skip": "bypassPermissions"} %%% MODES = {"auto": "auto", "manual": "manual", "skip": "auto"}
 asc/registry.py %%%     except ValueError as e: %%%     except ZeroDivisionError as e:
-bin/asctl-wrap %%% > "$f.tmp" && mv -f "$f.tmp" "$f" %%% > /dev/null
+bin/asctl-wrap %%% > "$f.tmp") && mv -f "$f.tmp" "$f" %%% > /dev/null)
 asc/memory.py %%%     if 100 * avail / total < START_PCT: %%%     if False:
 asc/memory.py %%%     if left < LEAVE_PCT: %%%     if False:
 asc/cli.py %%%     if not force_memory: %%%     if False:
@@ -536,6 +767,43 @@ asc/events.py %%%     if not stat.S_ISREG(os.fstat(fd).st_mode): %%%     if Fals
 asc/events.py %%%     return t if ok and 0 < t <= time.time() + 86400 else 0 %%%     return t if ok else 0
 asc/cli.py %%%         events.log("failed", e, f"{what}: {x}") %%%         events.log("refused", e, f"{what}: {x}")
 asc/cli.py %%%             out(ended) %%%             say("off", e, ended)
+asc/cli.py %%%                 pending(id4, new) %%%                 pass
+asc/watch.py %%%             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB) %%%             pass
+asc/watch.py %%%     if pct < memory.WARN_PCT and not st["warned"]: %%%     if pct < memory.WARN_PCT:
+asc/watch.py %%%     elif pct >= memory.WARN_PCT + 1 and st["warned"]: %%%     elif pct >= memory.WARN_PCT and st["warned"]:
+asc/watch.py %%%     for sid in sorted(set(dups) - set(st["dups"])): %%%     for sid in dups:
+asc/watch.py %%%     if sum(1 for x in lv if x["pane"] and x["pane"]["session"] == e["tmux"]) != 1: %%%     if False:
+asc/watch.py %%%         if not held and _set( %%%         if _set(
+asc/watch.py %%%     if s["cwd"] != e.get("cwd") and os.path.isdir(s["cwd"]): %%%     if s["cwd"] != e.get("cwd"):
+asc/watch.py %%%     if ex and s.get("started_at") and s["started_at"] >= ex[1]: %%%     if False:
+asc/watch.py %%%     if rclive.guard(s) is not None:  # busy, waiting, typing: the next run %%%     if False:
+asc/watch.py %%%     if not same: %%%     if True:
+asc/watch.py %%%  if same and prev.get("has") is not None %%%  if same and "has" in prev
+asc/watch.py %%%     reason = re.sub(r"[0-9][0-9.]*", "N", why)  # the same reason with other numbers is not news %%%     reason = why
+asc/watch.py %%%     if not isinstance(settings, dict) or settings.get("auto_restart") is not True: %%%     if False:
+asc/watch.py %%%     if code not in (137, 143): %%%     if False:
+asc/watch.py %%%     if has is not True: %%%     if has is None:
+asc/watch.py %%%     if abs(time.time() - last) < RESTART_EVERY: %%%     if False:
+asc/watch.py %%%     if len(panes) != 1: %%%     if False:
+asc/watch.py %%%     why = cli.pane_free(e, panes[0]["pane_id"], pid) %%%     why = ""
+asc/watch.py %%%     return memory.steady(samples)  # the gate (room for its size) is On's own %%%     return ""
+asc/watch.py %%%     if time.time() - t > RESTART_WITHIN: %%%     if False:
+asc/watch.py %%%     if not boot or boot != memory.boot_id(): %%%     if boot != memory.boot_id():
+asc/cli.py %%%     if p["pane_pid"] != pane_pid: %%%     if False:
+asc/cli.py %%%     if p["in_mode"]: %%%     if False:
+asc/cli.py %%%     if any(time.time() - a < TYPING_S for a in acts): %%%     if False:
+asc/cli.py %%%     if live.children_map().get(pane_pid): %%%     if False:
+asc/watch.py %%%             if st["failed"].get(e["id4"]) != msg: %%%             if True:
+asc/watch.py %%%             with registry.entry_lock(e["id4"]): %%%             if True:
+asc/watch.py %%%         return str(x) %%%         _set(e, {}, {"auto_restarted": int(time.time())}); return str(x)
+asc/cli.py %%%         r = tmuxctl.respawn(pane, e["cwd"], [wrap, exit_file(e["id4"])] + argv) %%%         tmuxctl.kill_session(e["tmux"]); r = tmuxctl.new_session(e["tmux"], e["cwd"], [wrap, exit_file(e["id4"])] + argv)
+asc/memory.py %%%     if any(b["t"] - a["t"] > GAP_S for a, b in zip(chain, chain[1:])): %%%     if False:
+asc/memory.py %%%     if low < pct: %%%     if False:
+asc/memory.py %%%     if (grew("oom_kill") or 0) > 0: %%%     if False:
+asc/memory.py %%%     b = next((s for s in xs if s["t"] > t_end), None) %%%     b = next((s for s in xs if s["t"] >= t_end), None)
+asc/memory.py %%%             if x["boot"] == s["boot"] and s["t"] - KEEP_S <= x["t"] <= s["t"]][-(MAX_SAMPLES - 1):] + [s] %%%             if True][-(MAX_SAMPLES - 1):] + [s]
+asc/memory.py %%%             and all(s.get(k) is None or type(s.get(k)) is int %%%             and all(True
+asc/live.py %%%         return "tmux did not list its panes" %%%         pane_list = []
 asc/events.py %%%     return b if b in BY else "cli" %%%     return b or "cli"
 asc/events.py %%%     return "".join(" " if unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp", "Cs") else c %%%     return "".join(" " if unicodedata.category(c) in ("Cc",) else c
 asc/cli.py %%%         events.log("refused", e, f"{what}: {x}") %%%         pass

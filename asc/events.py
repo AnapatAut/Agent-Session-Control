@@ -29,7 +29,7 @@ from . import registry
 KEEP_DAYS = 7
 MAX_BYTES = 2 << 20
 KINDS = {"fav", "forget", "on", "off", "restart", "rename", "rc", "resurrect", "mode", "refused",
-         "failed", "ended", "restarted", "followed", "waiting", "duplicate", "memory"}
+         "failed", "ended", "restarted", "followed", "waiting", "duplicate", "memory", "setting"}
 BY = {"cli", "page", "watch", "boot"}
 
 

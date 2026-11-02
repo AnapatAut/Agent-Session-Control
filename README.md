@@ -46,8 +46,9 @@ line each: time, who (cli, page, watch, boot), what, text). A refused action is 
 
 It never starts a tmux server itself (the server would belong to asctl's process); a later
 phase adds `asctl-tmux.service` to own it. Every tmux target is exact (`=name`, `=name:`), every
-command an argument list (no shell), and a session counts as live only when its PID runs, is
-named `claude` and started when Claude Code's session file says. Tests: `tests/asc.sh`.
+command an argument list (no shell), and a session counts as live only when its PID runs, is a
+claude (named `claude`, or Claude Code's version binary run as claude, as background jobs are)
+and started when Claude Code's session file says. Tests: `tests/asc.sh`.
 
 `asctl rc` on a running favorite types `/remote-control <title>` (or `/remote-control` and
 Disconnect in the dialog it opens) into that claude's own pane, only when claude is idle, the
@@ -62,6 +63,19 @@ A restart (`asctl restart`, `rename --restart`) goes ahead only when the
 claude is idle and runs nothing: no command (each runs as a child bash that sources claude's
 shell snapshot, a background one too) and no subagent (a recent subagent transcript not marked
 finished and not ending in a final answer). The same counts as busy for Off.
+
+`asctl watch` is one run of the watcher (`asctl-watch.timer`, every 30 s; `asc/watch.py`). It
+keeps 8 minutes of memory samples (available memory, and counters that only grow: PSI `full`,
+pages swapped, OOM kills), warns once (event log and tmux) under 15% available, and for each
+favorite whose claude runs alone in its own tmux session keeps its memory size (what the start
+gate expects), follows a new session id (a branch, a rewind) and a new folder (`/cd`), and sends
+a rename that claude was too busy to take. A favorite wanted on whose claude ended with its tmux
+session still up is logged once, with its exit code and the memory evidence. With
+`asctl auto-restart on` (off by default: it only logs) it is started again in its own pane when
+all hold: ended by a signal (143 SIGTERM, 137 SIGKILL) in this boot, memory pressure seen around
+that end, memory steady at 20% for 5 minutes with room for its size, not started again in the
+last 30 minutes, its session one pane running only its shell, one restart per run. The watcher
+never turns a favorite off or on; an entry an action is changing is left to the next run.
 
 `asctl dash` serves a dashboard of the same for one Tailscale login, on a unix socket only its
 user can open, meant to sit behind `tailscale serve`; it installs as an app (home screen,

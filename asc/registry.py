@@ -11,6 +11,7 @@ import json
 import os
 import re
 import secrets
+import stat
 import tempfile
 import time
 
@@ -72,6 +73,54 @@ def save(data, d=None):
         os.fsync(dfd)
     finally:
         os.close(dfd)
+
+
+def read_private(path, limit=1 << 20):
+    """JSON from a small state file of asctl's own (a regular file, never followed through a
+    symlink or waited on), or None when it is missing or does not read."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > limit:
+            return None
+        return json.loads(os.read(fd, limit))
+    except (OSError, ValueError, RecursionError):
+        return None
+    finally:
+        os.close(fd)
+
+
+def read_private_text(path, limit=4096):
+    """A small text state file (a regular file, not followed or waited on), or None."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError:
+        return None
+    try:
+        return os.read(fd, limit).decode("utf-8", "replace") if stat.S_ISREG(os.fstat(fd).st_mode) else None
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
+def write_private(path, obj):
+    """Write JSON to a state file atomically, mode 0600 (temp file, fsync, rename)."""
+    d = os.path.dirname(path)
+    fd, tmp = tempfile.mkstemp(prefix="." + os.path.basename(path) + ".", dir=d)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(obj, f, sort_keys=True)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+        raise
 
 
 @contextlib.contextmanager

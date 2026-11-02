@@ -24,6 +24,9 @@
   asctl note ID TEXT               a note shown with it ("" clears it)
   asctl forget ID                  drop the favorite; a running session is left alone
   asctl events [ID] [--limit N]    what happened, oldest first (kept 7 days; asc/events.py)
+  asctl watch                      one watcher run (asctl-watch.timer, every 30 s; asc/watch.py)
+  asctl auto-restart on|off        whether the watcher starts again a claude ended by a signal
+                                   under memory pressure (off: it only logs; the default)
   asctl dash [--socket P] [--idle S]
                                    the dashboard server, on a unix socket (see asc/dash.py)
 ID is the 4-digit id or the full NAME-ID. Nothing here starts a tmux server: it would then
@@ -86,12 +89,50 @@ def exit_file(id4):
 
 
 def last_exit(id4):
+    x = last_exit_full(id4)
+    return x[:2] if x else None
+
+
+def last_exit_full(id4):
+    """(exit code, time, boot id, pane PID or None) asctl-wrap recorded when the entry's claude
+    last ended, or None."""
+    p = registry.read_private_text(exit_file(id4))
     try:
-        with open(exit_file(id4), encoding="utf-8") as f:
-            p = f.read().split()
-        return int(p[0]), int(p[1])
-    except (OSError, ValueError, IndexError):
+        f = p.split()
+        pid = int(f[3]) if len(f) > 3 and f[3].isdigit() else None
+        return int(f[0]), int(f[1]), f[2] if len(f) > 2 else "", pid
+    except (AttributeError, ValueError, IndexError):
         return None
+
+
+TYPING_S = 120  # a client with a key this recent: someone may be typing in that pane
+
+
+def pane_free(e, pane, pane_pid):
+    """"" when pane %N of the entry's session is the shell asctl-wrap left after claude ended
+    (the same PID, which it keeps through exec), running nothing, not scrolled back, with no
+    one typing in the session; else why not. Checked before claude runs there again."""
+    ps = tmuxctl.panes(e["tmux"], strict=True)
+    if ps is None:
+        return "tmux did not list its panes"
+    p = next((p for p in ps if p["pane_id"] == pane), None)
+    if p is None or len(ps) != 1:
+        return f"its tmux session is not that one pane any more"
+    if p["pane_pid"] != pane_pid:
+        return "its pane runs another process than the one asctl started (respawned or swapped)"
+    st = live.proc_stat(pane_pid)
+    if not st or st[0] not in live.SHELLS:
+        return "its pane does not run a shell"
+    if live.children_map().get(pane_pid):
+        return "its pane's shell runs something"
+    if p["in_mode"]:
+        return "its pane is in copy mode (someone is reading it)"
+    acts = tmuxctl.client_activity(e["tmux"])
+    if acts is None:
+        return "tmux did not list its clients"
+    if any(time.time() - a < TYPING_S for a in acts):
+        return f"someone typed in it in the last {TYPING_S // 60} min"
+    return ""
 
 
 def claude_argv(e, resurrect=False):
@@ -357,14 +398,21 @@ def cmd_on(args):
         return _on(e["id4"], args.force_memory)
 
 
-def _on(id4, force_memory, loud=True):
-    """On, with the entry's lock held."""
+def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None):
+    """On, with the entry's lock held. pane, pane_pid: a pane %N of the entry's own tmux session
+    whose claude ended, and the PID asctl-wrap left there (the watcher's restart): claude runs
+    there again in place of its shell (the session and anyone attached stay), after the same
+    checks and pane_free just before. starting: called once nothing can refuse any more."""
     e = registry.find(registry.load(), id4)
     server = tmuxctl.server_pid()
     if server is None:
         raise RegistryError("no tmux server is running; asctl does not start one (it would own it)")
-    if tmuxctl.has_session(e["tmux"]):
+    if pane is None and tmuxctl.has_session(e["tmux"]):
         raise RegistryError(f"tmux session {e['tmux']!r} already exists")
+    if pane is not None:
+        why = pane_free(e, pane, pane_pid)
+        if why:
+            raise RegistryError(why)
     if live_for(e):
         raise RegistryError(f"a live claude already holds session {e['session_id']}")
     blockers = live.unreadable_blockers(e["session_id"])
@@ -387,13 +435,24 @@ def _on(id4, force_memory, loud=True):
     except FileNotFoundError:
         pass
     wrap = os.path.join(HERE, "bin", "asctl-wrap")
-    r = tmuxctl.new_session(e["tmux"], e["cwd"], [wrap, exit_file(e["id4"])] + argv)
+    if starting:
+        starting()
+    if pane is not None and (tmuxctl.server_pid() != server or pane_free(e, pane, pane_pid)):
+        raise ActionFailed(f"its pane changed just before claude would start there; nothing was started "
+                           f"(it is marked on)")
+    if pane is None:
+        r = tmuxctl.new_session(e["tmux"], e["cwd"], [wrap, exit_file(e["id4"])] + argv)
+    else:
+        r = tmuxctl.respawn(pane, e["cwd"], [wrap, exit_file(e["id4"])] + argv)
     if r.returncode != 0:
-        raise ActionFailed(f"tmux new-session failed: {r.stderr.strip()} (it is marked on)")
+        raise ActionFailed(f"tmux {'new-session' if pane is None else 'respawn-pane'} failed: {r.stderr.strip()} "
+                           f"(it is marked on)")
     if tmuxctl.server_pid() != server:
         # The server ended between the check and new-session, which then started one of its
-        # own under asctl. Close that session: the new server, empty, exits with it.
-        tmuxctl.kill_session(e["tmux"])
+        # own under asctl. Close that session: the new server, empty, exits with it. (A respawn
+        # never starts a server; a pane %N names nothing on another one: nothing to close.)
+        if pane is None:
+            tmuxctl.kill_session(e["tmux"])
         raise ActionFailed("the tmux server ended while starting; nothing was started (it is marked on)")
     s = wait_started(e)
     if not s:
@@ -410,6 +469,7 @@ def _on(id4, force_memory, loud=True):
     if "--remote-control" in argv and (e.get("rc_title") or e["tmux"]) == e["tmux"]:
         why = send_title(s, e["tmux"])
         if why:
+            pending(e["id4"], e["tmux"])
             say("rc", e, f"{e['tmux']}: its name not sent to claude.ai: {why}")
     if loud:
         out(f"on: {e['tmux']} (claude {s['pid']}, session {s['session_id']})")
@@ -425,6 +485,14 @@ def send_title(s, name, wait=20):
     if not rclive.wait_for(lambda: rclive.guard(s) is None, 10):
         return rclive.guard(s) or "claude was not ready"
     return rclive.rename(s, name)
+
+
+def pending(id4, name):
+    """A name claude has not taken yet: the watcher types /rename once claude is idle."""
+    with registry.changing() as data:
+        x = data["entries"].get(id4)
+        if x and x["tmux"] == name:
+            x["rename_pending"] = name
 
 
 def cmd_off(args):
@@ -526,7 +594,7 @@ def cmd_rename(args):
             if e.get("rc_title") == e["tmux"]:
                 e["rc_title"] = new
             old = e["tmux"]
-            e["name"], e["tmux"] = name, new
+            e["name"], e["tmux"], e["rename_pending"] = name, new, None
         s = live_in(e)
         if not s or s["name"] == new:
             say("rename", e, f"renamed: {new}", old=old)
@@ -535,7 +603,9 @@ def cmd_rename(args):
             # restart would not: --resume reconnects to that session, which keeps its title)
             why = rclive.rename(s, new)
             if why:
-                say("rename", e, f"renamed to {new}; claude's own name not changed now: {why}. Rename again once it is idle", old=old)
+                pending(id4, new)
+                say("rename", e, f"renamed to {new}; claude's own name not changed now: {why}. "
+                                 f"The watcher sends it once claude is idle", old=old)
             else:
                 say("rename", e, f"renamed to {new}, claude and its claude.ai title too", old=old)
         else:
@@ -624,6 +694,23 @@ def cmd_events(args):
     return 0
 
 
+def cmd_watch(args):
+    from . import watch
+    return watch.run()
+
+
+def cmd_auto_restart(args):
+    if args.state not in ("on", "off"):
+        raise RegistryError("auto-restart is on or off")
+    with registry.changing() as data:
+        data.setdefault("settings", {})["auto_restart"] = args.state == "on"
+    events.log("setting", None, f"auto-restart {args.state}")
+    out(f"auto-restart {args.state}: " + ("a favorite whose claude was ended by a signal under memory pressure is "
+                                          "started again by the watcher, past the memory gates" if args.state == "on"
+                                          else "the watcher only logs what it would do"))
+    return 0
+
+
 def cmd_dash(args):
     from . import dash
     return dash.serve(args.socket, args.idle)
@@ -682,6 +769,10 @@ def main(argv=None):
     a.add_argument("id", nargs="?")
     a.add_argument("--limit", type=int, default=50)
     a.set_defaults(f=cmd_events)
+    sub.add_parser("watch").set_defaults(f=cmd_watch)
+    a = sub.add_parser("auto-restart")
+    a.add_argument("state")
+    a.set_defaults(f=cmd_auto_restart)
     a = sub.add_parser("dash")
     a.add_argument("--socket")
     a.add_argument("--idle", type=int, default=600, help="exit after this many idle seconds (0: never)")

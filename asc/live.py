@@ -304,7 +304,10 @@ def busy_reason(session_name, lv, kids=None, pane_list=None, own_sid=None):
     known = {s["pid"]: s for s in lv}
     known.update({s["host"]["pid"]: s for s in lv if s.get("host")})  # the claude showing a job
     kids = children_map() if kids is None else kids
-    for p in tmuxctl.panes(session_name) if pane_list is None else pane_list:
+    pane_list = tmuxctl.panes(session_name, strict=True) if pane_list is None else pane_list
+    if pane_list is None:
+        return "tmux did not list its panes"
+    for p in pane_list:
         todo = [(p["pane_pid"], (proc_stat(p["pane_pid"]) or ("?",))[0])]
         while todo:
             pid, name = todo.pop()

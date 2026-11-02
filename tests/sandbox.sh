@@ -207,6 +207,61 @@ chk "the kernel counted the kill in that unit" \
 	'ux journalctl --user -u asc-hog --no-pager -o cat | grep -qiE "out of memory|oom"' 'journal asc-hog'
 chk "the user manager is still up" 'x systemctl is-active --quiet user@$SB_UID.service'
 
+echo "== 5. the watcher: a favorite's claude killed by the kernel for memory"
+# The tmux server runs in a unit capped at 200 MB (as asctl-tmux.service will hold it); the fake
+# claude of a favorite fills that up (fake-hog), the kernel's OOM killer ends it (SIGKILL, 137),
+# and the watcher, from its samples, tells that end from others and starts it again in place.
+ux sh -ec 'mkdir -p ~/fb ~/w ~/.config/systemd/user && cp /bin/bash ~/fb/claude && echo ~/w > ~/fake-trusted
+printf "MemTotal: 32000000 kB\nMemAvailable: 16000000 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n" > ~/meminfo
+u=~/.config/systemd/user
+# as asctl will set it (plan): a kernel OOM kill of one claude must not stop its pane scope
+mkdir -p "$u/tmux-spawn-.scope.d"
+printf "%s\n" "[Scope]" "OOMPolicy=continue" "MemoryMax=200M" "MemorySwapMax=0" > "$u/tmux-spawn-.scope.d/asctl-test.conf"
+printf "%s\n" "[Service]" "Type=oneshot" "ExecStart=/opt/asc/bin/asctl watch" "Environment=ASC_BY=watch ASC_TMUX_SOCKET=oom ASC_MEMINFO=%h/meminfo" > "$u/asctl-watch.service"
+printf "%s\n" "[Timer]" "OnActiveSec=1s" "OnUnitActiveSec=30s" "AccuracySec=1s" "[Install]" "WantedBy=timers.target" > "$u/asctl-watch.timer"
+systemctl --user daemon-reload' >/dev/null 2>&1
+OE="ASC_TMUX_SOCKET=oom ASC_CLAUDE=/opt/asc/tests/asc/bin/claude FAKE_BASH=/home/sbuser/fb/claude ASC_MEMINFO=/home/sbuser/meminfo"
+oux() { ux env $OE "$@"; }
+ux systemd-run --user --unit=asc-oomtmux -p Type=forking -p MemoryMax=200M -p MemorySwapMax=0 -p OOMPolicy=continue \
+	-E FAKE_BASH=/home/sbuser/fb/claude -E HOME=/home/sbuser \
+	tmux -L oom -f /dev/null new-session -d -s keep \; set -g exit-empty off >/dev/null 2>&1
+chk "a tmux server in a unit capped at 200 MB" 'wait_for 10 "oux tmux -L oom has-session -t =keep 2>/dev/null"' 'journal asc-oomtmux'
+OS=dddddddd-0000-4000-8000-0000000000aa
+oux tmux -L oom new-session -d -s c -c /home/sbuser/w -- /opt/asc/tests/asc/bin/claude --session-id "$OS"
+cpid() { oux /opt/asc/bin/asctl live | awk -v s="$OS" '$2 == s {print $1}'; }
+chk "a fake claude is up in it" 'wait_for 15 "[ -n \"\$(cpid)\" ]"' 'oux /opt/asc/bin/asctl live'
+oux /opt/asc/bin/asctl fav "$(cpid)" --name oomc >/dev/null 2>&1
+OID=$(ux jq -r '.entries[] | select(.name == "oomc") | .id4' /home/sbuser/.local/state/agent-session-control/registry.json)
+oux /opt/asc/bin/asctl off "$OID" >/dev/null 2>&1; oux /opt/asc/bin/asctl on "$OID" >/dev/null 2>&1
+p1=$(cpid)
+chk "its claude is in a 200 MB cgroup that goes on after an OOM kill" \
+	'cg=$(ux cat "/proc/$p1/cgroup" | cut -d: -f3); u=$(basename "$cg"); [ "$(uprop "$u" MemoryMax)" = 209715200 ] && [ "$(uprop "$u" OOMPolicy)" = continue ]' \
+	'ux cat "/proc/$p1/cgroup"'
+chk "the favorite runs under asctl-wrap" '[ -n "$p1" ] && ux cat "/proc/$(ux ps -o ppid= -p "$p1" | tr -d " ")/cmdline" | tr "\0" " " | grep -q asctl-wrap'
+oux /opt/asc/bin/asctl auto-restart on >/dev/null
+# 6 min of steady samples (the fake meminfo says 50%), then the watcher's own sample before the end
+oux python3 -I -c 'import sys, time; sys.path.insert(0, "/opt/asc"); from asc import memory, registry
+s = memory.sample(); now = int(time.time())
+registry.write_private(registry.state_dir() + "/memory.json", [dict(s, t=now - 30 * i) for i in range(12, 0, -1)])'
+ux systemctl --user start asctl-watch.timer
+chk "asctl-watch.timer runs the watcher (a sample kept, the run clean)" \
+	'wait_for 10 "[ \"\$(uprop asctl-watch.service Result)\" = success ] && [ \"\$(uprop asctl-watch.service ExecMainStatus)\" = 0 ] && ux jq -e \"length >= 13\" /home/sbuser/.local/state/agent-session-control/memory.json >/dev/null"' 'journal asctl-watch'
+ux systemctl --user stop asctl-watch.timer
+sleep 1.2; ux touch /home/sbuser/fake-hog
+chk "the kernel ends the claude for memory: exit 137" \
+	'wait_for 30 "ux grep -q \"^137 \" /home/sbuser/.local/state/agent-session-control/exit/$OID"' \
+	'ux cat /home/sbuser/.local/state/agent-session-control/exit/$OID; journal asc-oomtmux'
+chk "the tmux unit is still up (the claude was killed, not the server)" 'oux tmux -L oom has-session -t "=oomc-$OID"'
+sleep 1.2; oux env ASC_BY=watch /opt/asc/bin/asctl watch
+EV=/home/sbuser/.local/state/agent-session-control/events.jsonl
+chk "the watcher: ended, exit 137, memory pressure seen" \
+	'ux jq -s -e "map(select(.kind == \"ended\")) | last | .text | test(\"exit 137 \\\\(a signal\\\\).*memory: .*(OOM kill|stalled|swapped|available)\")" $EV >/dev/null' \
+	'ux jq -s -c "map(select(.kind == \"ended\" or .kind == \"waiting\" or .kind == \"failed\")) | .[-3:]" $EV'
+chk "and started it again, in the same session" \
+	'ux jq -s -e "map(select(.kind == \"restarted\")) | length == 1" $EV >/dev/null && wait_for 15 "p2=\$(cpid); [ -n \"\$p2\" ] && [ \"\$p2\" != \"$p1\" ]"' \
+	'ux jq -s -c ".[-4:]" $EV'
+ux systemctl --user stop asc-oomtmux 2>/dev/null
+
 echo
 echo "sandbox: $pass passed, $fail failed"
 [ "$fail" = 0 ] || printf '  failed: %s\n' "${FAILED[@]}"

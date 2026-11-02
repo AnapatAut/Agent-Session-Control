@@ -20,6 +20,8 @@ def run(*args, check=False, timeout=5):
                               timeout=timeout, stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(args, 124, "", "tmux did not answer in time")
+    except OSError as e:  # no tmux on PATH
+        return subprocess.CompletedProcess(args, 127, "", f"tmux: {e}")
 
 
 def server_pid():
@@ -41,14 +43,15 @@ def sessions():
     return r.stdout.split() if r.returncode == 0 else []
 
 
-def panes(session=None):
-    """Panes as dicts: pane_id, pane_pid, session, command, in_mode."""
+def panes(session=None, strict=False):
+    """Panes as dicts: pane_id, pane_pid, session, command, in_mode. When tmux fails: [], or
+    None if strict (a caller about to act must not take "no answer" for "no panes")."""
     fmt = "#{pane_id}\t#{pane_pid}\t#{session_name}\t#{pane_current_command}\t#{pane_in_mode}"
     args = ["list-panes", "-F", fmt] + (["-s", "-t", "=" + session] if session else ["-a"])
     r = run(*args)
     out = []
     if r.returncode != 0:
-        return out
+        return None if strict else out
     for line in r.stdout.splitlines():
         p = line.split("\t")
         if len(p) == 5 and p[1].isdigit():
@@ -60,6 +63,20 @@ def panes(session=None):
 def new_session(name, cwd, argv):
     # tmux expands formats in -c (#(cmd) would run a command): "##" is a literal "#".
     return run("new-session", "-d", "-s", name, "-c", cwd.replace("#", "##"), "--", *argv)
+
+
+def client_activity(session):
+    """When each client attached to the session last had a key (epoch seconds), or None if tmux
+    did not answer."""
+    r = run("list-clients", "-t", "=" + session, "-F", "#{client_activity}")
+    if r.returncode != 0:
+        return None
+    return [int(x) for x in r.stdout.split() if x.isdigit()]
+
+
+def respawn(pane, cwd, argv):
+    """Run argv in pane %N in place of whatever ended there (the session and its clients stay)."""
+    return run("respawn-pane", "-k", "-t", pane, "-c", cwd.replace("#", "##"), "--", *argv)
 
 
 def kill_session(name):
