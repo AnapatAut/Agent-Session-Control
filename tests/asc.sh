@@ -291,6 +291,12 @@ errof restart "$id7" | seen 'background job' && ok "restart refused: its pane sh
 sfile "$jp" "$JS" "$(start_of "$jp")" ',"kind":"bg","jobId":"cccc0001","status":"idle"'
 o=$(asctl off "$id7"); st=$(ps -o stat= -p "$p7")  # ended: gone, or a zombie not yet collected
 [[ -z $st || $st == Z* ]] && kill -0 "$jp" 2>/dev/null && seen 'runs on in Claude Code' <<<"$o" && ok "off ends the claude in the pane, not the job (and says so)" || bad "off with a job: $o"
+# a job's daemon can be a child of the claude that started it, so inside its pane
+tm new-session -d -s daemonhome -- bash -c "exec -a claude '$T/versions/2.1.316' -c 'sleep 300; true'"
+for _ in $(seq 1 10); do dp=$(tm list-panes -t "=daemonhome:" -F '#{pane_pid}'); [ "$(cat /proc/"$dp"/comm 2>/dev/null)" = 2.1.316 ] && break; sleep 0.2; done
+sfile "$dp" cccccccc-0000-4000-8000-000000000003 "$(start_of "$dp")" ',"kind":"bg","jobId":"cccc0003","status":"idle"'
+asctl live | grep cccccccc-0000-4000-8000-000000000003 | seen '(not in tmux)' && ok "a job under a pane, shown by no claude, is in no pane" || bad "a job took a pane by ancestry: $(asctl live)"
+tm kill-session -t =daemonhome; rm -f "$HOME/.claude/sessions/$dp.json"
 kill $(pgrep -P "$jp") $(pgrep -P "$op") "$jp" "$op"; wait "$jp" "$op" 2>/dev/null
 rm -f "$HOME/.claude/sessions/$jp.json" "$HOME/.claude/sessions/$op.json" "$HOME/fake-parked-$PS7"
 echo "== busy: a claude asctl cannot read; trust text in a transcript"
@@ -454,6 +460,7 @@ asc/live.py %%%             if now - os.lstat(path).st_mtime > AGENT_FRESH: %%% 
 asc/live.py %%%                 t = claude_tasks(s, kids) %%%                 t = ""
 asc/cli.py %%%     if s["status"] != "idle": %%%     if False:
 asc/live.py %%%         j["pane"], j["host"] = h["pane"], h %%%         pass
+asc/live.py %%% s["pane"] = None if s["kind"] == "bg" else next( %%% s["pane"] = next(
 asc/live.py %%%     known.update({s["host"]["pid"]: s for s in lv if s.get("host")}) %%%     pass
 asc/live.py %%%                                 and _cmdline(pid).split(" ", 1)[0].rsplit("/", 1)[-1] == "claude") %%%                                 )
 asc/cli.py %%%         job, s = (s, s["host"]) if s.get("host") else (None, s) %%%         job = None

@@ -178,7 +178,9 @@ def live(home=None, pane_list=None):
     for s in read_sessions(home):
         if not s["live"]:
             continue
-        s["pane"] = next((by_pid[a] for a in ancestors(s["pid"]) if a in by_pid), None)
+        # a background job runs under Claude Code's daemon, which may be a child of whichever
+        # claude started it, so in that claude's pane: it is in a pane only when a claude shows it
+        s["pane"] = None if s["kind"] == "bg" else next((by_pid[a] for a in ancestors(s["pid"]) if a in by_pid), None)
         s["host"] = None
         out.append(s)
     jobs = {s["job"]: s for s in out if s["kind"] == "bg" and s["job"] and not s["pane"]}
