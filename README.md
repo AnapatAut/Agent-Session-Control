@@ -26,7 +26,8 @@ asctl on 0421               # tmux session das-0421, claude --resume <id> --name
                             # (refused under 20% memory available, or if it would leave under 15%;
                             # --force-memory starts it anyway)
 asctl mode 0421 manual      # permission mode for the next start: auto (default), manual, skip
-asctl rc 0421 on --title "DB work"   # remote control from the next start
+asctl rc 0421 on --title "DB work"   # remote control: a running claude at once when idle,
+                            # else from its next start (--next-start: only the setting)
 asctl resurrect 0421 on     # bring it back after a reboot (turns rc on; a resurrect start always has rc)
 asctl note 0421 "talks to the API"
 asctl rename 0421 db ; asctl forget 0421
@@ -37,10 +38,20 @@ phase adds `asctl-tmux.service` to own it. Every tmux target is exact (`=name`, 
 command an argument list (no shell), and a session counts as live only when its PID runs, is
 named `claude` and started when Claude Code's session file says. Tests: `tests/asc.sh`.
 
-`asctl dash` serves a dashboard of the same (favorites with On, Off, mode and Forget; running
-claudes not favorited; past conversations; memory) for one Tailscale login, on a unix socket
-only its user can open, meant to sit behind `tailscale serve`. Every request needs that login
-and host; every action the page's token and Origin. See `asc/dash.py`; tests: `tests/dash.sh`.
+`asctl rc` on a running favorite types `/remote-control <title>` (or `/remote-control` and
+Disconnect in the dialog it opens) into that claude's own pane, only when claude is idle, the
+pane not in copy mode and the prompt empty, and checks the screen and the session file before
+and after. Otherwise it changes only the setting and says why. See `asc/rclive.py`.
+
+`asctl dash` serves a dashboard of the same for one Tailscale login, on a unix socket only its
+user can open, meant to sit behind `tailscale serve`; it installs as an app (home screen,
+launcher). The main page is a list (needs attention, on, off, running claudes not favorited,
+past conversations, memory used); a tap opens a session's sheet with On/Off, remote control
+(live), resurrect, permissions, note, rename and forget, and what claude itself last reported.
+Every request needs that login and host; every action the page's token and Origin; the config
+must be its user's and writable only by them. A refused page shows only its title and icon;
+the manifest's `x_title` names it for readers that list serve ports. See `asc/dash.py`;
+tests: `tests/dash.sh`.
 
 ## tmux-claude-restore
 
