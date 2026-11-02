@@ -32,7 +32,10 @@ asctl rc 0421 on --title "DB work"   # remote control: a running claude at once 
                             # else from its next start (--next-start: only the setting)
 asctl resurrect 0421 on     # bring it back after a reboot (turns rc on; a resurrect start always has rc)
 asctl note 0421 "talks to the API"
-asctl rename 0421 db ; asctl forget 0421
+asctl rename 0421 db --restart   # db-0421; --restart: an idle claude restarts on the same
+                            # conversation, so its own name and rc title follow
+asctl restart 0421          # off and on again (--resume), only when idle and running nothing
+asctl forget 0421
 ```
 
 It never starts a tmux server itself (the server would belong to asctl's process); a later
@@ -45,10 +48,16 @@ Disconnect in the dialog it opens) into that claude's own pane, only when claude
 pane not in copy mode and the prompt empty, and checks the screen and the session file before
 and after. Otherwise it changes only the setting and says why. See `asc/rclive.py`.
 
+A restart (`asctl restart`, `rename --restart`, the page's Rename) goes ahead only when the
+claude is idle and runs nothing: no command (each runs as a child bash that sources claude's
+shell snapshot, a background one too) and no subagent (a recent subagent transcript not marked
+finished and not ending in a final answer). The same counts as busy for Off.
+
 `asctl dash` serves a dashboard of the same for one Tailscale login, on a unix socket only its
 user can open, meant to sit behind `tailscale serve`; it installs as an app (home screen,
 launcher). The main page is a list (needs attention, on, off, running claudes not favorited,
-past conversations, memory used; a session's memory is the PSS of its pane's processes, shared
+past conversations, memory used; a running claude with a made-up name goes by its chat title,
+as the Claude apps list it; a session's memory is the PSS of its pane's processes, shared
 pages split, so the figures add up); a tap opens a session's sheet with On/Off, remote control
 (live), resurrect, permissions, note, rename and forget, and what claude itself last reported.
 Every request needs that login and host; every action the page's token and Origin; the config

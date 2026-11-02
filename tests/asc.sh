@@ -132,6 +132,34 @@ asctl mode "$id2" auto >/dev/null
 pm plan; [ "$(started_with)" = auto ] && ok "mode: plan is not followed (its own mode)" || bad "plan followed"
 pm manual user; [ "$(started_with)" = manual ] && ok "mode: the last message's permissionMode counts too" || bad "message mode not followed"
 
+echo "== restart: a new name for a running claude, only when idle"
+asctl on "$id2" >/dev/null; c1=$(claude_in "chat-$id2")
+out=$(asctl rename "$id2" talk 2>&1)
+seen 'change at its next start' <<<"$out" && [ "$(claude_in "talk-$id2")" = "$c1" ] && ok "rename without --restart: claude runs on, its name at its next start" || bad "rename: $out"
+touch "$HOME/fake-task"; sleep 0.8
+out=$(asctl rename "$id2" talk2 --restart 2>&1)
+seen 'not restarted now: busy: .* runs a command' <<<"$out" && [ "$(claude_in "talk2-$id2")" = "$c1" ] && ok "rename --restart: not while claude runs a command (a background one too)" || bad "restart with a command running: $out"
+asctl off "$id2" >/dev/null 2>&1 && bad "off went ahead while claude runs a command" || ok "off refused while claude runs a command"
+rm -f "$HOME/fake-task"; sleep 0.8
+AG="$HOME/.claude/projects/-x/$SID2/subagents"; mkdir -p "$AG"
+printf '{"type":"user","message":{"role":"user","content":"go"}}\n' > "$AG/agent-a1.jsonl"
+out=$(errof restart "$id2"); seen 'runs a subagent' <<<"$out" && ok "restart: not while a subagent runs" || bad "restart with a subagent: $out"
+printf '{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[]}}\n' >> "$AG/agent-a1.jsonl"
+printf '{"type":"user","message":{"role":"user","content":"go"}}\n' > "$AG/agent-a2.jsonl"; echo '{"finished":true}' > "$AG/agent-a2.meta.json"
+printf '{"type":"user","message":{"role":"user","content":"go"}}\n' > "$AG/agent-a3.jsonl"; touch -d '20 minutes ago' "$AG/agent-a3.jsonl"
+asctl rc "$id2" on --next-start >/dev/null
+out=$(asctl restart "$id2" 2>&1); c2=$(claude_in "talk2-$id2")
+[ -n "$c2" ] && [ "$c2" != "$c1" ] && [ "$(jqe ".entries[\"$id2\"].session_id")" = "$SID2" ] \
+	&& tail -1 "$HOME/claude-args.log" | seen -- "--resume $SID2 --name talk2-$id2 .*--remote-control talk2-$id2" \
+	&& ok "restart: a new claude on the same conversation, with the new name and rc title (finished, ended or old subagents do not hold it)" || bad "restart: $out / $(tail -1 "$HOME/claude-args.log")"
+out=$(asctl rename "$id2" chat --restart 2>&1); c3=$(claude_in "chat-$id2")
+[ -n "$c3" ] && [ "$c3" != "$c2" ] && tail -1 "$HOME/claude-args.log" | seen -- "--name chat-$id2" && ok "rename --restart of an idle claude: restarted with the new name" || bad "rename --restart: $out"
+touch "$HOME/fake-wait"; sleep 0.8
+out=$(errof restart "$id2"); seen 'its claude is waiting' <<<"$out" && [ "$(claude_in "chat-$id2")" = "$c3" ] && ok "restart: not while claude waits (a question or dialog would be lost)" || bad "restart while waiting: $out"
+rm -f "$HOME/fake-wait" "$AG"/*
+asctl rc "$id2" off --next-start >/dev/null; asctl off "$id2" --force >/dev/null
+asctl restart "$id2" >/dev/null 2>&1 && bad "restart of an off favorite went ahead" || ok "restart: refused when it is off"
+
 echo "== shared session, stale files, locks, a broken registry"
 tm new-session -d -s shared -c "$W" -- "$ASC_CLAUDE" --session-id 33333333-4444-4555-8666-777777777777
 tm split-window -t "=shared:" -- sleep 300
@@ -318,7 +346,7 @@ asc/live.py %%%             if name == "claude": %%%             if False:
 asc/live.py %%% base == str(pid) and %%% 
 asc/live.py %%% (raw.get("pidDomain") is None or raw.get("pidDomain") == domain) %%% True
 asc/live.py %%%         if (st and st[0] == "claude") or %%%         if False and
-asc/cli.py %%%         if away: %%%         if False:
+asc/cli.py %%%     if away: %%%     if False:
 asc/cli.py %%%     return live_in(e, lv) or next( %%%     return live_in(e, lv) or None and next(
 asc/cli.py %%%     return (any(l.endswith("No, exit") %%%     return True or (any(l.endswith("No, exit")
 asc/tmuxctl.py %%%     return run("has-session", "-t", "=" + name) %%%     return run("has-session", "-t", name)
@@ -326,7 +354,7 @@ asc/tmuxctl.py %%% cwd.replace("#", "##") %%% cwd
 asc/live.py %%%         if s["live"]: %%%         if s["ok"]:
 asc/cli.py %%%             if owner: %%%             if False:
 asc/cli.py %%%             if others and not whole: %%%             if False:
-asc/cli.py %%%         if live_for(e): %%%         if False:
+asc/cli.py %%%     if live_for(e): %%%     if False:
 asc/cli.py %%%             if "❯ Yes, I trust this folder" not in screen: %%%             if False:
 asc/cli.py %%% ["--resume", e["session_id"]] if e.get("started") else %%% ["--session-id", e["session_id"]] if e.get("started") else
 asc/registry.py %%% fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB) %%% fcntl.LOCK_EX
@@ -335,7 +363,7 @@ asc/registry.py %%%     except ValueError as e: %%%     except ZeroDivisionError
 bin/asctl-wrap %%% > "$f.tmp" && mv -f "$f.tmp" "$f" %%% > /dev/null
 asc/memory.py %%%     if 100 * avail / total < START_PCT: %%%     if False:
 asc/memory.py %%%     if left < LEAVE_PCT: %%%     if False:
-asc/cli.py %%%         if not args.force_memory: %%%         if False:
+asc/cli.py %%%     if not force_memory: %%%     if False:
 asc/cli.py %%%             e["rc"] = True %%%             pass
 asc/cli.py %%%  or (resurrect and e.get("resurrect")) %%%  or False
 asc/registry.py %%%     if not t or t.startswith("-"): %%%     if not t:
@@ -356,6 +384,14 @@ asc/rclive.py %%%     l = next((l for l in reversed(bottom(scr)) if label in l),
 asc/rclive.py %%%     return status(pid) == "waiting" and prompt_text(scr) is None and %%%     return
 asc/cli.py %%%     return FOLLOW.get(m) or own %%%     return m or own
 asc/cli.py %%%         for line in reversed(lines[1:] if st.st_size > tail else lines): %%%         for line in lines:
+asc/live.py %%%         if name in SHELLS and snap in _cmdline(pid): %%%         if False:
+asc/live.py %%%         if isinstance(meta, dict) and meta.get("finished") is True: %%%         if False:
+asc/live.py %%%  and m.get("stop_reason") == "end_turn": %%%  and False:
+asc/live.py %%%             if now - os.lstat(path).st_mtime > AGENT_FRESH: %%%             if False:
+asc/live.py %%%                 t = claude_tasks(s, kids) %%%                 t = ""
+asc/cli.py %%%     if s["status"] != "idle": %%%     if False:
+asc/cli.py %%%         if not s or s["name"] == new: %%%         if True:
+asc/cli.py %%%         elif not args.restart: %%%         elif False:
 MUTANTS
 fi
 

@@ -11,6 +11,7 @@ import json
 import os
 import re
 import stat
+import time
 
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 SHELLS = {"bash", "zsh", "sh", "dash", "fish", "ksh", "tcsh", "csh"}
@@ -208,6 +209,60 @@ def tree_mem_kb(pid, kids):
     return total
 
 
+AGENT_FRESH = 600  # a subagent transcript untouched this long is left over (its claude ended), not running
+
+
+def _cmdline(pid):
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            return f.read(4096).replace(b"\0", b" ").decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def _last_record(path, chunk=65536):
+    f = open_regular(path)
+    if f is None:
+        return None
+    with f:
+        size = os.fstat(f.fileno()).st_size
+        f.seek(max(0, size - chunk))
+        lines = [l for l in f.read(chunk).split(b"\n") if l.strip()]
+    try:
+        r = json.loads(lines[-1]) if lines else None
+    except (ValueError, RecursionError):
+        return None
+    return r if isinstance(r, dict) else None
+
+
+def claude_tasks(s, kids, home=None):
+    """What an idle claude still runs, or "": a shell command (claude runs each, also a background
+    one, as a child bash that sources its shell snapshot), or a subagent (its transcript recent, not
+    marked finished, and not ending in a final answer). MCP servers, also children, do not count."""
+    home = home or os.path.expanduser("~")
+    snap = os.path.join(home, ".claude", "shell-snapshots") + "/"
+    for pid, name in kids.get(s["pid"], []):
+        if name in SHELLS and snap in _cmdline(pid):
+            return f"runs a command ({pid})"
+    now = time.time()
+    for path in glob.glob(os.path.join(home, ".claude", "projects", "*", s["session_id"], "subagents", "agent-*.jsonl")):
+        try:
+            if now - os.lstat(path).st_mtime > AGENT_FRESH:
+                continue
+        except OSError:
+            continue
+        meta = read_json(path[:-6] + ".meta.json")
+        if isinstance(meta, dict) and meta.get("finished") is True:
+            continue
+        r = _last_record(path)
+        m = r.get("message") if r else None
+        if r and r.get("type") == "assistant" and isinstance(m, dict) and m.get("stop_reason") == "end_turn":
+            continue
+        what = meta.get("description") if isinstance(meta, dict) and isinstance(meta.get("description"), str) else ""
+        return "runs a subagent" + (f" ({what[:60]})" if what else "")
+    return ""
+
+
 def busy_reason(session_name, lv, kids=None, pane_list=None, own_sid=None):
     """Why a tmux session is busy, or "" when it is not. Each pane's process tree is walked
     (tmux's pane_current_command names the process group, which for a claude under asctl-wrap
@@ -230,6 +285,9 @@ def busy_reason(session_name, lv, kids=None, pane_list=None, own_sid=None):
                     return f"pane {p['pane_id']} runs a claude asctl cannot read ({pid})"
                 if s["status"] == "busy":
                     return f"the claude in pane {p['pane_id']} is working"
+                t = claude_tasks(s, kids)
+                if t:
+                    return f"the claude in pane {p['pane_id']} {t}"
                 if own_sid and s["session_id"] != own_sid:
                     return f"pane {p['pane_id']} runs another claude ({pid}, session {s['session_id']})"
                 continue

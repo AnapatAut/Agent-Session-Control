@@ -134,7 +134,7 @@ details.top[open] summary::after { transform: rotate(90deg); }
 .btn.pw { flex: none; min-height: 0; width: 52px; height: 52px; padding: 0; border-radius: 50%; display: grid; place-items: center; color: #fff; }
 .btn.pw.on { background: var(--lime); color: var(--ink); } .btn.pw.off { background: var(--red); }
 .btn.pw svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
-.rcd { font-size: 12px; color: var(--mute); margin-top: 8px; overflow-wrap: anywhere; }
+.warn .btn { display: block; flex: none; margin-top: 8px; min-height: 0; padding: 9px 16px; background: var(--card); color: var(--ink); }
 .warn { font-size: 13px; font-weight: 600; border-radius: 14px; padding: 10px 12px; margin-top: 10px; line-height: 1.4;
         background: var(--amber-soft); color: var(--amber); overflow-wrap: anywhere; }
 .warn.bad { background: var(--red-soft); color: var(--red); }

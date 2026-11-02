@@ -291,8 +291,15 @@ touch "$HOME/fake-busy"; sleep 0.6
 [ "$(post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'","force":true}' | tail -1)" = 200 ] && ok "off with force while busy" || bad "off --force failed"
 rm -f "$HOME/fake-busy"
 [ "$(post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"Bad Name"}' | tail -1)" = 400 ] && ok "rename to a bad name: 400" || bad "a bad name accepted"
-[ "$(post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"db"}' | tail -1)" = 200 ] && state | jq -e '.favorites[0].tmux | startswith("db-")' >/dev/null && ok "rename" || bad "rename failed"
+asctl mode "$id" auto >/dev/null
+[ "$(post '{"action":"on","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] || bad "on before the rename failed"
+state | jq -e --arg t "$TM" '.favorites[0].claude_name == $t' >/dev/null && ok "state: the name its claude goes by" || bad "state: claude_name: $(state | jq -c '.favorites[0].claude_name')"
+out=$(post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"db"}')
+[ "$(tail -1 <<<"$out")" = 200 ] && seen 'restarting' <<<"$out" && state | jq -e '.favorites[0] | (.tmux | startswith("db-")) and .claude_name == .tmux' >/dev/null \
+	&& ok "rename from the page restarts an idle claude: its name follows" || bad "rename: $out / $(state | jq -c '.favorites[0] | {tmux, claude_name}')"
 TM="db-$id"
+[ "$(post '{"action":"restart","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] && ok "restart from the page" || bad "restart from the page failed"
+post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'","force":true}' >/dev/null
 [ "$(post '{"action":"forget","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] && state | jq -e '.favorites | length == 0' >/dev/null && ok "forget" || bad "forget failed"
 
 echo "== past conversations"
@@ -540,6 +547,7 @@ asc/past.py %%%         elif r.get("type") == "ai-title" and %%%         elif Fa
 asc/past.py %%% (title or ai or "") %%% (ai or title or "")
 asc/dash.py %%% (s["derived"] or not s["name"]) and past.title %%% False and past.title
 asc/dash.py %%% (s["derived"] or not s["name"]) and past.title %%% True and past.title
+asc/dash.py %%% registry.check_name(_text(a.get("name"))), "--restart"] %%% registry.check_name(_text(a.get("name")))]
 asc/past.py %%%                 title = t %%%                 title = title or t
 asc/past.py %%%     out.sort(key=lambda c: c["mtime"], reverse=True) %%%     out.sort(key=lambda c: c["mtime"])
 asc/dash.py %%% if st.st_uid != os.getuid() or st.st_mode & 0o022: %%% if st.st_uid != os.getuid():

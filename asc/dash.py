@@ -268,7 +268,7 @@ def _snapshot():
         favs.append({
             "id4": e["id4"], "name": e["name"], "tmux": e["tmux"], "cwd": e["cwd"],
             "session_id": e.get("session_id"), "rc": bool(e.get("rc")), "rc_title": e.get("rc_title") or "",
-            "rc_live": bool(s and s["rc"]),
+            "rc_live": bool(s and s["rc"]), "claude_name": s["name"] if s else "",  # its name since it started
             "mode": e.get("mode", "auto"), "resurrect": bool(e.get("resurrect")),
             # the mode claude last ran in (its transcript), and what a start would use
             "mode_used": cli.last_mode(e["session_id"]) if e.get("session_id") else None,
@@ -329,7 +329,9 @@ def action_argv(a):
     if kind == "forget":
         return ["forget", ref]
     if kind == "rename":
-        return ["rename", ref, registry.check_name(_text(a.get("name")))]
+        return ["rename", ref, registry.check_name(_text(a.get("name"))), "--restart"]
+    if kind == "restart":
+        return ["restart", ref]
     if kind == "mode":
         if a.get("mode") not in WEB_MODES:
             raise RegistryError("from the page the mode can be auto or manual; skip only with asctl mode ID skip")

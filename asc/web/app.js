@@ -430,8 +430,6 @@ function kv(pairs) {
 function favSheet(e) {
   const l = look(e), ref = { id: e.id4, tmux: e.tmux }, on = isOn(e), wait = pending.has(e.id4);
   const out = [el("h2", e.name), el("div", "#" + e.id4 + " · " + tilde(e.cwd), "s2 mono")];
-  const rcDesc = (on ? (e.rc_live ? "Live now" : "Not live now") + (e.rc !== e.rc_live ? " · changes at its next start" : "")
-                     : "Used when it starts") + (e.rc ? " · title " + (e.rc_title || e.tmux) : "");
   // the two actions used most: power (lime on, red off) and rc (colored as rcState)
   // rc shows the live state of a running claude (a tap on amber tries again), else the setting
   const rs = rcState(e), rcOn = rs === "live" || rs === "set";
@@ -451,7 +449,13 @@ function favSheet(e) {
   pwb.setAttribute("aria-label", on ? "On: turn it off" : "Off: turn it on");
   pwb.title = on ? "Turn off" : "Turn on";
   out.push(kids(el("div", null, "btns"), pwb, rcb));  // the power button tells on or off
-  out.push(el("div", "Remote control " + (e.rc ? "on" : "off") + " · " + rcDesc, "rcd"));
+  if (on && e.claude_name && e.claude_name !== e.tmux) {  // renamed while it ran: the name comes with a restart
+    out.push(kids(el("div", null, "warn"), el("div", `Its claude still goes by ${e.claude_name}. A restart (when idle) gives it ${e.tmux}, also as its rc title.`),
+      btn("Restart now", "", async () => {
+        if (!await ask({ title: `Restart ${e.tmux}?`, text: "Its claude stops and starts again on the same conversation. Only when it is idle and runs no command or subagent.", ok: "Restart" })) return;
+        await act({ action: "restart", ...ref });
+      }, wait)));
+  }
   if (l.why) out.push(el("div", l.why, "warn " + (l.dot === "bad" ? "bad" : "")));
   if (on && e.busy) out.push(el("div", "Busy: " + e.busy + ". Off asks before forcing it.", "warn"));
 
@@ -494,7 +498,7 @@ function favSheet(e) {
       catch (err) { toast(e.attach); }
     }),
     btn("Rename", "", async () => {
-      const name = await ask({ title: `Rename ${e.tmux}`, text: `The id stays: it becomes NAME-${e.id4}.`, ok: "Rename",
+      const name = await ask({ title: `Rename ${e.tmux}`, text: `The id stays: it becomes NAME-${e.id4}.` + (on ? " An idle claude restarts on the same conversation, so its own name and rc title change too." : ""), ok: "Rename",
         input: { value: e.name, check: (v) => /^[a-z0-9][a-z0-9-]{0,30}$/.test(v) ? "" : "a-z, 0-9 and -, starting with a letter or digit, up to 31" } });
       if (name === null || name === e.name) return;
       await act({ action: "rename", name, ...ref });
