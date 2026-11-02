@@ -129,8 +129,8 @@ function sweepRows(...prefixes) {
   for (const k of [...used]) if (prefixes.some((p) => k.startsWith(p))) used.delete(k);
 }
 function tag(text, cls) { return el("span", text, "tag " + (cls || "")); }
-// remote control: live (lime), on but not live in a running claude (amber), on for its next start (lime
-// button, grey chip)
+// remote control: live (lime), on but not live in a running claude (amber), on for its next start (grey
+// chip; the button is off while the session is)
 function rcState(e) {
   if (!isOn(e)) return e.rc ? "set" : "";
   return e.rc_live ? "live" : e.rc ? "down" : "";
@@ -433,10 +433,12 @@ function favSheet(e) {
   // the two actions used most: power (lime on, red off) and rc (colored as rcState)
   // rc shows the live state of a running claude (a tap on amber tries again), else the setting
   const rs = rcState(e), rcOn = rs === "live" || rs === "set";
-  const rcb = btn("rc", "rcb " + rs, () => act({ action: "rc", on: !rcOn, ...ref }), wait);
-  rcb.setAttribute("aria-pressed", String(rcOn));
-  rcb.setAttribute("aria-label", (RC_SAYS[rs] || "Remote control off") + (rcOn ? ": turn it off" : ": turn it on"));
-  rcb.title = RC_SAYS[rs] || "Remote control off";
+  // off: grey and not a control (its setting still applies at the next start; switch it once on)
+  const rcb = btn("rc", "rcb " + (on ? rs : ""), () => act({ action: "rc", on: !rcOn, ...ref }), wait || !on);
+  rcb.setAttribute("aria-pressed", String(on && rcOn));
+  rcb.setAttribute("aria-label", on ? (RC_SAYS[rs] || "Remote control off") + (rcOn ? ": turn it off" : ": turn it on")
+                                    : "Remote control: turn the session on first");
+  rcb.title = on ? RC_SAYS[rs] || "Remote control off" : "Turn the session on first";
   const pwb = btn("", "pw " + (on ? "on" : "off"), async () => {
     if (on) {
       if (!await ask({ title: `Turn ${e.tmux} off?`, text: `What runs in its tmux session ends.`, ok: "Turn off", danger: true })) return;
@@ -460,7 +462,7 @@ function favSheet(e) {
     (e.mode_used === "bypassPermissions" ? " (skip only if set on the machine: asctl mode " + e.id4 + " skip)" : "") : "");
   out.push(kids(el("div", null, "opts"),
     opt("Resurrect", "Bring it back after a reboot or a tmux crash (always with remote control)",
-      sw(e.resurrect, "Resurrect", () => act({ action: "resurrect", on: !e.resurrect, ...ref }), wait))));
+      sw(e.resurrect, "Resurrect", () => act({ action: "resurrect", on: !e.resurrect, ...ref }), wait || !on))));  // off: like rc
 
   out.push(el("span", "SESSION", "lab"), kv([
     ["Status", on ? statusText(e) : l.label.replace(/^off since.*/, "Off")], ["Memory", on ? size(e.mem_kb) : ""], ["Permissions", perm], ["Claude's name", on && e.claude_name !== e.tmux ? e.claude_name + (e.claude_name_kept ? " (from an old job record of its own)" : "") : ""], ["tmux", e.tmux], ["Session id", e.session_id], ["Claudes", e.claudes > 1 ? e.claudes : ""],
