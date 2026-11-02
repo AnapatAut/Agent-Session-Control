@@ -125,13 +125,12 @@ details.top[open] summary::after { transform: rotate(90deg); }
             border: 0; padding: 0; display: grid; place-items: center; cursor: pointer; }
 .sheet h2 { font-size: 19px; line-height: 24px; margin: 0; padding-right: 44px; letter-spacing: -.01em; word-break: break-word; }
 .sheet .s2 { font-size: 13px; color: var(--mute); margin-top: 3px; overflow-wrap: anywhere; }
-.bigsw { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--well);
-         border-radius: 18px; padding: 14px 16px; margin-top: 16px; }
-.bigsw .t { font-size: 15px; font-weight: 700; } .bigsw .t.bad { color: var(--red); } .bigsw .t.wait { color: var(--amber); }
-.bigsw .d { font-size: 12px; color: var(--mute); margin-top: 2px; }
-.duo { background: var(--well); border-radius: 18px; margin-top: 16px; overflow: hidden; }
-.duo .bigsw { background: none; border-radius: 0; margin: 0; }
-.duo .bigsw + .bigsw { border-top: 1px solid var(--line); }
+.state { margin-top: 16px; }
+.state .t { font-size: 17px; font-weight: 700; } .state .t.bad { color: var(--red); } .state .t.wait { color: var(--amber); }
+.state .d { font-size: 12.5px; color: var(--mute); margin-top: 2px; }
+.acts.main { margin-top: 12px; }
+.btn.tog[aria-pressed="true"] { background: var(--blue); color: #fff; }
+.rcd { font-size: 12px; color: var(--mute); margin-top: 8px; overflow-wrap: anywhere; }
 .warn { font-size: 13px; font-weight: 600; border-radius: 14px; padding: 10px 12px; margin-top: 10px; line-height: 1.4;
         background: var(--amber-soft); color: var(--amber); overflow-wrap: anywhere; }
 .warn.bad { background: var(--red-soft); color: var(--red); }

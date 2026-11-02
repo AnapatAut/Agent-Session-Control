@@ -404,19 +404,20 @@ function favSheet(e) {
   const title = on ? "On · " + l.label : (l.group === "attention" ? "Off · " + l.label : "Off");
   const rcDesc = (on ? (e.rc_live ? "Live now" : "Not live now") + (e.rc !== e.rc_live ? " · changes at its next start" : "")
                      : "Used when it starts") + (e.rc ? " · title " + (e.rc_title || e.tmux) : "");
-  // the two switches used most, together: On/Off and remote control
-  out.push(kids(el("div", null, "duo"),
-    kids(el("div", null, "bigsw"), kids(el("div"), el("div", title, "t " + (on ? "" : l.dot)), el("div", favDesc(e), "d")),
-      sw(on, on ? "Turn off" : "Turn on", async () => {
-        if (on) {
-          if (!await ask({ title: `Turn ${e.tmux} off?`, text: `What runs in its tmux session ends.`, ok: "Turn off", danger: true })) return;
-          await act({ action: "off", ...ref });
-        } else {
-          await act({ action: "on", ...ref });
-        }
-      }, wait)),
-    kids(el("div", null, "bigsw"), kids(el("div"), el("div", "Remote control", "t"), el("div", rcDesc, "d")),
-      sw(e.rc, "Remote control", () => act({ action: "rc", on: !e.rc, ...ref }), wait))));
+  // its state, then the two actions used most as buttons: On/Off and remote control
+  out.push(kids(el("div", null, "state"), el("div", title, "t " + (on ? "" : l.dot)), el("div", favDesc(e), "d")));
+  const rcb = btn("Remote control", "tog", () => act({ action: "rc", on: !e.rc, ...ref }), wait);
+  rcb.setAttribute("aria-pressed", String(e.rc));
+  out.push(kids(el("div", null, "acts main"),
+    btn(on ? "Turn off" : "Turn on", on ? "danger" : "p", async () => {
+      if (on) {
+        if (!await ask({ title: `Turn ${e.tmux} off?`, text: `What runs in its tmux session ends.`, ok: "Turn off", danger: true })) return;
+        await act({ action: "off", ...ref });
+      } else {
+        await act({ action: "on", ...ref });
+      }
+    }, wait), rcb));
+  out.push(el("div", "Remote control " + (e.rc ? "on" : "off") + " · " + rcDesc, "rcd"));
   if (l.why) out.push(el("div", l.why, "warn " + (l.dot === "bad" ? "bad" : "")));
   if (on && e.busy) out.push(el("div", "Busy: " + e.busy + ". Off asks before forcing it.", "warn"));
 
@@ -510,7 +511,7 @@ function renderSheet() {
   const id = sheetOf.kind === "fav" ? item.id4 : item.session_id;
   const sig = sheetOf.kind + ":" + pending.has(id) + ":" + JSON.stringify({ ...item, mem_kb: 0 });
   if (sig === sheetSig) {
-    if (sheetOf.kind === "fav") sheet.querySelector(".bigsw .d").textContent = favDesc(item);
+    if (sheetOf.kind === "fav") sheet.querySelector(".state .d").textContent = favDesc(item);
     return;
   }
   sheetSig = sig;
