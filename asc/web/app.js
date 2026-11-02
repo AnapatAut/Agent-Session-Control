@@ -100,7 +100,9 @@ function rowEl(key, open, dotCls, name, id, sub, meta, note, why, whyCls) {
   const r = el("div", null, "row");
   const nm = el("div", name, "nm");
   if (id) nm.append(el("span", "#" + id, "id"));
-  const head = kids(el("div", null, "head"), el("span", null, "dot " + dotCls), kids(el("div"), nm, el("div", sub, "cwd mono")));
+  const cwd = el("div", sub, "cwd mono");
+  cwd.title = sub;  // the whole line on hover when it ends in ...
+  const head = kids(el("div", null, "head"), el("span", null, "dot " + dotCls), kids(el("div"), nm, cwd));
   r.append(head, kids(el("div", null, "meta"), ...meta), el("div", note, "note"), el("span", "›", "sw"));
   if (why) r.append(el("div", why, "why " + (whyCls || "")));
   r.setAttribute("aria-label", name + (id ? " " + id : ""));

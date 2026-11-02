@@ -70,6 +70,7 @@ h1 { font-size: 26px; line-height: 31px; font-weight: 700; margin: 0; letter-spa
 .row:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
 @media (hover: hover) { .row:hover { background: var(--well); } }
 .head { grid-area: head; min-width: 0; display: flex; gap: 10px; align-items: flex-start; }
+.head > div { min-width: 0; }  /* or a long folder line overflows into the next column instead of ending in ... */
 .dot { flex: none; width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; background: #d9d9e0; }
 .dot.idle { background: var(--lime); box-shadow: 0 0 0 3px #f1fbd0; }
 .dot.busy { background: var(--blue); box-shadow: 0 0 0 3px #e4e4fe; }
