@@ -25,7 +25,9 @@ asctl off 0421              # refuses while claude works or another pane runs so
 asctl on 0421               # tmux session das-0421, claude --resume <id> --name das-0421
                             # (refused under 20% memory available, or if it would leave under 15%;
                             # --force-memory starts it anyway)
-asctl mode 0421 manual      # permission mode for the next start: auto (default), manual, skip
+asctl mode 0421 manual      # its own permission mode: auto (default), manual, skip. A start follows
+                            # the mode the conversation last ran in (its transcript; a shift+tab
+                            # change carries over), skip only when set here; else this one
 asctl rc 0421 on --title "DB work"   # remote control: a running claude at once when idle,
                             # else from its next start (--next-start: only the setting)
 asctl resurrect 0421 on     # bring it back after a reboot (turns rc on; a resurrect start always has rc)
@@ -46,7 +48,8 @@ and after. Otherwise it changes only the setting and says why. See `asc/rclive.p
 `asctl dash` serves a dashboard of the same for one Tailscale login, on a unix socket only its
 user can open, meant to sit behind `tailscale serve`; it installs as an app (home screen,
 launcher). The main page is a list (needs attention, on, off, running claudes not favorited,
-past conversations, memory used); a tap opens a session's sheet with On/Off, remote control
+past conversations, memory used; a session's memory is the PSS of its pane's processes, shared
+pages split, so the figures add up); a tap opens a session's sheet with On/Off, remote control
 (live), resurrect, permissions, note, rename and forget, and what claude itself last reported.
 Every request needs that login and host; every action the page's token and Origin; the config
 must be its user's and writable only by them. A refused page shows only its title and icon;

@@ -180,15 +180,29 @@ def rss_kb(pid):
         return 0
 
 
-def tree_rss_kb(pid, kids):
-    """RSS of a process and all its descendants (a pane: claude, its MCP servers, a browser)."""
+def pss_kb(pid):
+    """A process's fair share of memory (PSS: a page shared by n processes counts 1/n in each,
+    so the claude binary's code, shared by every claude, is not counted again per session);
+    RSS when it cannot be read (another user's process)."""
+    try:
+        with open(f"/proc/{pid}/smaps_rollup", encoding="ascii") as f:
+            for line in f:
+                if line.startswith("Pss:"):
+                    return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return rss_kb(pid)
+
+
+def tree_mem_kb(pid, kids):
+    """PSS of a process and all its descendants (a pane: claude, its MCP servers, a browser)."""
     total, todo, seen = 0, [pid], set()
     while todo:
         p = todo.pop()
         if p in seen:
             continue
         seen.add(p)
-        total += rss_kb(p)
+        total += pss_kb(p)
         todo += [c for c, _ in kids.get(p, [])]
     return total
 

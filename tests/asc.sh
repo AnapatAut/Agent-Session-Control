@@ -122,6 +122,15 @@ asctl mode "$id2" skip >/dev/null && asctl on "$id2" >/dev/null
 tail -1 "$HOME/claude-args.log" | grep -q -- '--permission-mode bypassPermissions' && ok "mode skip starts with bypassPermissions" || bad "mode skip not passed"
 asctl off "$id2" >/dev/null
 asctl mode "$id2" sudo >/dev/null 2>&1 && bad "an unknown mode accepted" || ok "an unknown mode refused"
+# A start follows the mode the conversation last ran in (its transcript's last permissionMode).
+pm() { printf '{"type":"%s","permissionMode":"%s","sessionId":"%s"}\n' "${2:-permission-mode}" "$1" "$SID2" >> "$HOME/.claude/projects/-x/$SID2.jsonl"; }
+started_with() { asctl on "$id2" >/dev/null; tail -1 "$HOME/claude-args.log" | grep -o -- '--permission-mode [A-Za-z]*' | cut -d' ' -f2; asctl off "$id2" --force >/dev/null; }
+pm acceptEdits; [ "$(started_with)" = acceptEdits ] && ok "mode: follows the transcript (acceptEdits, set inside claude)" || bad "mode not followed"
+pm bypassPermissions; [ "$(started_with)" = bypassPermissions ] && ok "mode: last ran in skip, the favorite set to skip: skip" || bad "skip with mode skip"
+asctl mode "$id2" auto >/dev/null
+[ "$(started_with)" = auto ] && ok "mode: last ran in skip, the favorite not set to skip: its own mode (auto)" || bad "skip followed without mode skip"
+pm plan; [ "$(started_with)" = auto ] && ok "mode: plan is not followed (its own mode)" || bad "plan followed"
+pm manual user; [ "$(started_with)" = manual ] && ok "mode: the last message's permissionMode counts too" || bad "message mode not followed"
 
 echo "== shared session, stale files, locks, a broken registry"
 tm new-session -d -s shared -c "$W" -- "$ASC_CLAUDE" --session-id 33333333-4444-4555-8666-777777777777
@@ -345,6 +354,8 @@ asc/rclive.py %%%     if t and cmd.startswith(t): %%%     if t:
 asc/rclive.py %%%             if not dialog_open(pid, scr) or selected(scr, DISCONNECT): %%%             if not dialog_open(pid, scr):
 asc/rclive.py %%%     l = next((l for l in reversed(bottom(scr)) if label in l), "") %%%     l = next((l for l in bottom(scr) if "❯" in l and label in l), "")
 asc/rclive.py %%%     return status(pid) == "waiting" and prompt_text(scr) is None and %%%     return
+asc/cli.py %%%     return FOLLOW.get(m) or own %%%     return m or own
+asc/cli.py %%%         for line in reversed(lines[1:] if st.st_size > tail else lines): %%%         for line in lines:
 MUTANTS
 fi
 

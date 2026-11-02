@@ -129,13 +129,20 @@ function keepFocus(draw) {
   }
 }
 
+// claude's permission modes, as the page names them
+const MODE = { auto: "Auto", manual: "Manual", default: "Manual", acceptEdits: "Accept edits", dontAsk: "Don't ask",
+               plan: "Plan", bypassPermissions: "Skip permissions" };
+const MODE_TAG = { manual: "asks first", default: "asks first", acceptEdits: "accept edits", dontAsk: "don't ask",
+                   plan: "plan", bypassPermissions: "skip permissions" };
+
 function favRow(e) {
   const l = look(e);
   const meta = [el("span", l.label, "st " + (l.dot || ""))];
-  if (isOn(e) && e.rss_kb) meta.push(tag(size(e.rss_kb)));
+  if (isOn(e) && e.mem_kb) meta.push(tag(size(e.mem_kb)));
   if (e.rc_live) meta.push(tag("rc live")); else if (e.rc) meta.push(tag("rc"));
   if (e.resurrect) meta.push(tag("↻ resurrect"));
-  if (e.mode === "manual") meta.push(tag("asks first")); else if (e.mode === "skip") meta.push(tag("skip permissions"));
+  const m = MODE_TAG[isOn(e) ? e.mode_used : e.mode_next];  // auto has no tag
+  if (m) meta.push(tag(m));
   return rowEl("fav:" + e.id4, () => openSheet("fav", e.id4), l.dot, e.name, e.id4, tilde(e.cwd), meta, e.note, l.why, l.dot === "wait" ? "wait" : "");
 }
 
@@ -155,7 +162,8 @@ function shown(e) {
 function render() { keepFocus(draw); }
 function draw() {
   const s = S;
-  $("me").textContent = s.login;
+  $("me").textContent = s.login.split("@")[0];  // the name only; the whole login on hover
+  $("me").title = s.login;
   const h = location.hostname;
   $("host").textContent = /^[\d.:\[\]]+$/.test(h) ? h : h.split(".")[0];
   $("upd").textContent = "Updated " + new Date(s.time * 1000).toLocaleTimeString();
@@ -165,7 +173,7 @@ function draw() {
   $("mem").classList.toggle("warn", m.warn);
   $("mem-pct").textContent = m.total_kb ? Math.round(used) + "% used" : "unknown";
   $("mem-used").style.width = Math.max(0, Math.min(100, used)) + "%";
-  const onKb = s.favorites.filter(isOn).reduce((a, e) => a + (e.rss_kb || 0), 0);
+  const onKb = s.favorites.filter(isOn).reduce((a, e) => a + (e.mem_kb || 0), 0);
   $("mem-det").replaceChildren(document.createTextNode(`${size(m.total_kb - m.avail_kb)} of ${size(m.total_kb)} used`), el("br"),
     document.createTextNode(`${s.on} on use ${size(onKb) || "0 MB"}`));
 
@@ -207,7 +215,7 @@ function draw() {
   sweepRows("fav:", "active:");
 
   // biggest processes: names and sizes only
-  $("top").replaceChildren(...s.top.mine.map((p) => kids(el("div", null, "proc"), el("span", p.name), el("span", size(p.rss_kb), "mono"))),
+  $("top").replaceChildren(...s.top.mine.map((p) => kids(el("div", null, "proc"), el("span", p.name), el("span", size(p.mem_kb), "mono"))),
     kids(el("div", null, "proc"), el("span", "Other users together"), el("span", size(s.top.others_kb), "mono")));
 
   if (sheetOf) renderSheet();
@@ -386,7 +394,7 @@ function kv(pairs) {
 }
 
 function favDesc(e) {
-  return isOn(e) ? [e.last_on ? "since " + when(e.last_on) : "", size(e.rss_kb)].filter(Boolean).join(" · ")
+  return isOn(e) ? [e.last_on ? "since " + when(e.last_on) : "", size(e.mem_kb)].filter(Boolean).join(" · ")
                  : (e.last_off ? "since " + when(e.last_off) : "");
 }
 
@@ -394,38 +402,33 @@ function favSheet(e) {
   const l = look(e), ref = { id: e.id4, tmux: e.tmux }, on = isOn(e), wait = pending.has(e.id4);
   const out = [el("h2", e.name), el("div", e.id4 + " · " + tilde(e.cwd), "s2 mono")];
   const title = on ? "On · " + l.label : (l.group === "attention" ? "Off · " + l.label : "Off");
-  out.push(kids(el("div", null, "bigsw"), kids(el("div"), el("div", title, "t " + (on ? "" : l.dot)), el("div", favDesc(e), "d")),
-    sw(on, on ? "Turn off" : "Turn on", async () => {
-      if (on) {
-        if (!await ask({ title: `Turn ${e.tmux} off?`, text: `What runs in its tmux session ends.`, ok: "Turn off", danger: true })) return;
-        await act({ action: "off", ...ref });
-      } else {
-        await act({ action: "on", ...ref });
-      }
-    }, wait)));
+  const rcDesc = (on ? (e.rc_live ? "Live now" : "Not live now") + (e.rc !== e.rc_live ? " · changes at its next start" : "")
+                     : "Used when it starts") + (e.rc ? " · title " + (e.rc_title || e.tmux) : "");
+  // the two switches used most, together: On/Off and remote control
+  out.push(kids(el("div", null, "duo"),
+    kids(el("div", null, "bigsw"), kids(el("div"), el("div", title, "t " + (on ? "" : l.dot)), el("div", favDesc(e), "d")),
+      sw(on, on ? "Turn off" : "Turn on", async () => {
+        if (on) {
+          if (!await ask({ title: `Turn ${e.tmux} off?`, text: `What runs in its tmux session ends.`, ok: "Turn off", danger: true })) return;
+          await act({ action: "off", ...ref });
+        } else {
+          await act({ action: "on", ...ref });
+        }
+      }, wait)),
+    kids(el("div", null, "bigsw"), kids(el("div"), el("div", "Remote control", "t"), el("div", rcDesc, "d")),
+      sw(e.rc, "Remote control", () => act({ action: "rc", on: !e.rc, ...ref }), wait))));
   if (l.why) out.push(el("div", l.why, "warn " + (l.dot === "bad" ? "bad" : "")));
   if (on && e.busy) out.push(el("div", "Busy: " + e.busy + ". Off asks before forcing it.", "warn"));
 
   out.push(el("span", "SETTINGS", "lab"));
-  const rcDesc = (on ? (e.rc_live ? "Live now" : "Not live now") + (e.rc !== e.rc_live ? " · changes at its next start" : "")
-                     : "Used when it starts") + (e.rc ? " · title " + (e.rc_title || e.tmux) : "");
-  const modes = el("div", null, "seg");
-  modes.setAttribute("role", "group");
-  modes.setAttribute("aria-label", "Permissions");
-  for (const [m, t] of [["auto", "Auto"], ["manual", "Manual"]]) {
-    const b = el("button", t);
-    b.type = "button";
-    b.setAttribute("aria-pressed", String(e.mode === m));
-    b.disabled = wait || e.mode === "skip" || e.mode === m;
-    b.addEventListener("click", () => act({ action: "mode", mode: m, ...ref }));
-    modes.append(b);
-  }
+  // Permissions follow claude: a start uses the mode the conversation last ran in (asc/cli.py)
+  const used = MODE[e.mode_used] || "not known yet", next = MODE[e.mode_next] || e.mode_next;
+  const perm = (on ? "Now " + used : "Last used " + used) + " · a start uses " + next +
+    (e.mode_used === "bypassPermissions" && e.mode_next !== "bypassPermissions" ? " (skip only if set on the machine: asctl mode " + e.id4 + " skip)" : "");
   out.push(kids(el("div", null, "opts"),
-    opt("Remote control", rcDesc, sw(e.rc, "Remote control", () => act({ action: "rc", on: !e.rc, ...ref }), wait)),
     opt("Resurrect", "Bring it back after a reboot or a tmux crash (always with remote control)",
       sw(e.resurrect, "Resurrect", () => act({ action: "resurrect", on: !e.resurrect, ...ref }), wait)),
-    opt("Permissions", e.mode === "skip" ? "Skip permissions: set on the machine (asctl mode " + e.id4 + ")"
-                                         : "How claude asks before acting, from its next start", modes)));
+    opt("Permissions", perm, null)));
 
   out.push(el("span", "NOTE", "lab"));
   const draft = noteDraft && noteDraft.id4 === e.id4 ? noteDraft.text : e.note;
@@ -505,7 +508,7 @@ function renderSheet() {
   // A redraw replaces every button: only when the data changed, or a tap lands on a removed one.
   // The memory figure changes on every refresh: it alone is updated in place.
   const id = sheetOf.kind === "fav" ? item.id4 : item.session_id;
-  const sig = sheetOf.kind + ":" + pending.has(id) + ":" + JSON.stringify({ ...item, rss_kb: 0 });
+  const sig = sheetOf.kind + ":" + pending.has(id) + ":" + JSON.stringify({ ...item, mem_kb: 0 });
   if (sig === sheetSig) {
     if (sheetOf.kind === "fav") sheet.querySelector(".bigsw .d").textContent = favDesc(item);
     return;

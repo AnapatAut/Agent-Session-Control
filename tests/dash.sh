@@ -230,7 +230,7 @@ pid=$(claude_in dev)
 s=$(state)
 jq -e '.memory.avail_pct > 0 and .memory.total_kb > 0' <<<"$s" >/dev/null && ok "state: memory" || bad "state: no memory"
 jq -e --arg s "$SID" '.active | map(select(.session_id == $s and .tmux == "dev")) | length == 1' <<<"$s" >/dev/null && ok "state: the running claude, not favorited" || bad "state: active list wrong: $s"
-jq -e '.top.mine | length > 0 and all(keys == ["name", "rss_kb"])' <<<"$s" >/dev/null && ok "state: own biggest processes, names and sizes only" || bad "state: top processes wrong"
+jq -e '.top.mine | length > 0 and all(keys == ["mem_kb", "name"])' <<<"$s" >/dev/null && ok "state: own biggest processes, names and sizes only" || bad "state: top processes wrong"
 jq -e '.top.others_kb | type == "number"' <<<"$s" >/dev/null && ok "state: other users as one total" || bad "state: no others total"
 jq -e '.server == true' <<<"$s" >/dev/null && ok "state: the tmux server is up" || bad "state: server not seen"
 
@@ -257,8 +257,18 @@ out=$(post '{"action":"fav","ref":"'"$pid"'","name":"das"}')
 [ "$(tail -1 <<<"$out")" = 200 ] && ok "fav by pid" || bad "fav failed: $out"
 id=$(state | jq -r '.favorites[0].id4'); TM="das-$id"
 s=$(state)
-jq -e --arg i "$id" '.favorites[0] | .tmux == "das-\($i)" and .state == "on" and .status == "idle" and .rss_kb > 0 and .attach == "tmux attach -t =das-\($i)"' <<<"$s" >/dev/null && ok "state: the favorite, on, idle, its memory, the attach command" || bad "state: favorite wrong: $(jq -c '.favorites[0]' <<<"$s")"
+jq -e --arg i "$id" '.favorites[0] | .tmux == "das-\($i)" and .state == "on" and .status == "idle" and .mem_kb > 0 and .attach == "tmux attach -t =das-\($i)"' <<<"$s" >/dev/null && ok "state: the favorite, on, idle, its memory, the attach command" || bad "state: favorite wrong: $(jq -c '.favorites[0]' <<<"$s")"
 jq -e '.active | length == 0' <<<"$s" >/dev/null && ok "state: no longer in the not-favorited list" || bad "state: still listed as not favorited"
+pp=$(tm list-panes -t "=das-$id:" -F '#{pane_pid}'); rss=$(ps -o rss= -p "$pp" --ppid "$pp" | awk '{ s += $1 } END { print s }')
+jq -e --argjson r "${rss:-0}" '.favorites[0].mem_kb > 0 and .favorites[0].mem_kb < $r' <<<"$s" >/dev/null && ok "state: memory is PSS (shared pages split), under the tree's RSS" || bad "state: memory $(jq '.favorites[0].mem_kb' <<<"$s") vs RSS $rss"
+jq -e '.favorites[0] | .mode_used == null and .mode_next == "auto"' <<<"$s" >/dev/null && ok "state: the mode used (none in a transcript) and the next start's" || bad "state: modes: $(jq -c '.favorites[0] | {mode_used, mode_next}' <<<"$s")"
+mkdir -p "$HOME/.claude/projects/-w"; tr="$HOME/.claude/projects/-w/$SID.jsonl"
+printf '{"type":"permission-mode","permissionMode":"auto","sessionId":"%s"}\n' "$SID" > "$tr"
+state | jq -e '.favorites[0].mode_used == "auto"' >/dev/null || bad "state: mode not read from the transcript"
+printf '{"type":"permission-mode","permissionMode":"acceptEdits","sessionId":"%s"}\n' "$SID" >> "$tr"
+state | jq -e '.favorites[0] | .mode_used == "acceptEdits" and .mode_next == "acceptEdits"' >/dev/null \
+	&& ok "state: the mode claude switched to (the transcript read again when it changes)" || bad "state: mode stale: $(state | jq -c '.favorites[0] | {mode_used, mode_next}')"
+rm -f "$tr"
 jq -e --arg l "$LOGIN" --arg h "$HOME" '.login == $l and .home == $h and .favorites[0].rc_live == false' <<<"$s" >/dev/null && ok "state: the login, the home folder, remote control not live" || bad "state: login, home or rc_live wrong: $(jq -c '{login, home, rc_live: .favorites[0].rc_live}' <<<"$s")"
 touch "$HOME/fake-rc" "$HOME/fake-wait"; sleep 0.6
 state | jq -e '.favorites[0] | .rc_live == true and .status == "waiting" and .busy == "" and .waiting_for == "dialog open" and (.status_at | type) == "number"' >/dev/null && ok "state: remote control live, waiting (not busy), why and since when" || bad "state: rc_live/waiting wrong: $(state | jq -c '.favorites[0] | {rc_live, status, busy}')"
@@ -522,6 +532,8 @@ asc/dash.py %%%             _private(d, os.stat(d)) %%%             pass
 asc/dash.py %%%             d = os.path.dirname(os.path.realpath(p)) %%%             d = os.path.dirname(p)
 asc/icons.py %%% os.O_NOFOLLOW, 0o600), "wb") %%% os.O_NOFOLLOW, 0o644), "wb")
 asc/dash.py %%%             if self.command in ("GET", "HEAD") and self._path() == "/": %%%             if True:
+asc/live.py %%%                 if line.startswith("Pss:"): %%%                 if line.startswith("Rss:"):
+asc/cli.py %%%             if path in _modes and _modes[path][0] == key: %%%             if path in _modes:
 MUTANTS
 fi
 

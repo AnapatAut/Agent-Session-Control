@@ -9,7 +9,9 @@
                                    refused when memory is short (asc/memory.py) unless forced
   asctl off ID [--force]           end it: claude gets SIGTERM, then its tmux session closes
   asctl rename ID NAME             a new name (the tmux session too, if it runs)
-  asctl mode ID auto|manual|skip   permission mode for the next start (skip: no prompts)
+  asctl mode ID auto|manual|skip   permission mode when its transcript names none; a start
+                                   follows the mode the conversation last ran in (shift+tab
+                                   carries over), skip only for a favorite set to skip here
   asctl rc ID on|off [--title T] [--next-start]
                                    remote control (and its title); a running claude also
                                    now, when idle (asc/rclive.py), unless --next-start
@@ -58,10 +60,56 @@ def last_exit(id4):
 def claude_argv(e, resurrect=False):
     a = [os.environ.get("ASC_CLAUDE", "claude")]
     a += ["--resume", e["session_id"]] if e.get("started") else ["--session-id", e["session_id"]]
-    a += ["--name", e["tmux"], "--permission-mode", registry.MODES[e.get("mode", "auto")]]
+    a += ["--name", e["tmux"], "--permission-mode", start_mode(e)]
     if e.get("rc") or (resurrect and e.get("resurrect")):
         a += ["--remote-control", e.get("rc_title") or e["tmux"]]
     return a
+
+
+# Modes followed from the transcript as claude takes them ("default" was manual's old name).
+# plan is left out (a step inside a task, not a way of working) and skip has its own rule.
+FOLLOW = {"auto": "auto", "manual": "manual", "default": "manual", "acceptEdits": "acceptEdits", "dontAsk": "dontAsk"}
+_modes = {}  # transcript path -> ((size, mtime), mode): the dashboard asks every 5 s
+
+
+def last_mode(sid, tail=2 << 20):
+    """The permission mode the conversation last ran in: the last permissionMode at the end of
+    its transcript (claude writes it on each message and on each change), or None."""
+    for path in glob.glob(os.path.expanduser(f"~/.claude/projects/*/{sid}.jsonl")):
+        f = live.open_regular(path)
+        if f is None:
+            continue
+        with f:
+            st = os.fstat(f.fileno())
+            key = (st.st_size, st.st_mtime_ns)
+            if path in _modes and _modes[path][0] == key:
+                return _modes[path][1]
+            f.seek(max(0, st.st_size - tail))
+            lines = f.read(tail).split(b"\n")
+        mode = None
+        for line in reversed(lines[1:] if st.st_size > tail else lines):  # the first may be cut
+            if b'"permissionMode"' not in line:
+                continue
+            try:
+                r = json.loads(line.decode("utf-8", "replace"))
+            except (ValueError, RecursionError):
+                continue
+            if isinstance(r, dict) and isinstance(r.get("permissionMode"), str):
+                mode = r["permissionMode"][:40]
+                break
+        _modes[path] = (key, mode)
+        return mode
+    return None
+
+
+def start_mode(e):
+    """--permission-mode for a start: the mode the conversation last ran in, so a change made
+    inside claude carries over. A conversation that last ran in skip comes back in skip only when
+    the favorite is set to skip on this machine (asctl mode ID skip), else in its own mode; plan,
+    a mode not known here, or none found: the favorite's own mode."""
+    own = registry.MODES[e.get("mode", "auto")]
+    m = last_mode(e["session_id"]) if e.get("started") and e.get("session_id") else None
+    return FOLLOW.get(m) or own  # skip (bypassPermissions) is not in FOLLOW: own, skip only if set
 
 
 def live_in(e, lv=None):
@@ -345,7 +393,7 @@ def cmd_mode(args):
     with registry.changing() as data:
         e = registry.find(data, args.id)
         e["mode"] = args.mode
-    out(f"{e['tmux']}: mode {args.mode} from its next start")
+    out(f"{e['tmux']}: mode {args.mode} (used when its transcript names none; skip lets a skip conversation come back in skip)")
     return 0
 
 

@@ -225,14 +225,14 @@ def top_processes(n=5):
             uid = os.stat(f"/proc/{d}").st_uid
         except OSError:
             continue
-        kb = live.rss_kb(int(d))
         if uid != me:
-            others += kb
+            others += live.rss_kb(int(d))  # their PSS cannot be read: RSS
             continue
+        kb = live.pss_kb(int(d))
         st = live.proc_stat(int(d))
         if st and kb:
-            mine.append({"name": st[0], "rss_kb": kb})
-    mine.sort(key=lambda p: p["rss_kb"], reverse=True)
+            mine.append({"name": st[0], "mem_kb": kb})
+    mine.sort(key=lambda p: p["mem_kb"], reverse=True)
     return {"mine": mine[:n], "others_kb": others}
 
 
@@ -270,13 +270,16 @@ def _snapshot():
             "session_id": e.get("session_id"), "rc": bool(e.get("rc")), "rc_title": e.get("rc_title") or "",
             "rc_live": bool(s and s["rc"]),
             "mode": e.get("mode", "auto"), "resurrect": bool(e.get("resurrect")),
+            # the mode claude last ran in (its transcript), and what a start would use
+            "mode_used": cli.last_mode(e["session_id"]) if e.get("session_id") else None,
+            "mode_next": cli.start_mode(e),
             "want_on": bool(e.get("want_on")), "note": e.get("note") or "",
             "last_on": e.get("last_on"), "last_off": e.get("last_off"), "state": st,
             "pid": s["pid"] if s else None, "status": s["status"] if s else None,
             "waiting_for": s["waiting_for"] if s else "", "status_at": s["status_at"] if s else None,
             "busy": live.busy_reason(e["tmux"], lv, kids, panes, e.get("session_id")) if e["tmux"] in up else "",
             "claudes": sum(1 for x in lv if x["pane"] and x["pane"]["session"] == e["tmux"]),
-            "rss_kb": sum(live.tree_rss_kb(p["pane_pid"], kids) for p in panes),
+            "mem_kb": sum(live.tree_mem_kb(p["pane_pid"], kids) for p in panes),
             "attach": f"tmux attach -t ={e['tmux']}",
         })
     active = [{"pid": s["pid"], "session_id": s["session_id"], "name": s["name"], "cwd": s["cwd"],
