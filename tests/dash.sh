@@ -309,6 +309,13 @@ out=$(post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"db"}')
 [ "$(tail -1 <<<"$out")" = 200 ] && seen 'claude and its claude.ai title too' <<<"$out" && state | jq -e --argjson p "$pid0" '.favorites[0] | (.tmux | startswith("db-")) and .claude_name == .tmux and .pid == $p' >/dev/null \
 	&& ok "rename from the page: the same claude takes the name (/rename)" || bad "rename: $out / $(state | jq -c '.favorites[0] | {tmux, claude_name, pid}')"
 TM="db-$id"
+touch "$HOME/fake-busy"; sleep 0.6
+post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"db2"}' >/dev/null; TM="db2-$id"
+state | jq -e --arg t "db-$id" '.favorites[0].claude_name == $t' >/dev/null || bad "rename while busy changed claude's name"
+rm -f "$HOME/fake-busy"; sleep 0.6
+out=$(post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"db2"}')
+seen 'claude and its claude.ai title too' <<<"$out" && state | jq -e --arg t "$TM" '.favorites[0].claude_name == $t' >/dev/null \
+	&& ok "rename to the same name sends it to a claude that goes by another (renamed while busy)" || bad "same-name rename: $out"
 [ "$(post '{"action":"restart","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 400 ] && ok "no restart action from the page" || bad "the page can restart"
 post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'","force":true}' >/dev/null
 [ "$(post '{"action":"forget","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] && state | jq -e '.favorites | length == 0' >/dev/null && ok "forget" || bad "forget failed"
@@ -433,7 +440,7 @@ kill "$holder"; wait "$holder" 2>/dev/null
 start_dash
 [ "$(code http://x/app.css)" = 200 ] && ok "a socket nothing listens on (stale) is replaced" || bad "a stale socket blocked the start"
 
-echo "== rc, resurrect, note and the memory gate from the page"
+echo "== rc, resurrect and the memory gate from the page"
 REG="$HOME/.local/state/agent-session-control/registry.json"
 R3='"id":"'"$id3"'","tmux":"trio-'"$id3"'"'
 [ "$(post '{"action":"rc","on":true,"title":"Trio work",'"$R3"'}' | tail -1)" = 200 ] && [ "$(jq -r ".entries[\"$id3\"].rc_title" "$REG")" = "Trio work" ] && ok "rc on with a title" || bad "rc on from the page failed"
@@ -441,8 +448,7 @@ R3='"id":"'"$id3"'","tmux":"trio-'"$id3"'"'
 [ "$(post '{"action":"rc","on":true,"title":"-x",'"$R3"'}' | tail -1)" = 400 ] && ok "an rc title starting with - refused" || bad "an rc title starting with - accepted"
 [ "$(post '{"action":"rc","on":false,'"$R3"'}' | tail -1)" = 200 ] && [ "$(jq -r ".entries[\"$id3\"].rc" "$REG")" = false ] && ok "rc off" || bad "rc off failed"
 [ "$(post '{"action":"resurrect","on":true,'"$R3"'}' | tail -1)" = 200 ] && state | jq -e '.favorites[] | select(.id4 == "'"$id3"'") | .resurrect and .rc' >/dev/null && ok "resurrect on turns rc on" || bad "resurrect on from the page"
-[ "$(post '{"action":"note","text":"-a <b>note</b>",'"$R3"'}' | tail -1)" = 200 ] && state | jq -e '.favorites[] | select(.id4 == "'"$id3"'") | .note == "-a <b>note</b>"' >/dev/null && ok "a note (any text, even starting with -)" || bad "note from the page failed"
-[ "$(post '{"action":"note","text":5,'"$R3"'}' | tail -1)" = 400 ] && ok "a note that is not text: 400" || bad "a number as note accepted"
+[ "$(post '{"action":"note","text":"x",'"$R3"'}' | tail -1)" = 400 ] && ok "no note action from the page" || bad "the page can set a note"
 post '{"action":"off","force":true,'"$R3"'}' >/dev/null
 mem 32000000 1600000
 out=$(post '{"action":"on",'"$R3"'}')

@@ -63,7 +63,7 @@ launcher). The main page is a list (needs attention, on, off, running claudes no
 past conversations, memory used; a running claude with a made-up name goes by its chat title,
 as the Claude apps list it; a session's memory is the PSS of its pane's processes, shared
 pages split, so the figures add up); a tap opens a session's sheet with On/Off, remote control
-(live), resurrect, permissions, note, rename and forget, and what claude itself last reported.
+(live), resurrect, permissions, rename and forget, and what claude itself last reported.
 Every request needs that login and host; every action the page's token and Origin; the config
 must be its user's and writable only by them. A refused page shows only its title and icon;
 the manifest's `x_title` names it for readers that list serve ports. See `asc/dash.py`;

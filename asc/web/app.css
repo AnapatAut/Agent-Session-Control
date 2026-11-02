@@ -145,11 +145,6 @@ details.top[open] summary::after { transform: rotate(90deg); }
 .opt .t { font-size: 14px; font-weight: 600; } .opt .d { font-size: 12px; color: var(--mute); margin-top: 1px; }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 13px; margin: 0; }
 .kv dt { color: var(--mute); } .kv dd { margin: 0; overflow-wrap: anywhere; }
-.field { position: relative; }
-.sheet textarea { display: block; width: 100%; border: 2px solid var(--line); border-radius: 16px; padding: 12px 14px; font: inherit;
-                  font-size: 16px; line-height: 21px; height: 70px; resize: none; background: var(--well); color: var(--ink); outline: none; }
-.sheet textarea:focus { border-color: var(--blue); background: #fff; }
-.count { position: absolute; right: 14px; bottom: 8px; font-size: 11px; color: var(--faint); font-weight: 600; }
 .acts { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
 .btn { flex: 1; border: 0; border-radius: 999px; padding: 13px 16px; font-size: 14px; font-weight: 600; min-height: 46px;
        cursor: pointer; background: var(--bg); white-space: nowrap; }

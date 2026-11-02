@@ -1,6 +1,6 @@
 // The dashboard page over its API (GET api/state, GET api/past?q=, POST api/action), in the look
 // of the serve dashboard: a list of sessions, and a details sheet for each where every action is.
-// Every value from the server is user text (titles, folders, notes): it is set as textContent only.
+// Every value from the server is user text (titles, folders): it is set as textContent only.
 "use strict";
 const token = document.querySelector('meta[name="asctl-token"]').content;
 const $ = (id) => document.getElementById(id);
@@ -10,7 +10,6 @@ let S = null;            // the last state from the server
 let past = [];           // past conversations for the search box
 let filter = "all";      // the chip pressed
 let sheetOf = null;      // {kind: "fav" | "active" | "past", key}, while the sheet is open
-let noteDraft = null;    // {id4, text}: a note being typed survives a refresh
 let sheetSig = "";       // the data the open sheet was drawn from: redrawn only when it changes
 const pending = new Set();  // ids with an action running: their controls stay disabled across redraws
 let lastOk = Date.now(), lastOkTime = null;
@@ -162,7 +161,7 @@ function favRow(e) {
   if (e.resurrect) meta.push(tag("↻ resurrect"));
   const m = MODE_TAG[isOn(e) ? e.mode_used : e.mode_next];  // auto has no tag
   if (m) meta.push(tag(m));
-  return rowEl("fav:" + e.id4, () => openSheet("fav", e.id4), l.dot, e.name, e.id4, tilde(e.cwd), meta, e.note, l.why, l.dot === "wait" ? "wait" : "");
+  return rowEl("fav:" + e.id4, () => openSheet("fav", e.id4), l.dot, e.name, e.id4, tilde(e.cwd), meta, "", l.why, l.dot === "wait" ? "wait" : "");
 }
 
 function section(title, pillCls, rows) {
@@ -463,34 +462,19 @@ function favSheet(e) {
     opt("Resurrect", "Bring it back after a reboot or a tmux crash (always with remote control)",
       sw(e.resurrect, "Resurrect", () => act({ action: "resurrect", on: !e.resurrect, ...ref }), wait))));
 
-  out.push(el("span", "NOTE", "lab"));
-  const draft = noteDraft && noteDraft.id4 === e.id4 ? noteDraft.text : e.note;
-  const ta = el("textarea");
-  ta.maxLength = 500;
-  ta.value = draft;
-  ta.setAttribute("aria-label", "Note");
-  const count = el("span", draft.length + "/500", "count");
-  const save = btn("Save note", "sm p", async () => {
-    const j = await act({ action: "note", text: ta.value, ...ref });
-    if (j.ok) noteDraft = null;
-  });
-  save.disabled = wait || draft === e.note;
-  ta.addEventListener("input", () => {
-    ta.value = ta.value.replace(/[\r\n\t]+/g, " ");  // one line: no control characters
-    noteDraft = { id4: e.id4, text: ta.value };
-    count.textContent = ta.value.length + "/500";
-    save.disabled = pending.has(e.id4) || ta.value === e.note;
-  });
-  out.push(kids(el("div", null, "field"), ta, count), save);
-
   out.push(el("span", "SESSION", "lab"), kv([
     ["Status", on ? statusText(e) : l.label.replace(/^off since.*/, "Off")], ["Memory", on ? size(e.mem_kb) : ""], ["Permissions", perm], ["Claude's name", on && e.claude_name !== e.tmux ? e.claude_name + (e.claude_name_kept ? " (from an old job record of its own)" : "") : ""], ["tmux", e.tmux], ["Session id", e.session_id], ["Claudes", e.claudes > 1 ? e.claudes : ""],
     ["Last on", full(e.last_on)], ["Last off", full(e.last_off)]]));
   out.push(kids(el("div", null, "acts"),
     btn("Rename", "", async () => {
-      const name = await ask({ title: `Rename ${e.tmux}`, text: `It becomes NAME-${e.id4}.` + (on ? " If idle, claude takes it too, also in claude.ai." : ""), ok: "Rename",
+      // claude may go by another name (favorited while it ran, renamed while busy): the same name
+      // then still sends it to claude
+      const drift = on && e.claude_name && e.claude_name !== e.tmux;
+      const name = await ask({ title: `Rename ${e.tmux}`, ok: "Rename",
+        text: drift ? `Claude goes by ${e.claude_name}. Rename sends it NAME-${e.id4}, also to claude.ai (when idle).`
+                    : `It becomes NAME-${e.id4}.` + (on ? " If idle, claude takes it too, also in claude.ai." : ""),
         input: { value: e.name, check: (v) => /^[a-z0-9][a-z0-9-]{0,30}$/.test(v) ? "" : "a-z, 0-9 and -, starting with a letter or digit, up to 31" } });
-      if (name === null || name === e.name) return;
+      if (name === null || (name === e.name && !drift)) return;
       await act({ action: "rename", name, ...ref });
     }, wait),
     btn("Forget", "danger", async () => {
@@ -574,7 +558,6 @@ function openSheet(kind, key) {
   const first = !sheetOf;
   sheetOf = { kind, key };
   sheetSig = "";
-  noteDraft = null;
   renderSheet();
   if (!sheetOf) return;
   if (first) opener = document.activeElement;
@@ -589,7 +572,6 @@ function closeSheet(fromBack) {
   if (!sheetOf) return;
   if (ask.cancel) ask.cancel();
   sheetOf = null;
-  noteDraft = null;
   $("scrim").classList.remove("on");
   for (const c of document.body.children) c.inert = false;
   if (opener && opener.isConnected) opener.focus({ preventScroll: true });

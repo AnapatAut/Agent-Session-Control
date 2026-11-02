@@ -344,8 +344,6 @@ def action_argv(a):
         if kind == "rc" and a.get("title") is not None:
             argv += ["--title", registry.check_title(a["title"])]
         return argv
-    if kind == "note":
-        return ["note", ref, "--", registry.check_note(a.get("text"))]  # a note may start with -
     raise RegistryError(f"unknown action {kind!r}")
 
 
