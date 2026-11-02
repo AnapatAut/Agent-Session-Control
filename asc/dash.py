@@ -507,15 +507,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send(400, {"error": str(e)})
         with self.server.actions:
             self.server.running += 1
-        try:
-            ok, out, err = run_asctl(argv)
-        except subprocess.TimeoutExpired:
-            return self._send(504, {"error": "asctl took over 90 s"})
+        try:  # counted until the answer is sent: a stop waiting for actions must not cut it off
+            try:
+                ok, out, err = run_asctl(argv)
+            except subprocess.TimeoutExpired:
+                return self._send(504, {"error": "asctl took over 90 s"})
+            self._send(200 if ok else 409, {"ok": ok, "out": out, "error": err.removeprefix("asctl: ")})
         finally:
             with self.server.actions:
                 self.server.running -= 1
                 self.server.actions.notify_all()
-        self._send(200 if ok else 409, {"ok": ok, "out": out, "error": err.removeprefix("asctl: ")})
 
 
 class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
