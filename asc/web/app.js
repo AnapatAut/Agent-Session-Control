@@ -395,6 +395,17 @@ function btn(text, cls, onClick, off) {
   b.addEventListener("click", async () => { b.disabled = true; try { await onClick(); } finally { b.disabled = false; } });
   return b;
 }
+function powerIcon() {
+  const ns = "http://www.w3.org/2000/svg", s = document.createElementNS(ns, "svg");
+  s.setAttribute("viewBox", "0 0 24 24");
+  s.setAttribute("aria-hidden", "true");
+  for (const d of ["M12 3.5v8", "M6.6 7.4a7.5 7.5 0 1 0 10.8 0"]) {
+    const p = document.createElementNS(ns, "path");
+    p.setAttribute("d", d);
+    s.append(p);
+  }
+  return s;
+}
 function kv(pairs) {
   const d = el("dl", null, "kv");
   for (const [k, v] of pairs) if (v !== undefined && v !== null && v !== "") d.append(el("dt", k), el("dd", v, k === "tmux" || k === "Session id" ? "mono" : ""));
@@ -412,19 +423,26 @@ function favSheet(e) {
   const title = on ? "On · " + l.label : (l.group === "attention" ? "Off · " + l.label : "Off");
   const rcDesc = (on ? (e.rc_live ? "Live now" : "Not live now") + (e.rc !== e.rc_live ? " · changes at its next start" : "")
                      : "Used when it starts") + (e.rc ? " · title " + (e.rc_title || e.tmux) : "");
-  // its state, then the two actions used most as buttons: On/Off and remote control
-  out.push(kids(el("div", null, "state"), el("div", title, "t " + (on ? "" : l.dot)), el("div", favDesc(e), "d")));
-  const rcb = btn("Remote control", "tog", () => act({ action: "rc", on: !e.rc, ...ref }), wait);
-  rcb.setAttribute("aria-pressed", String(e.rc));
-  out.push(kids(el("div", null, "acts main"),
-    btn(on ? "Turn off" : "Turn on", on ? "danger" : "p", async () => {
-      if (on) {
-        if (!await ask({ title: `Turn ${e.tmux} off?`, text: `What runs in its tmux session ends.`, ok: "Turn off", danger: true })) return;
-        await act({ action: "off", ...ref });
-      } else {
-        await act({ action: "on", ...ref });
-      }
-    }, wait), rcb));
+  // its state, and beside it the two actions used most: rc (green while on) and power (green on, red off)
+  // rc shows the live state of a running claude (a tap on grey tries again), else the setting
+  const rcOn = on ? e.rc_live : e.rc;
+  const rcb = btn("rc", "rcb", () => act({ action: "rc", on: !rcOn, ...ref }), wait);
+  rcb.setAttribute("aria-pressed", String(rcOn));
+  rcb.setAttribute("aria-label", "Remote control " + (rcOn ? "on: turn it off" : "off: turn it on"));
+  const pwb = btn("", "pw " + (on ? "on" : "off"), async () => {
+    if (on) {
+      if (!await ask({ title: `Turn ${e.tmux} off?`, text: `What runs in its tmux session ends.`, ok: "Turn off", danger: true })) return;
+      await act({ action: "off", ...ref });
+    } else {
+      await act({ action: "on", ...ref });
+    }
+  }, wait);
+  pwb.append(powerIcon());
+  pwb.setAttribute("aria-label", on ? "On: turn it off" : "Off: turn it on");
+  pwb.title = on ? "Turn off" : "Turn on";
+  out.push(kids(el("div", null, "top2"),
+    kids(el("div", null, "state"), el("div", title, "t " + (on ? "" : l.dot)), el("div", favDesc(e), "d")),
+    kids(el("div", null, "btns"), rcb, pwb)));
   out.push(el("div", "Remote control " + (e.rc ? "on" : "off") + " · " + rcDesc, "rcd"));
   if (l.why) out.push(el("div", l.why, "warn " + (l.dot === "bad" ? "bad" : "")));
   if (on && e.busy) out.push(el("div", "Busy: " + e.busy + ". Off asks before forcing it.", "warn"));
