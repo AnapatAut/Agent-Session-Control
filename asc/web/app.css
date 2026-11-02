@@ -83,6 +83,7 @@ h1 { font-size: 26px; line-height: 31px; font-weight: 700; margin: 0; letter-spa
 .meta { grid-area: meta; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--mute); min-width: 0; }
 .tag { display: inline-flex; align-items: center; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 999px;
        background: var(--well); color: var(--mute); white-space: nowrap; }
+.tag.rc.live { background: var(--lime); color: var(--ink); } .tag.rc.down { background: var(--amber-soft); color: var(--amber); }
 .st { font-size: 12px; font-weight: 600; white-space: nowrap; }
 .st.busy { color: var(--blue); } .st.idle { color: #5d6b12; } .st.bad { color: var(--red); } .st.wait { color: var(--amber); }
 .note { grid-area: note; font-size: 13px; line-height: 1.35; min-width: 0; word-break: break-word; }
@@ -127,8 +128,9 @@ details.top[open] summary::after { transform: rotate(90deg); }
 .sheet h2 { font-size: 19px; line-height: 24px; margin: 0; padding-right: 44px; letter-spacing: -.01em; word-break: break-word; }
 .sheet .s2 { font-size: 13px; color: var(--mute); margin-top: 3px; overflow-wrap: anywhere; }
 .btns { display: flex; align-items: center; gap: 10px; margin-top: 16px; }
-.btn.rcb { flex: none; min-height: 0; height: 52px; min-width: 64px; padding: 0 16px; font-size: 16px; color: var(--mute); }
-.btn.rcb[aria-pressed="true"] { background: var(--lime); color: var(--ink); }
+.btn.rcb { flex: none; min-height: 0; width: 52px; height: 52px; padding: 0; border-radius: 50%; font-size: 16px; color: var(--mute); }
+.btn.rcb.live, .btn.rcb.set { background: var(--lime); color: var(--ink); }
+.btn.rcb.down { background: var(--amber-soft); color: var(--amber); }
 .btn.pw { flex: none; min-height: 0; width: 52px; height: 52px; padding: 0; border-radius: 50%; display: grid; place-items: center; color: #fff; }
 .btn.pw.on { background: var(--lime); color: var(--ink); } .btn.pw.off { background: var(--red); }
 .btn.pw svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }

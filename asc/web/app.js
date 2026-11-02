@@ -128,7 +128,14 @@ function sweepRows(...prefixes) {
   for (const k of [...rows.keys()]) if (prefixes.some((p) => k.startsWith(p)) && !used.has(k)) rows.delete(k);
   for (const k of [...used]) if (prefixes.some((p) => k.startsWith(p))) used.delete(k);
 }
-function tag(text) { return el("span", text, "tag"); }
+function tag(text, cls) { return el("span", text, "tag " + (cls || "")); }
+// remote control: live (lime), on but not live in a running claude (amber), on for its next start (lime
+// button, grey chip)
+function rcState(e) {
+  if (!isOn(e)) return e.rc ? "set" : "";
+  return e.rc_live ? "live" : e.rc ? "down" : "";
+}
+const RC_SAYS = { live: "Remote control live", down: "Remote control on, not live now", set: "Remote control on from its next start" };
 // Moving a row or rebuilding a chip drops the keyboard focus to the page: put it back.
 function keepFocus(draw) {
   const fk = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.fk : null;
@@ -149,7 +156,8 @@ function favRow(e) {
   const l = look(e);
   const meta = [el("span", l.label, "st " + (l.dot || ""))];
   if (isOn(e) && e.mem_kb) meta.push(tag(size(e.mem_kb)));
-  if (e.rc_live) meta.push(tag("rc live")); else if (e.rc) meta.push(tag("rc"));
+  const rs = rcState(e);
+  if (rs) { const t = tag("rc", "rc " + rs); t.title = RC_SAYS[rs]; meta.push(t); }
   if (e.resurrect) meta.push(tag("↻ resurrect"));
   const m = MODE_TAG[isOn(e) ? e.mode_used : e.mode_next];  // auto has no tag
   if (m) meta.push(tag(m));
@@ -424,12 +432,13 @@ function favSheet(e) {
   const out = [el("h2", e.name), el("div", "#" + e.id4 + " · " + tilde(e.cwd), "s2 mono")];
   const rcDesc = (on ? (e.rc_live ? "Live now" : "Not live now") + (e.rc !== e.rc_live ? " · changes at its next start" : "")
                      : "Used when it starts") + (e.rc ? " · title " + (e.rc_title || e.tmux) : "");
-  // its state, and beside it the two actions used most: rc (lime while on) and power (lime on, red off)
-  // rc shows the live state of a running claude (a tap on grey tries again), else the setting
-  const rcOn = on ? e.rc_live : e.rc;
-  const rcb = btn("rc", "rcb", () => act({ action: "rc", on: !rcOn, ...ref }), wait);
+  // the two actions used most: power (lime on, red off) and rc (colored as rcState)
+  // rc shows the live state of a running claude (a tap on amber tries again), else the setting
+  const rs = rcState(e), rcOn = rs === "live" || rs === "set";
+  const rcb = btn("rc", "rcb " + rs, () => act({ action: "rc", on: !rcOn, ...ref }), wait);
   rcb.setAttribute("aria-pressed", String(rcOn));
-  rcb.setAttribute("aria-label", "Remote control " + (rcOn ? "on: turn it off" : "off: turn it on"));
+  rcb.setAttribute("aria-label", (RC_SAYS[rs] || "Remote control off") + (rcOn ? ": turn it off" : ": turn it on"));
+  rcb.title = RC_SAYS[rs] || "Remote control off";
   const pwb = btn("", "pw " + (on ? "on" : "off"), async () => {
     if (on) {
       if (!await ask({ title: `Turn ${e.tmux} off?`, text: `What runs in its tmux session ends.`, ok: "Turn off", danger: true })) return;
