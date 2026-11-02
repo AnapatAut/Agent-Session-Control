@@ -493,12 +493,8 @@ function favSheet(e) {
     ["Status", on ? statusText(e) : l.label.replace(/^off since.*/, "Off")], ["Memory", on ? size(e.mem_kb) : ""], ["Permissions", perm], ["tmux", e.tmux], ["Session id", e.session_id], ["Claudes", e.claudes > 1 ? e.claudes : ""],
     ["Last on", full(e.last_on)], ["Last off", full(e.last_off)]]));
   out.push(kids(el("div", null, "acts"),
-    btn("Copy attach", "", async () => {
-      try { await navigator.clipboard.writeText(e.attach); toast("Copied: " + e.attach); }
-      catch (err) { toast(e.attach); }
-    }),
     btn("Rename", "", async () => {
-      const name = await ask({ title: `Rename ${e.tmux}`, text: `The id stays: it becomes NAME-${e.id4}.` + (on ? " An idle claude restarts on the same conversation, so its own name and rc title change too." : ""), ok: "Rename",
+      const name = await ask({ title: `Rename ${e.tmux}`, text: `It becomes NAME-${e.id4}.` + (on ? " If idle, claude restarts with it (same chat)." : ""), ok: "Rename",
         input: { value: e.name, check: (v) => /^[a-z0-9][a-z0-9-]{0,30}$/.test(v) ? "" : "a-z, 0-9 and -, starting with a letter or digit, up to 31" } });
       if (name === null || name === e.name) return;
       await act({ action: "rename", name, ...ref });

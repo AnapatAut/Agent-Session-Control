@@ -257,7 +257,7 @@ out=$(post '{"action":"fav","ref":"'"$pid"'","name":"das"}')
 [ "$(tail -1 <<<"$out")" = 200 ] && ok "fav by pid" || bad "fav failed: $out"
 id=$(state | jq -r '.favorites[0].id4'); TM="das-$id"
 s=$(state)
-jq -e --arg i "$id" '.favorites[0] | .tmux == "das-\($i)" and .state == "on" and .status == "idle" and .mem_kb > 0 and .attach == "tmux attach -t =das-\($i)"' <<<"$s" >/dev/null && ok "state: the favorite, on, idle, its memory, the attach command" || bad "state: favorite wrong: $(jq -c '.favorites[0]' <<<"$s")"
+jq -e --arg i "$id" '.favorites[0] | .tmux == "das-\($i)" and .state == "on" and .status == "idle" and .mem_kb > 0' <<<"$s" >/dev/null && ok "state: the favorite, on, idle, its memory" || bad "state: favorite wrong: $(jq -c '.favorites[0]' <<<"$s")"
 jq -e '.active | length == 0' <<<"$s" >/dev/null && ok "state: no longer in the not-favorited list" || bad "state: still listed as not favorited"
 pp=$(tm list-panes -t "=das-$id:" -F '#{pane_pid}'); rss=$(ps -o rss= -p "$pp" --ppid "$pp" | awk '{ s += $1 } END { print s }')
 jq -e --argjson r "${rss:-0}" '.favorites[0].mem_kb > 0 and .favorites[0].mem_kb < $r' <<<"$s" >/dev/null && ok "state: memory is PSS (shared pages split), under the tree's RSS" || bad "state: memory $(jq '.favorites[0].mem_kb' <<<"$s") vs RSS $rss"

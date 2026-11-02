@@ -280,7 +280,6 @@ def _snapshot():
             "busy": live.busy_reason(e["tmux"], lv, kids, panes, e.get("session_id")) if e["tmux"] in up else "",
             "claudes": sum(1 for x in lv if x["pane"] and x["pane"]["session"] == e["tmux"]),
             "mem_kb": sum(live.tree_mem_kb(p["pane_pid"], kids) for p in panes),
-            "attach": f"tmux attach -t ={e['tmux']}",
         })
     # a claude with a made-up name (folder-NN) goes by its conversation's title, as the Claude apps list it
     active = [{"pid": s["pid"], "session_id": s["session_id"], "claude_name": s["name"], "cwd": s["cwd"],
