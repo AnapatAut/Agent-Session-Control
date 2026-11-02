@@ -428,8 +428,7 @@ function favSheet(e) {
     (e.mode_used === "bypassPermissions" && e.mode_next !== "bypassPermissions" ? " (skip only if set on the machine: asctl mode " + e.id4 + " skip)" : "");
   out.push(kids(el("div", null, "opts"),
     opt("Resurrect", "Bring it back after a reboot or a tmux crash (always with remote control)",
-      sw(e.resurrect, "Resurrect", () => act({ action: "resurrect", on: !e.resurrect, ...ref }), wait)),
-    opt("Permissions", perm, null)));
+      sw(e.resurrect, "Resurrect", () => act({ action: "resurrect", on: !e.resurrect, ...ref }), wait))));
 
   out.push(el("span", "NOTE", "lab"));
   const draft = noteDraft && noteDraft.id4 === e.id4 ? noteDraft.text : e.note;
@@ -452,7 +451,7 @@ function favSheet(e) {
   out.push(kids(el("div", null, "field"), ta, count), save);
 
   out.push(el("span", "SESSION", "lab"), kv([
-    ["Claude says", on ? statusText(e) : ""], ["tmux", e.tmux], ["Session id", e.session_id], ["Claudes", e.claudes > 1 ? e.claudes : ""],
+    ["Claude says", on ? statusText(e) : ""], ["Permissions", perm], ["tmux", e.tmux], ["Session id", e.session_id], ["Claudes", e.claudes > 1 ? e.claudes : ""],
     ["Last on", when(e.last_on)], ["Last off", when(e.last_off)]]));
   out.push(kids(el("div", null, "acts"),
     btn("Copy attach", "", async () => {

@@ -390,7 +390,10 @@ stop_dash; start_dash
 [ "$(token)" = "$TOK1" ] && ok "the token survives a restart (an open page keeps working)" || bad "a new token after restart"
 (post '{"action":"on","id":"'"$id3"'","tmux":"trio-'"$id3"'"}' | tail -1 > "$T/inflight") &
 inf=$!
-sleep 0.3; kill -TERM "$DPID"; wait "$inf"; wait "$DPID" 2>/dev/null; DPID=
+# SIGTERM once the action runs (its tmux session is there; it then waits for claude): a request
+# not yet read when the signal comes is refused, rightly, and says nothing about this
+for _ in $(seq 1 50); do tm has-session -t "=trio-$id3" 2>/dev/null && break; sleep 0.1; done
+kill -TERM "$DPID"; wait "$inf"; wait "$DPID" 2>/dev/null; DPID=
 [ "$(cat "$T/inflight")" = 200 ] && tm has-session -t "=trio-$id3" && ok "SIGTERM waits for a running action to finish" || bad "SIGTERM cut a running action: $(cat "$T/inflight")"
 long="$T/run/long/$(printf 'x%.0s' $(seq 1 120)).sock"
 timeout 5 "$REPO/bin/asctl" dash --socket "$long" --idle 0 2>"$T/err"; rc=$?
