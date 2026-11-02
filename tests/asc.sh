@@ -29,6 +29,8 @@ asctl() { "$REPO/bin/asctl" "$@"; }
 errof() { { "$REPO/bin/asctl" "$@" >/dev/null; } 2>&1; true; }
 REG="$HOME/.local/state/agent-session-control/registry.json"
 jqe() { jq -r "$1" "$REG"; }
+# The arguments of the last claude started (a /rename typed after a start comes later in the log).
+lastargs() { grep ' args=' "$HOME/claude-args.log" | tail -1; }
 # grep that reads all its input: grep -q stops at the first match, and the writer's broken
 # pipe would then fail the pipeline (pipefail), taking the wrong branch of a check.
 seen() { grep "$@" >/dev/null; }
@@ -81,7 +83,7 @@ asctl list | seen "^$id .* off " && ok "list: off" || bad "list: not off"
 echo "== on"
 asctl on "$id" >/dev/null && ok "on" || bad "on failed"
 pid=$(claude_in "das-$id") && ok "claude up in das-$id" || bad "no claude in das-$id"
-tail -1 "$HOME/claude-args.log" | grep -q -- "--resume $SID --name das-$id --permission-mode auto" && ok "started with --resume, --name and the mode" || bad "wrong args: $(tail -1 "$HOME/claude-args.log")"
+lastargs | grep -q -- "--resume $SID --name das-$id --permission-mode auto" && ok "started with --resume, --name and the mode" || bad "wrong args: $(lastargs)"
 [ "$(jqe ".entries[\"$id\"].want_on")" = true ] && ok "want_on true after on" || bad "want_on not true after on"
 asctl on "$id" >/dev/null 2>&1 && bad "a second on accepted" || ok "a second on refused (session exists)"
 tm rename-session -t "=das-$id" moved
@@ -119,12 +121,12 @@ asctl off "$id2" >/dev/null
 asctl rename "$id2" chat >/dev/null && [ "$(jqe ".entries[\"$id2\"].tmux")" = "chat-$id2" ] && ok "rename" || bad "rename failed"
 asctl rename "$id2" 'Bad Name' >/dev/null 2>&1 && bad "a bad name accepted" || ok "a bad name refused"
 asctl mode "$id2" skip >/dev/null && asctl on "$id2" >/dev/null
-tail -1 "$HOME/claude-args.log" | grep -q -- '--permission-mode bypassPermissions' && ok "mode skip starts with bypassPermissions" || bad "mode skip not passed"
+lastargs | grep -q -- '--permission-mode bypassPermissions' && ok "mode skip starts with bypassPermissions" || bad "mode skip not passed"
 asctl off "$id2" >/dev/null
 asctl mode "$id2" sudo >/dev/null 2>&1 && bad "an unknown mode accepted" || ok "an unknown mode refused"
 # A start follows the mode the conversation last ran in (its transcript's last permissionMode).
 pm() { printf '{"type":"%s","permissionMode":"%s","sessionId":"%s"}\n' "${2:-permission-mode}" "$1" "$SID2" >> "$HOME/.claude/projects/-x/$SID2.jsonl"; }
-started_with() { asctl on "$id2" >/dev/null; tail -1 "$HOME/claude-args.log" | grep -o -- '--permission-mode [A-Za-z]*' | cut -d' ' -f2; asctl off "$id2" --force >/dev/null; }
+started_with() { asctl on "$id2" >/dev/null; lastargs | grep -o -- '--permission-mode [A-Za-z]*' | cut -d' ' -f2; asctl off "$id2" --force >/dev/null; }
 pm acceptEdits; [ "$(started_with)" = acceptEdits ] && ok "mode: follows the transcript (acceptEdits, set inside claude)" || bad "mode not followed"
 pm bypassPermissions; [ "$(started_with)" = bypassPermissions ] && ok "mode: last ran in skip, the favorite set to skip: skip" || bad "skip with mode skip"
 asctl mode "$id2" auto >/dev/null
@@ -166,10 +168,11 @@ printf '{"type":"user","message":{"role":"user","content":"go"}}\n' > "$AG/agent
 asctl rc "$id2" on --next-start >/dev/null
 out=$(asctl restart "$id2" 2>&1); c2=$(claude_in "talk2-$id2")
 [ -n "$c2" ] && [ "$c2" != "$c1" ] && [ "$(jqe ".entries[\"$id2\"].session_id")" = "$SID2" ] \
-	&& tail -1 "$HOME/claude-args.log" | seen -- "--resume $SID2 --name talk2-$id2 .*--remote-control talk2-$id2" \
-	&& ok "restart: a new claude on the same conversation, with the new name and rc title (finished, ended or old subagents do not hold it)" || bad "restart: $out / $(tail -1 "$HOME/claude-args.log")"
+	&& lastargs | seen -- "--resume $SID2 --name talk2-$id2 .*--remote-control talk2-$id2" \
+	&& ok "restart: a new claude on the same conversation, with the new name and rc title (finished, ended or old subagents do not hold it)" || bad "restart: $out / $(lastargs)"
+grep "pid=$c2 " "$HOME/claude-args.log" | seen "line: /rename talk2-$id2" && ok "a start with rc sends its name to claude.ai (/rename, once rc is up)" || bad "no /rename after an rc start: $(grep "pid=$c2 " "$HOME/claude-args.log")"
 out=$(asctl rename "$id2" chat --restart 2>&1); c3=$(claude_in "chat-$id2")
-[ -n "$c3" ] && [ "$c3" != "$c2" ] && tail -1 "$HOME/claude-args.log" | seen -- "--name chat-$id2" && ok "rename --restart of an idle claude: restarted with the new name" || bad "rename --restart: $out"
+[ -n "$c3" ] && [ "$c3" != "$c2" ] && lastargs | seen -- "--name chat-$id2" && ok "rename --restart of an idle claude: restarted with the new name" || bad "rename --restart: $out"
 touch "$HOME/fake-wait"; sleep 0.8
 out=$(errof restart "$id2"); seen 'its claude is waiting' <<<"$out" && [ "$(claude_in "chat-$id2")" = "$c3" ] && ok "restart: not while claude waits (a question or dialog would be lost)" || bad "restart while waiting: $out"
 rm -f "$HOME/fake-wait" "$AG"/*
@@ -269,7 +272,7 @@ SID3=33333333-aaaa-4bbb-8ccc-eeeeeeeeeeee
 W3="$T/w#{pane_id}#(true)"; mkdir -p "$W3"; printf '%s\n' "$W3" >> "$HOME/fake-trusted"
 printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W3" "$SID3" > "$HOME/.claude/projects/-x/$SID3.jsonl"
 asctl fav "$SID3" --name fmt >/dev/null; id7=$(jq -r '.entries[] | select(.name == "fmt") | .id4' "$REG")
-asctl on "$id7" >/dev/null && grep -qF "cwd=$W3 " "$HOME/claude-args.log" && ok "claude started in the literal folder (tmux formats not expanded)" || bad "the folder was expanded by tmux: $(tail -1 "$HOME/claude-args.log")"
+asctl on "$id7" >/dev/null && grep -qF "cwd=$W3 " "$HOME/claude-args.log" && ok "claude started in the literal folder (tmux formats not expanded)" || bad "the folder was expanded by tmux: $(lastargs)"
 asctl off "$id7" --force >/dev/null
 
 echo "== memory gate"
@@ -284,10 +287,10 @@ asctl off "$id2" --force >/dev/null
 mem 32000000 16000000
 echo "== rc, resurrect, note"
 asctl rc "$id2" on --title "My chat" >/dev/null && [ "$(jqe ".entries[\"$id2\"].rc")" = true ] && [ "$(jqe ".entries[\"$id2\"].rc_title")" = "My chat" ] && ok "rc on with a title" || bad "rc on failed"
-asctl on "$id2" >/dev/null; tail -1 "$HOME/claude-args.log" | seen -- '--remote-control My chat' && ok "started with --remote-control and its title" || bad "rc not passed: $(tail -1 "$HOME/claude-args.log")"
+asctl on "$id2" >/dev/null; lastargs | seen -- '--remote-control My chat' && ok "started with --remote-control and its title" || bad "rc not passed: $(lastargs)"
 asctl off "$id2" --force >/dev/null
 asctl rc "$id2" off >/dev/null; asctl on "$id2" >/dev/null
-tail -1 "$HOME/claude-args.log" | seen -- '--remote-control' && bad "rc off still passed --remote-control" || ok "rc off: no --remote-control"
+lastargs | seen -- '--remote-control' && bad "rc off still passed --remote-control" || ok "rc off: no --remote-control"
 echo "== rc now: typed into an idle claude (asc/rclive.py)"
 pane=$(tm list-panes -t "=chat-$id2:" -F '#{pane_id}')
 bridge() { jq -r 'select(.name == "chat-'"$id2"'") | .bridgeSessionId // ""' "$HOME"/.claude/sessions/*.json; }
@@ -335,7 +338,7 @@ touch "$HOME/fake-two-lines"; tm send-keys -t "$pane" x BSpace; sleep 0.5
 out=$(asctl rc "$id2" on); seen "not changed now: its screen does not show claude's prompt" <<<"$out" && [ -z "$(bridge)" ] \
 	&& ok "a prompt of two lines (the first empty) is not empty" || bad "two lines: $out"
 rm -f "$HOME/fake-two-lines"; tm send-keys -t "$pane" x BSpace; sleep 0.5
-[ "$(grep 'line: ' "$HOME/claude-args.log" | grep -vc 'line: /rename ')" = 4 ] && [ "$(grep -c 'line: /rename ' "$HOME/claude-args.log")" = 2 ] && ok "nothing else ever reached its prompt (four rc lines, two /rename)" || bad "lines entered: $(grep 'line: ' "$HOME/claude-args.log")"
+[ "$(grep 'line: ' "$HOME/claude-args.log" | grep -vc 'line: /rename ')" = 4 ] && ok "nothing else ever reached its prompt (four rc lines, besides /rename)" || bad "lines entered: $(grep 'line: ' "$HOME/claude-args.log")"
 asctl rc "$id2" off --next-start >/dev/null  # the tests below start from rc off
 asctl off "$id2" --force >/dev/null
 asctl rc "$id2" on --title=-x >/dev/null 2>&1 && bad "a title starting with - accepted" || ok "a title starting with - refused (claude would read an option)"
@@ -397,6 +400,7 @@ asc/rclive.py %%% if menu(under(scr)) - menu(before) else None %%% if under(scr)
 asc/rclive.py %%%         None if offers_cmd(scr) else %%%         None if True else
 asc/rclive.py %%%     if not wait_for(lambda: (session(s["pid"]) or {}).get("name") == name, confirm): %%%     if False:
 asc/cli.py %%%             why = rclive.rename(s, new) %%%             why = None
+asc/cli.py %%%     if "--remote-control" in argv and %%%     if False and
 asc/rclive.py %%%     if t and cmd.startswith(t): %%%     if t:
 asc/rclive.py %%%             if not dialog_open(pid, scr) or selected(scr, DISCONNECT): %%%             if not dialog_open(pid, scr):
 asc/rclive.py %%%     l = next((l for l in reversed(bottom(scr)) if label in l), "") %%%     l = next((l for l in bottom(scr) if "❯" in l and label in l), "")

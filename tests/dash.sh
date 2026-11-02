@@ -70,6 +70,8 @@ token() { dc "http://x$PREFIX/" | sed -n 's/.*name="asctl-token" content="\([^"]
 post() { dc -w '\n%{http_code}' -X POST -H "Origin: https://$HOST" -H "X-Asctl-Token: $TOK" \
 	-H 'Content-Type: application/json' --data "$1" "http://x$PREFIX/api/action"; }
 state() { dc "http://x$PREFIX/api/state"; }
+# The arguments of the last claude started (a /rename typed after a start comes later in the log).
+lastargs() { grep ' args=' "$HOME/claude-args.log" | tail -1; }
 start_dash() {
 	"$REPO/bin/asctl" dash --idle "${1:-0}" 2>"$T/dash.err" & DPID=$!
 	local i; for i in $(seq 1 50); do [ "$(code "http://x$PREFIX/app.css")" = 200 ] && return 0; sleep 0.1; done; return 1
@@ -290,7 +292,7 @@ state | jq -e '.favorites[0].state == "off"' >/dev/null && ok "state: off" || ba
 [ "$(post '{"action":"mode","id":"'"$id"'","tmux":"'"$TM"'","mode":"manual"}' | tail -1)" = 200 ] && ok "mode manual from the page" || bad "mode manual failed"
 asctl mode "$id" skip >/dev/null
 [ "$(post '{"action":"on","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] && ok "on (a favorite in skip still starts from the page)" || bad "on failed"
-tail -1 "$HOME/claude-args.log" | seen -- '--permission-mode bypassPermissions' && ok "started with its skip mode" || bad "skip not passed: $(tail -1 "$HOME/claude-args.log")"
+lastargs | seen -- '--permission-mode bypassPermissions' && ok "started with its skip mode" || bad "skip not passed: $(lastargs)"
 touch "$HOME/fake-busy"; sleep 0.6
 [ "$(post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'","force":"yes"}' | tail -1)" = 409 ] && ok "force only when it is true (\"yes\" is not)" || bad "force taken from a non-boolean"
 [ "$(post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'","force":true}' | tail -1)" = 200 ] && ok "off with force while busy" || bad "off --force failed"

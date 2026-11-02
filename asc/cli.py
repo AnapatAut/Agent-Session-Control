@@ -337,9 +337,24 @@ def _on(id4, force_memory, say=True):
             x = registry.find(data, e["id4"])
             x["lineage"] = ([x["session_id"]] + x.get("lineage", []))[:5]
             x["session_id"] = s["session_id"]
+    if "--remote-control" in argv and (e.get("rc_title") or e["tmux"]) == e["tmux"]:
+        why = send_title(s, e["tmux"])
+        if why:
+            out(f"{e['tmux']}: its name not sent to claude.ai: {why}")
     if say:
         out(f"on: {e['tmux']} (claude {s['pid']}, session {s['session_id']})")
     return 0
+
+
+def send_title(s, name, wait=20):
+    """/rename NAME once claude's remote control is up: a resumed conversation reconnects to its
+    claude.ai session, which keeps its old title, and an old background-job record of claude's
+    own can put an old name back at each start; only /rename sends a name to claude.ai."""
+    if not rclive.wait_for(lambda: (rclive.session(s["pid"]) or {}).get("rc"), wait):
+        return "its remote control did not come up"
+    if not rclive.wait_for(lambda: rclive.guard(s) is None, 10):
+        return rclive.guard(s) or "claude was not ready"
+    return rclive.rename(s, name)
 
 
 def cmd_off(args):
