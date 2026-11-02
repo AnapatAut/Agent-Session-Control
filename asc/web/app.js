@@ -183,7 +183,7 @@ function draw() {
   $("mem-used").style.width = Math.max(0, Math.min(100, used)) + "%";
   const onKb = s.favorites.filter(isOn).reduce((a, e) => a + (e.mem_kb || 0), 0);
   $("mem-det").replaceChildren(document.createTextNode(`${size(m.total_kb - m.avail_kb)} of ${size(m.total_kb)} used`), el("br"),
-    document.createTextNode(`${s.on} on use ${size(onKb) || "0 MB"}`));
+    document.createTextNode(`${s.on} favorite${s.on === 1 ? "" : "s"} on, using ${size(onKb) || "0 MB"}`));
 
   const warn = [];
   if (m.warn) warn.push("Memory is over 85% used; a start needs it at most 80% used.");
