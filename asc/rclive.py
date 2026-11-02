@@ -13,6 +13,8 @@ Continue selected, the session status "waiting"): once that dialog is open at th
 the screen, Up until Disconnect is selected, checked, then Enter. Either way the change is
 confirmed from the session file (bridgeSessionId). Seen with Claude Code 2.1.316.
 """
+import glob
+import os
 import re
 import time
 
@@ -184,17 +186,31 @@ def rename(s, name, confirm=5):
     claude.ai session (the rc title there): None when done, else why not."""
     if not TITLE.fullmatch(name):
         return "the name has characters asctl does not type (only letters, digits, space, . _ -)"
-    said = f"Session renamed to: {name}"
-    seen = lambda: plain(screen(s["pane"]["pane_id"])).count(said)
+    # claude's answer, as its transcript records it: the session file alone says nothing when the
+    # name is the same (a rename only to send it to claude.ai again), and the screen can hold an
+    # older answer (a resumed or branched conversation shows its last turns)
+    said = f"<local-command-stdout>Session renamed to: {name}</local-command-stdout>".encode()
+    seen = lambda: answers(s["session_id"], said)
     n = seen()
     why = enter(s, f"/rename {name}", no_menu)
     if why:
         return why
-    # claude's answer under the command: the session file alone says nothing when the name is
-    # the same (a rename only to send it to claude.ai again)
     if not wait_for(lambda: seen() > n and (session(s["pid"]) or {}).get("name") == name, confirm):
-        return "typed, but its session file does not show the new name yet; check the session"
+        return "typed, but claude did not record the new name; check the session"
     return None
+
+
+def answers(sid, text, tail=1 << 18):
+    """How often text is in the end of the conversation's transcript (in every folder that has one)."""
+    n = 0
+    for path in glob.glob(os.path.expanduser(f"~/.claude/projects/*/{sid}.jsonl")):
+        f = live.open_regular(path)
+        if f is None:
+            continue
+        with f:
+            f.seek(max(0, os.fstat(f.fileno()).st_size - tail))
+            n += f.read(tail).count(text)
+    return n
 
 
 def switch(s, on, title, confirm=10):

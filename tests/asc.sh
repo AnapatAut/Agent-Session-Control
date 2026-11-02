@@ -92,7 +92,7 @@ tm rename-session -t "=moved" "das-$id"
 
 echo "== busy"
 touch "$HOME/fake-busy"; sleep 0.6
-errof off "$id" | grep -q 'busy: the claude in pane .* is working' && ok "off refused: claude busy" || bad "off not refused while busy"
+errof off "$id" | grep -q 'busy: claude is working' && ok "off refused: claude busy" || bad "off not refused while busy"
 rm -f "$HOME/fake-busy"; sleep 0.6
 tm new-window -t "=das-$id:" -- sleep 300
 sleep 0.5
@@ -151,7 +151,7 @@ seen 'not changed now: a menu opened under its prompt; nothing was sent' <<<"$ou
 rm -f "$HOME/fake-menu-on"
 touch "$HOME/fake-no-rename"
 out=$(asctl rename "$id2" talk4 2>&1)
-seen "not changed now: typed, but its session file does not show the new name yet" <<<"$out" && ok "rename: typed but not taken by claude: said so" || bad "rename not taken: $out"
+seen "not changed now: typed, but claude did not record the new name" <<<"$out" && ok "rename: typed but not taken by claude: said so" || bad "rename not taken: $out"
 rm -f "$HOME/fake-no-rename"
 asctl rename "$id2" talk >/dev/null
 touch "$HOME/fake-task"; sleep 0.8
@@ -296,7 +296,7 @@ pane=$(tm list-panes -t "=chat-$id2:" -F '#{pane_id}')
 bridge() { jq -r 'select(.name == "chat-'"$id2"'") | .bridgeSessionId // ""' "$HOME"/.claude/sessions/*.json; }
 screen() { tm capture-pane -p -t "$pane"; }
 out=$(asctl rc "$id2" on); seen 'live now' <<<"$out" && [ -n "$(bridge)" ] && seen -x "pid=[0-9]* line: /remote-control My chat" "$HOME/claude-args.log" \
-	&& ok "rc on: /remote-control with its title typed, confirmed from the session file" || bad "rc on live: $out / $(bridge)"
+	&& ok "rc on: /remote-control with its title typed, confirmed from the session file" || bad "rc on live: $out / $(bridge) / $(screen | tail -6 | tr "\n" "|")"
 out=$(asctl rc "$id2" on); seen 'live already' <<<"$out" && [ "$(grep -c 'line: /remote-control' "$HOME/claude-args.log")" = 1 ] && ok "rc on while live: nothing typed" || bad "rc on again: $out"
 out=$(asctl rc "$id2" off); seen 'off now' <<<"$out" && [ -z "$(bridge)" ] && seen 'rc: disconnected' "$HOME/claude-args.log" && [ "$(jqe ".entries[\"$id2\"].rc")" = false ] \
 	&& ok "rc off: the dialog, Disconnect selected and confirmed" || bad "rc off live: $out / $(bridge)"
@@ -399,6 +399,7 @@ asc/rclive.py %%% if menu(under(scr)) - menu(before) else None %%% if False else
 asc/rclive.py %%% if menu(under(scr)) - menu(before) else None %%% if under(scr) != before else None
 asc/rclive.py %%%         None if offers_cmd(scr) else %%%         None if True else
 asc/rclive.py %%%     if not wait_for(lambda: seen() > n and (session(s["pid"]) or {}).get("name") == name, confirm): %%%     if False:
+asc/rclive.py %%%             n += f.read(tail).count(text) %%%             n = 1
 asc/cli.py %%%             why = rclive.rename(s, new) %%%             why = None
 asc/cli.py %%%     if "--remote-control" in argv and %%%     if False and
 asc/rclive.py %%%     if t and cmd.startswith(t): %%%     if t:

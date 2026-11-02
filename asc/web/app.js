@@ -450,11 +450,6 @@ function favSheet(e) {
   pwb.setAttribute("aria-label", on ? "On: turn it off" : "Off: turn it on");
   pwb.title = on ? "Turn off" : "Turn on";
   out.push(kids(el("div", null, "btns"), pwb, rcb));  // the power button tells on or off
-  if (on && e.claude_name && e.claude_name !== e.tmux) {  // renamed while busy, or favorited under another name
-    out.push(kids(el("div", null, "warn"),
-      el("div", `Claude still goes by ${e.claude_name}` + (e.claude_name_kept ? " (an old job record of its own sets it at each start)." : ".")),
-      btn("Rename claude", "", () => act({ action: "rename", name: e.name, ...ref }), wait)));
-  }
   if (l.why) out.push(el("div", l.why, "warn " + (l.dot === "bad" ? "bad" : "")));
   if (on && e.busy) out.push(el("div", "Busy: " + e.busy + ". Off asks before forcing it.", "warn"));
 
@@ -489,7 +484,7 @@ function favSheet(e) {
   out.push(kids(el("div", null, "field"), ta, count), save);
 
   out.push(el("span", "SESSION", "lab"), kv([
-    ["Status", on ? statusText(e) : l.label.replace(/^off since.*/, "Off")], ["Memory", on ? size(e.mem_kb) : ""], ["Permissions", perm], ["tmux", e.tmux], ["Session id", e.session_id], ["Claudes", e.claudes > 1 ? e.claudes : ""],
+    ["Status", on ? statusText(e) : l.label.replace(/^off since.*/, "Off")], ["Memory", on ? size(e.mem_kb) : ""], ["Permissions", perm], ["Claude's name", on && e.claude_name !== e.tmux ? e.claude_name + (e.claude_name_kept ? " (from an old job record of its own)" : "") : ""], ["tmux", e.tmux], ["Session id", e.session_id], ["Claudes", e.claudes > 1 ? e.claudes : ""],
     ["Last on", full(e.last_on)], ["Last off", full(e.last_off)]]));
   out.push(kids(el("div", null, "acts"),
     btn("Rename", "", async () => {

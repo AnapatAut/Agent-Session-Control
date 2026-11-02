@@ -282,7 +282,7 @@ rm -f "$HOME/fake-task"; sleep 0.8
 state | jq -e '.favorites[0] | .status == "idle" and .task == ""' >/dev/null && ok "state: idle again once the command ended" || bad "state: still working after the command"
 touch "$HOME/fake-busy"; sleep 0.6
 out=$(post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'"}')
-[ "$(tail -1 <<<"$out")" = 409 ] && seen 'busy: the claude in pane' <<<"$out" && ok "off refused while busy, with the reason" || bad "off while busy: $out"
+[ "$(tail -1 <<<"$out")" = 409 ] && seen 'busy: claude is working' <<<"$out" && ok "off refused while busy, with the reason" || bad "off while busy: $out"
 state | jq -e '.favorites[0].busy | test("is working")' >/dev/null && ok "state: busy reason shown" || bad "state: no busy reason"
 rm -f "$HOME/fake-busy"; sleep 0.6
 [ "$(post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] && ok "off" || bad "off failed"
@@ -378,7 +378,7 @@ tm new-window -t "=trio-$id3:" -c "$W" -- "$ASC_CLAUDE" --session-id 55555555-66
 for _ in $(seq 1 25); do state | jq -e '.favorites[] | select(.id4 == "'"$id3"'") | .claudes == 2' >/dev/null && break; sleep 0.2; done
 state | jq -e '.favorites[] | select(.id4 == "'"$id3"'") | .claudes == 2' >/dev/null && ok "state: two claudes in the favorite's session" || bad "state: claude count wrong"
 out=$(post '{"action":"off","id":"'"$id3"'","tmux":"trio-'"$id3"'"}')
-[ "$(tail -1 <<<"$out")" = 409 ] && seen 'runs another claude' <<<"$out" && ok "off refused: an idle second claude would end too" || bad "off would end a second claude: $out"
+[ "$(tail -1 <<<"$out")" = 409 ] && seen 'another claude runs in it' <<<"$out" && ok "off refused: an idle second claude would end too" || bad "off would end a second claude: $out"
 post '{"action":"off","id":"'"$id3"'","tmux":"trio-'"$id3"'","force":true}' >/dev/null
 
 tm new-session -d -s quad -c "$W" -- "$ASC_CLAUDE" --session-id 99999999-aaaa-4bbb-8ccc-dddddddddddd

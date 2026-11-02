@@ -285,17 +285,17 @@ def busy_reason(session_name, lv, kids=None, pane_list=None, own_sid=None):
             if name == "claude":
                 s = known.get(pid)
                 if s is None:
-                    return f"pane {p['pane_id']} runs a claude asctl cannot read ({pid})"
+                    return f"it runs a claude asctl cannot read (pid {pid})"
                 if s["status"] == "busy":
-                    return f"the claude in pane {p['pane_id']} is working"
+                    return "claude is working"
                 t = claude_tasks(s, kids)
                 if t:
-                    return f"the claude in pane {p['pane_id']} {t}"
+                    return f"claude {t}"
                 if own_sid and s["session_id"] != own_sid:
-                    return f"pane {p['pane_id']} runs another claude ({pid}, session {s['session_id']})"
+                    return f"another claude runs in it (pid {pid}, session {s['session_id']})"
                 continue
             if name in WRAPPERS:
                 todo += kids.get(pid, [])
                 continue
-            return f"pane {p['pane_id']} runs {name}"
+            return f"it runs {name}"
     return ""
