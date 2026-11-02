@@ -564,6 +564,7 @@ function openSheet(kind, key) {
   // the page behind is out of reach (Tab, screen readers) while the sheet is open
   for (const c of document.body.children) if (c.id !== "scrim" && c.id !== "toast" && c.id !== "dscrim") c.inert = true;
   $("scrim").classList.add("on");
+  document.documentElement.classList.add("locked");  // the page under the sheet does not scroll
   $("sheet").scrollTop = 0;
   $("sheet").querySelector(".x").focus();
   if (first) history.pushState({ sheet: true }, "");  // the phone's Back closes the sheet
@@ -573,6 +574,7 @@ function closeSheet(fromBack) {
   if (ask.cancel) ask.cancel();
   sheetOf = null;
   $("scrim").classList.remove("on");
+  document.documentElement.classList.remove("locked");
   for (const c of document.body.children) c.inert = false;
   if (opener && opener.isConnected) opener.focus({ preventScroll: true });
   opener = null;

@@ -118,8 +118,10 @@ details.top[open] summary::after { transform: rotate(90deg); }
 
 /* Details: the bottom sheet of :8989 */
 .scrim { position: fixed; inset: 0; background: rgba(20,20,40,.45); display: none; align-items: flex-end; justify-content: center; z-index: 9; }
-.scrim.on { display: flex; }
+.scrim.on { display: flex; overscroll-behavior: contain; touch-action: none; }
+html.locked, html.locked body { overflow: hidden; }
 .sheet { position: relative; background: #fff; width: 100%; max-width: 520px; max-height: 90vh; overflow: auto;
+         overscroll-behavior: contain; touch-action: pan-y;
          border-radius: 28px 28px 0 0; padding: 22px 22px max(22px, env(safe-area-inset-bottom)); animation: up .22s ease-out; }
 @keyframes up { from { transform: translateY(40px); opacity: .6; } to { transform: none; opacity: 1; } }
 @media (min-width: 600px) { .sheet { border-radius: 28px; margin-bottom: 24px; } .scrim { align-items: center; } }
