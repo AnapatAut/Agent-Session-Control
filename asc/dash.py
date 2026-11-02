@@ -256,6 +256,9 @@ def _snapshot():
     count = {}
     for s in lv:
         count[s["session_id"]] = count.get(s["session_id"], 0) + 1
+        # an idle claude (or one in a ! shell) that still runs a command or a subagent is working
+        s["task"] = live.claude_tasks(s, kids) if s["status"] in ("idle", "shell") else ""
+    shown = lambda s: ("busy", None) if s["task"] else (s["status"], s["status_at"])  # status, since
     favs, fav_sids, fav_tmux = [], set(), set()
     for e in sorted(data["entries"].values(), key=lambda e: e["tmux"]):
         st, s = cli.state_of(e, lv, up)
@@ -276,8 +279,8 @@ def _snapshot():
             "mode_next": cli.start_mode(e),
             "want_on": bool(e.get("want_on")), "note": e.get("note") or "",
             "last_on": e.get("last_on"), "last_off": e.get("last_off"), "state": st,
-            "pid": s["pid"] if s else None, "status": s["status"] if s else None,
-            "waiting_for": s["waiting_for"] if s else "", "status_at": s["status_at"] if s else None,
+            "pid": s["pid"] if s else None, "status": shown(s)[0] if s else None, "task": s["task"] if s else "",
+            "waiting_for": s["waiting_for"] if s else "", "status_at": shown(s)[1] if s else None,
             "busy": live.busy_reason(e["tmux"], lv, kids, panes, e.get("session_id")) if e["tmux"] in up else "",
             "claudes": sum(1 for x in lv if x["pane"] and x["pane"]["session"] == e["tmux"]),
             "mem_kb": sum(live.tree_mem_kb(p["pane_pid"], kids) for p in panes),
@@ -285,7 +288,7 @@ def _snapshot():
     # a claude with a made-up name (folder-NN) goes by its conversation's title, as the Claude apps list it
     active = [{"pid": s["pid"], "session_id": s["session_id"], "claude_name": s["name"], "cwd": s["cwd"],
                "name": (s["derived"] or not s["name"]) and past.title(s["session_id"]) or s["name"],
-               "status": s["status"], "waiting_for": s["waiting_for"], "status_at": s["status_at"],
+               "status": shown(s)[0], "waiting_for": s["waiting_for"], "status_at": shown(s)[1], "task": s["task"],
                "tmux": s["pane"]["session"] if s["pane"] else None,
                "pane": s["pane"]["pane_id"] if s["pane"] else None,
                "duplicate": count.get(s["session_id"], 0) > 1}
@@ -329,9 +332,7 @@ def action_argv(a):
     if kind == "forget":
         return ["forget", ref]
     if kind == "rename":
-        return ["rename", ref, registry.check_name(_text(a.get("name"))), "--restart"]
-    if kind == "restart":
-        return ["restart", ref]
+        return ["rename", ref, registry.check_name(_text(a.get("name")))]
     if kind == "mode":
         if a.get("mode") not in WEB_MODES:
             raise RegistryError("from the page the mode can be auto or manual; skip only with asctl mode ID skip")

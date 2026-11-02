@@ -55,7 +55,8 @@ function when(ts) {
 function statusText(x) {
   if (!x.status) return "";
   const [label] = STATUS[x.status] || STATUS.unknown;
-  return label + (x.waiting_for ? " (" + x.waiting_for + ")" : "") +
+  const why = x.waiting_for || x.task;  // what claude waits for, or what it still runs while idle
+  return label + (why ? " (" + why + ")" : "") +
     (x.status_at ? " since " + hms(new Date(x.status_at * 1000)) : "");
 }
 function ago(ts) {
@@ -449,14 +450,10 @@ function favSheet(e) {
   pwb.setAttribute("aria-label", on ? "On: turn it off" : "Off: turn it on");
   pwb.title = on ? "Turn off" : "Turn on";
   out.push(kids(el("div", null, "btns"), pwb, rcb));  // the power button tells on or off
-  if (on && e.claude_name && e.claude_name !== e.tmux && e.claude_name_kept) {
-    out.push(el("div", `Claude keeps the name ${e.claude_name} from an old job record of its own; a restart does not change it.`, "warn"));
-  } else if (on && e.claude_name && e.claude_name !== e.tmux) {  // renamed while it ran: the name comes with a restart
-    out.push(kids(el("div", null, "warn"), el("div", `Still running as ${e.claude_name}. Restart to use the new name.`),
-      btn("Restart", "", async () => {
-        if (!await ask({ title: `Restart ${e.tmux}?`, text: "Its claude stops and starts again on the same conversation. Only when it is idle and runs no command or subagent.", ok: "Restart" })) return;
-        await act({ action: "restart", ...ref });
-      }, wait)));
+  if (on && e.claude_name && e.claude_name !== e.tmux) {  // renamed while busy, or favorited under another name
+    out.push(kids(el("div", null, "warn"),
+      el("div", `Claude still goes by ${e.claude_name}` + (e.claude_name_kept ? " (an old job record of its own sets it at each start)." : ".")),
+      btn("Rename claude", "", () => act({ action: "rename", name: e.name, ...ref }), wait)));
   }
   if (l.why) out.push(el("div", l.why, "warn " + (l.dot === "bad" ? "bad" : "")));
   if (on && e.busy) out.push(el("div", "Busy: " + e.busy + ". Off asks before forcing it.", "warn"));
@@ -496,7 +493,7 @@ function favSheet(e) {
     ["Last on", full(e.last_on)], ["Last off", full(e.last_off)]]));
   out.push(kids(el("div", null, "acts"),
     btn("Rename", "", async () => {
-      const name = await ask({ title: `Rename ${e.tmux}`, text: `It becomes NAME-${e.id4}.` + (on ? " If idle, claude restarts with it (same chat)." : ""), ok: "Rename",
+      const name = await ask({ title: `Rename ${e.tmux}`, text: `It becomes NAME-${e.id4}.` + (on ? " If idle, claude takes it too, also in claude.ai." : ""), ok: "Rename",
         input: { value: e.name, check: (v) => /^[a-z0-9][a-z0-9-]{0,30}$/.test(v) ? "" : "a-z, 0-9 and -, starting with a letter or digit, up to 31" } });
       if (name === null || name === e.name) return;
       await act({ action: "rename", name, ...ref });

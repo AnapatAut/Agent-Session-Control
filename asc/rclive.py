@@ -147,15 +147,14 @@ def take_back(pane, cmd):
     return "nothing was sent, but its prompt now holds " + (repr(t) if t else "something asctl cannot read") + "; check it"
 
 
-def switch(s, on, title, confirm=10):
-    """Turn remote control of the live claude s on or off now: None when done, else why not."""
-    if on and not TITLE.fullmatch(title):
-        return "its title has characters asctl does not type (only letters, digits, space, . _ -)"
+def enter(s, cmd, check):
+    """Type cmd into the idle claude s and press Enter, when the screen allows it: None when
+    Enter was pressed, else why not (what was typed taken back). check(scr, before): why the
+    screen with cmd typed must not take Enter, or None."""
     why = guard(s)
     if why:
         return why
     pid, pane = s["pid"], s["pane"]["pane_id"]
-    cmd = f"{CMD} {title}" if on else CMD
     before = under(steady(pane))
     tmuxctl.type_pane(pane, cmd)
     wait_for(lambda: prompt_text(screen(pane)) == cmd, 2)
@@ -166,15 +165,42 @@ def switch(s, on, title, confirm=10):
         why = "its pane went into copy mode"
     elif status(pid) != "idle":
         why = "claude did not stay idle"
-    elif on and menu(under(scr)) - menu(before):
-        # a menu would take Enter for its own entry; other changes there are claude's own (its
-        # mode line drops "← 1 agent" once the prompt holds text)
-        why = "a menu opened under its prompt"
-    elif not on and not offers_cmd(scr):
-        why = "its command menu did not offer /remote-control first"
+    else:
+        why = check(scr, before)
     if why:
         return why + "; " + take_back(pane, cmd)
     tmuxctl.send_pane(pane, "Enter")
+    return None
+
+
+def no_menu(scr, before):
+    # a menu would take Enter for its own entry; other changes there are claude's own (its
+    # mode line drops "← 1 agent" once the prompt holds text)
+    return "a menu opened under its prompt" if menu(under(scr)) - menu(before) else None
+
+
+def rename(s, name, confirm=5):
+    """Give the live claude s a new name now with /rename, which claude also sends to its
+    claude.ai session (the rc title there): None when done, else why not."""
+    if not TITLE.fullmatch(name):
+        return "the name has characters asctl does not type (only letters, digits, space, . _ -)"
+    why = enter(s, f"/rename {name}", no_menu)
+    if why:
+        return why
+    if not wait_for(lambda: (session(s["pid"]) or {}).get("name") == name, confirm):
+        return "typed, but its session file does not show the new name yet; check the session"
+    return None
+
+
+def switch(s, on, title, confirm=10):
+    """Turn remote control of the live claude s on or off now: None when done, else why not."""
+    if on and not TITLE.fullmatch(title):
+        return "its title has characters asctl does not type (only letters, digits, space, . _ -)"
+    pid, pane = s["pid"], s["pane"]["pane_id"]
+    why = enter(s, f"{CMD} {title}" if on else CMD, no_menu if on else lambda scr, before: (
+        None if offers_cmd(scr) else "its command menu did not offer /remote-control first"))
+    if why:
+        return why
     if not on:
         if not wait_for(lambda: dialog_open(pid, screen(pane)), 5):
             return "no Disconnect dialog appeared; check the session"

@@ -118,6 +118,7 @@ enter() {
 		if [ -z "$rc" ]; then rc=session_live; said="/remote-control is active (no name)"
 		elif [ -e "$HOME/fake-slow-dialog" ]; then pend=$(($(now_ms) + 1500)); said="quoted:   ❯ 1. Disconnect this session"
 		else dialog=1; sel=2; fi ;;
+	"/rename "*) [ -e "$HOME/fake-no-rename" ] || { name=${buf#/rename }; src=""; said="Session renamed to: $name"; } ;;
 	"/remote-control "*) if [ -z "$rc" ]; then rc=session_live; said="/remote-control is active · ${buf#/remote-control }"; fi ;;
 	*) said="> $buf" ;;
 	esac

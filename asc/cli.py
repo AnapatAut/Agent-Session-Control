@@ -8,8 +8,9 @@
   asctl on ID [--force-memory]     start it: a tmux session NAME-ID in its folder, resumed;
                                    refused when memory is short (asc/memory.py) unless forced
   asctl off ID [--force]           end it: claude gets SIGTERM, then its tmux session closes
-  asctl rename ID NAME [--restart] a new name (the tmux session too, if it runs); --restart
-                                   restarts its claude, if idle, so its name and rc title follow
+  asctl rename ID NAME [--restart] a new name (the tmux session too, if it runs); a running
+                                   claude, when idle, gets /rename NAME, also its claude.ai title
+                                   (--restart: restart it instead)
   asctl restart ID                 off and on again on the same conversation, only when its
                                    claude is idle and runs no command or subagent
   asctl mode ID auto|manual|skip   permission mode when its transcript names none; a start
@@ -434,7 +435,13 @@ def cmd_rename(args):
         if not s or s["name"] == new:
             out(f"renamed: {new}")
         elif not args.restart:
-            out(f"renamed: {new} (claude's own name and rc title change at its next start)")
+            # /rename: claude takes the name at once and sends it to its claude.ai session (a
+            # restart would not: --resume reconnects to that session, which keeps its title)
+            why = rclive.rename(s, new)
+            if why:
+                out(f"renamed to {new}; claude's own name not changed now: {why}. Rename again once it is idle")
+            else:
+                out(f"renamed to {new}, claude and its claude.ai title too")
         else:
             try:
                 if _restart(id4) != 0:
@@ -554,7 +561,7 @@ def main(argv=None):
     a = sub.add_parser("rename")
     a.add_argument("id")
     a.add_argument("name")
-    a.add_argument("--restart", action="store_true", help="restart its claude for the new name, if idle")
+    a.add_argument("--restart", action="store_true", help="restart its claude instead of /rename (a resumed claude.ai session keeps its title)")
     a.set_defaults(f=cmd_rename)
     a = sub.add_parser("restart")
     a.add_argument("id")

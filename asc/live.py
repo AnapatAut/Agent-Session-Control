@@ -246,7 +246,7 @@ def claude_tasks(s, kids, home=None):
     snap = os.path.join(home, ".claude", "shell-snapshots") + "/"
     for pid, name in kids.get(s["pid"], []):
         if name in SHELLS and snap in _cmdline(pid):
-            return f"runs a command ({pid})"
+            return "runs a command"
     now = time.time()
     for path in glob.glob(os.path.join(home, ".claude", "projects", "*", s["session_id"], "subagents", "agent-*.jsonl")):
         try:
@@ -262,7 +262,7 @@ def claude_tasks(s, kids, home=None):
         if r and r.get("type") == "assistant" and isinstance(m, dict) and m.get("stop_reason") == "end_turn":
             continue
         what = meta.get("description") if isinstance(meta, dict) and isinstance(meta.get("description"), str) else ""
-        return "runs a subagent" + (f" ({what[:60]})" if what else "")
+        return "runs a subagent" + (f": {what[:60]}" if what else "")
     return ""
 
 

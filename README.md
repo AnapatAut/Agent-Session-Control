@@ -32,8 +32,8 @@ asctl rc 0421 on --title "DB work"   # remote control: a running claude at once 
                             # else from its next start (--next-start: only the setting)
 asctl resurrect 0421 on     # bring it back after a reboot (turns rc on; a resurrect start always has rc)
 asctl note 0421 "talks to the API"
-asctl rename 0421 db --restart   # db-0421; --restart: an idle claude restarts on the same
-                            # conversation, so its own name and rc title follow
+asctl rename 0421 db        # db-0421; a running claude, when idle, gets /rename db-0421,
+                            # which claude also sends to its claude.ai session (the rc title)
 asctl restart 0421          # off and on again (--resume), only when idle and running nothing
 asctl forget 0421
 ```
@@ -48,7 +48,11 @@ Disconnect in the dialog it opens) into that claude's own pane, only when claude
 pane not in copy mode and the prompt empty, and checks the screen and the session file before
 and after. Otherwise it changes only the setting and says why. See `asc/rclive.py`.
 
-A restart (`asctl restart`, `rename --restart`, the page's Rename) goes ahead only when the
+A rename does not restart: `--resume` reconnects to the conversation's claude.ai session, which
+keeps its title, so only `/rename` changes it. A conversation that once ran as a Claude Code
+background job takes that job's recorded name back at every start (`nameSource: "peer"`).
+
+A restart (`asctl restart`, `rename --restart`) goes ahead only when the
 claude is idle and runs nothing: no command (each runs as a child bash that sources claude's
 shell snapshot, a background one too) and no subagent (a recent subagent transcript not marked
 finished and not ending in a final answer). The same counts as busy for Off.

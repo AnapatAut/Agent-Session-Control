@@ -273,6 +273,11 @@ jq -e --arg l "$LOGIN" --arg h "$HOME" '.login == $l and .home == $h and .favori
 touch "$HOME/fake-rc" "$HOME/fake-wait"; sleep 0.6
 state | jq -e '.favorites[0] | .rc_live == true and .status == "waiting" and .busy == "" and .waiting_for == "dialog open" and (.status_at | type) == "number"' >/dev/null && ok "state: remote control live, waiting (not busy), why and since when" || bad "state: rc_live/waiting wrong: $(state | jq -c '.favorites[0] | {rc_live, status, busy}')"
 rm -f "$HOME/fake-rc" "$HOME/fake-wait"; sleep 0.6
+touch "$HOME/fake-task"; sleep 0.8
+state | jq -e '.favorites[0] | .status == "busy" and .task == "runs a command" and .status_at == null and (.busy | test("runs a command"))' >/dev/null \
+	&& ok "state: an idle claude that runs a command (a background one too) is working" || bad "state: task not shown: $(state | jq -c '.favorites[0] | {status, task, busy}')"
+rm -f "$HOME/fake-task"; sleep 0.8
+state | jq -e '.favorites[0] | .status == "idle" and .task == ""' >/dev/null && ok "state: idle again once the command ended" || bad "state: still working after the command"
 touch "$HOME/fake-busy"; sleep 0.6
 out=$(post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'"}')
 [ "$(tail -1 <<<"$out")" = 409 ] && seen 'busy: the claude in pane' <<<"$out" && ok "off refused while busy, with the reason" || bad "off while busy: $out"
@@ -297,11 +302,12 @@ state | jq -e --arg t "$TM" '.favorites[0] | .claude_name == $t and .claude_name
 touch "$HOME/fake-peer-name"; sleep 0.6
 state | jq -e '.favorites[0].claude_name_kept == true' >/dev/null && ok "state: a name claude keeps from its own job record (a restart does not change it)" || bad "state: claude_name_kept not set"
 rm -f "$HOME/fake-peer-name"; sleep 0.6
+pid0=$(state | jq '.favorites[0].pid')
 out=$(post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"db"}')
-[ "$(tail -1 <<<"$out")" = 200 ] && seen 'renamed to db-[0-9]* and restarted' <<<"$out" && state | jq -e '.favorites[0] | (.tmux | startswith("db-")) and .claude_name == .tmux' >/dev/null \
-	&& ok "rename from the page restarts an idle claude: its name follows" || bad "rename: $out / $(state | jq -c '.favorites[0] | {tmux, claude_name}')"
+[ "$(tail -1 <<<"$out")" = 200 ] && seen 'claude and its claude.ai title too' <<<"$out" && state | jq -e --argjson p "$pid0" '.favorites[0] | (.tmux | startswith("db-")) and .claude_name == .tmux and .pid == $p' >/dev/null \
+	&& ok "rename from the page: the same claude takes the name (/rename)" || bad "rename: $out / $(state | jq -c '.favorites[0] | {tmux, claude_name, pid}')"
 TM="db-$id"
-[ "$(post '{"action":"restart","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] && ok "restart from the page" || bad "restart from the page failed"
+[ "$(post '{"action":"restart","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 400 ] && ok "no restart action from the page" || bad "the page can restart"
 post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'","force":true}' >/dev/null
 [ "$(post '{"action":"forget","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] && state | jq -e '.favorites | length == 0' >/dev/null && ok "forget" || bad "forget failed"
 
@@ -550,7 +556,7 @@ asc/past.py %%%         elif r.get("type") == "ai-title" and %%%         elif Fa
 asc/past.py %%% (title or ai or "") %%% (ai or title or "")
 asc/dash.py %%% (s["derived"] or not s["name"]) and past.title %%% False and past.title
 asc/dash.py %%% (s["derived"] or not s["name"]) and past.title %%% True and past.title
-asc/dash.py %%% registry.check_name(_text(a.get("name"))), "--restart"] %%% registry.check_name(_text(a.get("name")))]
+asc/dash.py %%% ("busy", None) if s["task"] else %%% ("busy", None) if False else
 asc/past.py %%%                 title = t %%%                 title = title or t
 asc/past.py %%%     out.sort(key=lambda c: c["mtime"], reverse=True) %%%     out.sort(key=lambda c: c["mtime"])
 asc/dash.py %%% if st.st_uid != os.getuid() or st.st_mode & 0o022: %%% if st.st_uid != os.getuid():

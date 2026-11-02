@@ -132,10 +132,26 @@ asctl mode "$id2" auto >/dev/null
 pm plan; [ "$(started_with)" = auto ] && ok "mode: plan is not followed (its own mode)" || bad "plan followed"
 pm manual user; [ "$(started_with)" = manual ] && ok "mode: the last message's permissionMode counts too" || bad "message mode not followed"
 
-echo "== restart: a new name for a running claude, only when idle"
+echo "== a new name for a running claude: /rename when idle, or a restart"
 asctl on "$id2" >/dev/null; c1=$(claude_in "chat-$id2")
+sname() { jq -r .name "$HOME/.claude/sessions/$1.json"; }
+touch "$HOME/fake-busy"; sleep 0.8
 out=$(asctl rename "$id2" talk 2>&1)
-seen 'change at its next start' <<<"$out" && [ "$(claude_in "talk-$id2")" = "$c1" ] && ok "rename without --restart: claude runs on, its name at its next start" || bad "rename: $out"
+seen "renamed to talk-$id2; claude's own name not changed now: claude is busy" <<<"$out" && [ "$(sname "$c1")" = "chat-$id2" ] && ! seen 'line: /rename' "$HOME/claude-args.log" \
+	&& ok "rename while claude works: the favorite renamed, nothing typed" || bad "rename while busy: $out"
+rm -f "$HOME/fake-busy"; sleep 0.8
+out=$(asctl rename "$id2" talk 2>&1)
+seen 'claude and its claude.ai title too' <<<"$out" && [ "$(claude_in "talk-$id2")" = "$c1" ] && [ "$(sname "$c1")" = "talk-$id2" ] && seen "line: /rename talk-$id2" "$HOME/claude-args.log" \
+	&& ok "rename of an idle claude: /rename typed, the same claude takes the name" || bad "live rename: $out / $(sname "$c1")"
+touch "$HOME/fake-menu-on"
+out=$(asctl rename "$id2" talk3 2>&1)
+seen 'not changed now: a menu opened under its prompt; nothing was sent' <<<"$out" && [ "$(sname "$c1")" = "talk-$id2" ] && ok "rename: not when a menu would take Enter" || bad "rename with a menu: $out"
+rm -f "$HOME/fake-menu-on"
+touch "$HOME/fake-no-rename"
+out=$(asctl rename "$id2" talk4 2>&1)
+seen "not changed now: typed, but its session file does not show the new name yet" <<<"$out" && ok "rename: typed but not taken by claude: said so" || bad "rename not taken: $out"
+rm -f "$HOME/fake-no-rename"
+asctl rename "$id2" talk >/dev/null
 touch "$HOME/fake-task"; sleep 0.8
 out=$(asctl rename "$id2" talk2 --restart 2>&1)
 seen 'not restarted now: busy: .* runs a command' <<<"$out" && [ "$(claude_in "talk2-$id2")" = "$c1" ] && ok "rename --restart: not while claude runs a command (a background one too)" || bad "restart with a command running: $out"
@@ -319,7 +335,7 @@ touch "$HOME/fake-two-lines"; tm send-keys -t "$pane" x BSpace; sleep 0.5
 out=$(asctl rc "$id2" on); seen "not changed now: its screen does not show claude's prompt" <<<"$out" && [ -z "$(bridge)" ] \
 	&& ok "a prompt of two lines (the first empty) is not empty" || bad "two lines: $out"
 rm -f "$HOME/fake-two-lines"; tm send-keys -t "$pane" x BSpace; sleep 0.5
-[ "$(grep -c 'line: ' "$HOME/claude-args.log")" = 4 ] && ok "nothing else ever reached its prompt" || bad "lines entered: $(grep 'line: ' "$HOME/claude-args.log")"
+[ "$(grep 'line: ' "$HOME/claude-args.log" | grep -vc 'line: /rename ')" = 4 ] && [ "$(grep -c 'line: /rename ' "$HOME/claude-args.log")" = 2 ] && ok "nothing else ever reached its prompt (four rc lines, two /rename)" || bad "lines entered: $(grep 'line: ' "$HOME/claude-args.log")"
 asctl rc "$id2" off --next-start >/dev/null  # the tests below start from rc off
 asctl off "$id2" --force >/dev/null
 asctl rc "$id2" on --title=-x >/dev/null 2>&1 && bad "a title starting with - accepted" || ok "a title starting with - refused (claude would read an option)"
@@ -371,14 +387,16 @@ asc/rclive.py %%%     if now["status"] != "idle": %%%     if now["status"] == "b
 asc/rclive.py %%%         return "its pane is in copy mode" %%%         pass
 asc/rclive.py %%%     if t: %%%     if False:
 asc/rclive.py %%% plain(DIM.sub("", lines[i])) %%% plain(lines[i])
-asc/rclive.py %%% cmd = f"{CMD} {title}" if on else CMD %%% cmd = CMD
+asc/rclive.py %%% why = enter(s, f"{CMD} {title}" if on else CMD, %%% why = enter(s, CMD,
 asc/rclive.py %%% rules[-1] - rules[-2] == 2 else None %%% rules[-1] - rules[-2] >= 2 else None
 asc/cli.py %%%         s = None if args.next_start else live_in(e) %%%         s = live_in(e)
 asc/cli.py %%%         elif s["rc"] == on: %%%         elif False:
 asc/rclive.py %%%     if prompt_text(scr) != cmd: %%%     if False:
-asc/rclive.py %%%     elif on and menu(under(scr)) - menu(before): %%%     elif False:
-asc/rclive.py %%%     elif on and menu(under(scr)) - menu(before): %%%     elif on and under(scr) != before:
-asc/rclive.py %%%     elif not on and not offers_cmd(scr): %%%     elif False:
+asc/rclive.py %%% if menu(under(scr)) - menu(before) else None %%% if False else None
+asc/rclive.py %%% if menu(under(scr)) - menu(before) else None %%% if under(scr) != before else None
+asc/rclive.py %%%         None if offers_cmd(scr) else %%%         None if True else
+asc/rclive.py %%%     if not wait_for(lambda: (session(s["pid"]) or {}).get("name") == name, confirm): %%%     if False:
+asc/cli.py %%%             why = rclive.rename(s, new) %%%             why = None
 asc/rclive.py %%%     if t and cmd.startswith(t): %%%     if t:
 asc/rclive.py %%%             if not dialog_open(pid, scr) or selected(scr, DISCONNECT): %%%             if not dialog_open(pid, scr):
 asc/rclive.py %%%     l = next((l for l in reversed(bottom(scr)) if label in l), "") %%%     l = next((l for l in bottom(scr) if "❯" in l and label in l), "")
