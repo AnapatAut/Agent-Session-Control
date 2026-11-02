@@ -33,7 +33,15 @@ function tilde(p) {
   if (!p) return "";
   return h && (p === h || p.startsWith(h + "/")) ? "~" + p.slice(h.length) : p;
 }
-function hm(d) { return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
+// times on the 24-hour clock, whatever the phone's locale
+const pad = (n) => String(n).padStart(2, "0");
+function hm(d) { return pad(d.getHours()) + ":" + pad(d.getMinutes()); }
+function hms(d) { return hm(d) + ":" + pad(d.getSeconds()); }
+function full(ts) {
+  if (!ts) return "";
+  const d = new Date(ts * 1000);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hms(d)}`;
+}
 function when(ts) {
   if (!ts) return "";
   const d = new Date(ts * 1000), now = new Date();
@@ -48,7 +56,7 @@ function statusText(x) {
   if (!x.status) return "";
   const [label] = STATUS[x.status] || STATUS.unknown;
   return label + (x.waiting_for ? " (" + x.waiting_for + ")" : "") +
-    (x.status_at ? " since " + new Date(x.status_at * 1000).toLocaleTimeString() : "");
+    (x.status_at ? " since " + hms(new Date(x.status_at * 1000)) : "");
 }
 function ago(ts) {
   const s = Date.now() / 1000 - ts;
@@ -91,7 +99,7 @@ const rows = new Map(), used = new Set();
 function rowEl(key, open, dotCls, name, id, sub, meta, note, why, whyCls) {
   const r = el("div", null, "row");
   const nm = el("div", name, "nm");
-  if (id) nm.append(el("span", id, "id"));
+  if (id) nm.append(el("span", "#" + id, "id"));
   const head = kids(el("div", null, "head"), el("span", null, "dot " + dotCls), kids(el("div"), nm, el("div", sub, "cwd mono")));
   r.append(head, kids(el("div", null, "meta"), ...meta), el("div", note, "note"), el("span", "›", "sw"));
   if (why) r.append(el("div", why, "why " + (whyCls || "")));
@@ -166,7 +174,7 @@ function draw() {
   $("me").title = s.login;
   const h = location.hostname;
   $("host").textContent = /^[\d.:\[\]]+$/.test(h) ? h : h.split(".")[0];
-  $("upd").textContent = "Updated " + new Date(s.time * 1000).toLocaleTimeString();
+  $("upd").textContent = "Updated " + hms(new Date(s.time * 1000));
 
   // memory
   const m = s.memory, used = m.total_kb ? 100 - m.avail_pct : 0;
@@ -362,7 +370,7 @@ $("nup").addEventListener("click", () => {
   const open = $("stale").hidden;
   $("stale").hidden = !open;
   $("nup").setAttribute("aria-expanded", String(open));
-  $("stale").textContent = "Not updating since " + (lastOkTime ? lastOkTime.toLocaleTimeString() : "the page opened") +
+  $("stale").textContent = "Not updating since " + (lastOkTime ? hms(lastOkTime) : "the page opened") +
     " (the dashboard is down, or the login expired). The list shows the last data.";
 });
 
@@ -400,7 +408,7 @@ function favDesc(e) {
 
 function favSheet(e) {
   const l = look(e), ref = { id: e.id4, tmux: e.tmux }, on = isOn(e), wait = pending.has(e.id4);
-  const out = [el("h2", e.name), el("div", e.id4 + " · " + tilde(e.cwd), "s2 mono")];
+  const out = [el("h2", e.name), el("div", "#" + e.id4 + " · " + tilde(e.cwd), "s2 mono")];
   const title = on ? "On · " + l.label : (l.group === "attention" ? "Off · " + l.label : "Off");
   const rcDesc = (on ? (e.rc_live ? "Live now" : "Not live now") + (e.rc !== e.rc_live ? " · changes at its next start" : "")
                      : "Used when it starts") + (e.rc ? " · title " + (e.rc_title || e.tmux) : "");
@@ -423,9 +431,10 @@ function favSheet(e) {
 
   out.push(el("span", "SETTINGS", "lab"));
   // Permissions follow claude: a start uses the mode the conversation last ran in (asc/cli.py)
-  const used = MODE[e.mode_used] || "not known yet", next = MODE[e.mode_next] || e.mode_next;
-  const perm = (on ? "Now " + used : "Last used " + used) + " · a start uses " + next +
-    (e.mode_used === "bypassPermissions" && e.mode_next !== "bypassPermissions" ? " (skip only if set on the machine: asctl mode " + e.id4 + " skip)" : "");
+  // the mode it runs in (a start keeps it); the next start's only where it differs (skip, plan)
+  const next = MODE[e.mode_next] || e.mode_next, cur = MODE[e.mode_used] || next;
+  const perm = cur + (e.mode_used && cur !== next ? " · next start " + next +
+    (e.mode_used === "bypassPermissions" ? " (skip only if set on the machine: asctl mode " + e.id4 + " skip)" : "") : "");
   out.push(kids(el("div", null, "opts"),
     opt("Resurrect", "Bring it back after a reboot or a tmux crash (always with remote control)",
       sw(e.resurrect, "Resurrect", () => act({ action: "resurrect", on: !e.resurrect, ...ref }), wait))));
@@ -451,8 +460,8 @@ function favSheet(e) {
   out.push(kids(el("div", null, "field"), ta, count), save);
 
   out.push(el("span", "SESSION", "lab"), kv([
-    ["Claude says", on ? statusText(e) : ""], ["Permissions", perm], ["tmux", e.tmux], ["Session id", e.session_id], ["Claudes", e.claudes > 1 ? e.claudes : ""],
-    ["Last on", when(e.last_on)], ["Last off", when(e.last_off)]]));
+    ["Status", on ? statusText(e) : ""], ["Permissions", perm], ["tmux", e.tmux], ["Session id", e.session_id], ["Claudes", e.claudes > 1 ? e.claudes : ""],
+    ["Last on", full(e.last_on)], ["Last off", full(e.last_off)]]));
   out.push(kids(el("div", null, "acts"),
     btn("Copy attach", "", async () => {
       try { await navigator.clipboard.writeText(e.attach); toast("Copied: " + e.attach); }
@@ -484,14 +493,14 @@ function activeSheet(x) {
   return [el("h2", x.name || "Unnamed claude"), el("div", tilde(x.cwd), "s2 mono"),
     x.duplicate ? el("div", "Another claude holds the same session id.", "warn bad") : null,
     el("span", "SESSION", "lab"),
-    kv([["Claude says", statusText(x) || label], ["tmux", x.tmux || "not in tmux"], ["Pid", x.pid], ["Session id", x.session_id]]),
+    kv([["Status", statusText(x) || label], ["tmux", x.tmux || "not in tmux"], ["Pid", x.pid], ["Session id", x.session_id]]),
     el("div", "Not a favorite: a reboot will not bring it back. Favorite it to turn it on and off here.", "res"),
     kids(el("div", null, "acts"), favoriteButton(x.session_id))];
 }
 
 function pastSheet(c) {
   return [el("h2", c.title || "Untitled"), el("div", tilde(c.cwd), "s2 mono"),
-    el("span", "CONVERSATION", "lab"), kv([["Last active", when(c.mtime)], ["Session id", c.session_id]]),
+    el("span", "CONVERSATION", "lab"), kv([["Last active", full(c.mtime)], ["Session id", c.session_id]]),
     el("div", "Favorite it to resume it in its own tmux session.", "res"),
     kids(el("div", null, "acts"), favoriteButton(c.session_id))];
 }
