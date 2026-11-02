@@ -3,8 +3,8 @@
 ~/.claude/sessions/<pid>.json is Claude Code's undocumented format: a file whose fields are
 missing or unexpected gives a session marked unknown, and nothing acts on it. A file only
 counts as live when it is named <pid>.json, its pidDomain (if any) is this machine and PID
-namespace, and its PID runs, is named `claude` and started at the recorded procStart (so a
-reused PID, a copied file or one left by a SIGKILL is not taken for a live claude).
+namespace, and its PID runs, is a claude (is_claude) and started at the recorded procStart (so
+a reused PID, a copied file or one left by a SIGKILL is not taken for a live claude).
 """
 import glob
 import json
@@ -18,6 +18,7 @@ SHELLS = {"bash", "zsh", "sh", "dash", "fish", "ksh", "tcsh", "csh"}
 # Looked through like a shell when checking what a pane runs (a shebang script's process
 # name is its file name).
 WRAPPERS = SHELLS | {"asctl-wrap"}
+VERSION_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 
 
 def open_regular(path):
@@ -66,10 +67,18 @@ def proc_stat(pid):
         return None
 
 
+def is_claude(pid, name):
+    """Whether a process named name is a claude: `claude`, or one of Claude Code's version
+    binaries run as claude (a background job runs ~/.local/share/claude/versions/2.1.316 itself,
+    so its name is the version and its argv[0] is claude)."""
+    return name == "claude" or (VERSION_RE.fullmatch(name) is not None
+                                and _cmdline(pid).split(" ", 1)[0].rsplit("/", 1)[-1] == "claude")
+
+
 def alive(pid, proc_start):
     st = proc_stat(pid)
     # a zombie has ended: it only waits for its parent (tmux) to collect it
-    return (st is not None and st[0] == "claude" and st[3] not in ("Z", "X")
+    return (st is not None and is_claude(pid, st[0]) and st[3] not in ("Z", "X")
             and proc_start is not None and st[2] == str(proc_start))
 
 
@@ -121,7 +130,12 @@ def read_sessions(home=None):
              # why claude waits ("dialog open", "input needed", ...), and when its status last changed
              "waiting_for": raw.get("waitingFor")[:40] if isinstance(raw.get("waitingFor"), str) else "",
              "status_at": raw.get("statusUpdatedAt") // 1000 if type(raw.get("statusUpdatedAt")) is int else None,
-             "proc_start": raw.get("procStart")}
+             "proc_start": raw.get("procStart"),
+             # a background job's id; an interactive claude that handed its conversation to a
+             # background job and now shows that job in its pane names the job here
+             "job": raw.get("jobId") if isinstance(raw.get("jobId"), str) else None,
+             "parked": raw.get("parkedJobId") if isinstance(raw.get("parkedJobId"), str) else None,
+             "started_at": raw.get("startedAt") // 1000 if type(raw.get("startedAt")) is int else None}
         s["live"] = bool(ok) and alive(pid, s["proc_start"])
         s["text"] = "" if ok else _text(path)
         out.append(s)
@@ -147,13 +161,16 @@ def unreadable_blockers(session_id, home=None):
             continue
         pid = s["pid"] if isinstance(s["pid"], int) else None
         st = proc_stat(pid) if pid else None
-        if (st and st[0] == "claude") or (session_id and session_id in s.get("text", "")):
+        if (st and is_claude(pid, st[0])) or (session_id and session_id in s.get("text", "")):
             out.append(s["file"])
     return out
 
 
 def live(home=None, pane_list=None):
-    """Live interactive claudes, each with the tmux pane it runs in (or None)."""
+    """Live claudes, each with the tmux pane it runs in (or None). A claude whose pane shows a
+    background job it handed its conversation to (parkedJobId) is replaced by that job: what the
+    pane shows and what typed keys reach is the job, so the job takes the pane, and the claude
+    in the pane is kept as its "host" (the process in the pane, the one Off signals)."""
     from . import tmuxctl
     pane_list = tmuxctl.panes() if pane_list is None else pane_list
     by_pid = {p["pane_pid"]: p for p in pane_list}
@@ -162,7 +179,13 @@ def live(home=None, pane_list=None):
         if not s["live"]:
             continue
         s["pane"] = next((by_pid[a] for a in ancestors(s["pid"]) if a in by_pid), None)
+        s["host"] = None
         out.append(s)
+    jobs = {s["job"]: s for s in out if s["kind"] == "bg" and s["job"] and not s["pane"]}
+    for h in [s for s in out if s["pane"] and s["parked"] in jobs]:
+        j = jobs.pop(h["parked"])
+        j["pane"], j["host"] = h["pane"], h
+        out.remove(h)
     return out
 
 
@@ -277,6 +300,7 @@ def busy_reason(session_name, lv, kids=None, pane_list=None, own_sid=None):
     (Off would end it as well)."""
     from . import tmuxctl
     known = {s["pid"]: s for s in lv}
+    known.update({s["host"]["pid"]: s for s in lv if s.get("host")})  # the claude showing a job
     kids = children_map() if kids is None else kids
     for p in tmuxctl.panes(session_name) if pane_list is None else pane_list:
         todo = [(p["pane_pid"], (proc_stat(p["pane_pid"]) or ("?",))[0])]
@@ -291,7 +315,7 @@ def busy_reason(session_name, lv, kids=None, pane_list=None, own_sid=None):
                 t = claude_tasks(s, kids)
                 if t:
                     return f"claude {t}"
-                if own_sid and s["session_id"] != own_sid:
+                if own_sid and own_sid not in (s["session_id"], (s.get("host") or {}).get("session_id")):
                     return f"another claude runs in it (pid {pid}, session {s['session_id']})"
                 continue
             if name in WRAPPERS:

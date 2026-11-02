@@ -274,8 +274,8 @@ def _snapshot():
             "rc_live": bool(s and s["rc"]), "claude_name": s["name"] if s else "",  # its name since it started
             "claude_name_kept": bool(s and s["peer_name"]),  # one a restart does not change
             "mode": e.get("mode", "auto"), "resurrect": bool(e.get("resurrect")),
-            # the mode claude last ran in (its transcript), and what a start would use
-            "mode_used": cli.last_mode(e["session_id"]) if e.get("session_id") else None,
+            # the mode claude runs in now (else last ran in), and what a start would use
+            "mode_used": cli.mode_now(s) if s else cli.last_mode(e["session_id"]) if e.get("session_id") else None,
             "mode_next": cli.start_mode(e),
             "want_on": bool(e.get("want_on")), "note": e.get("note") or "",
             "last_on": e.get("last_on"), "last_off": e.get("last_off"), "state": st,
@@ -283,7 +283,8 @@ def _snapshot():
             "waiting_for": s["waiting_for"] if s else "", "status_at": shown(s)[1] if s else None,
             "busy": live.busy_reason(e["tmux"], lv, kids, panes, e.get("session_id")) if e["tmux"] in up else "",
             "claudes": sum(1 for x in lv if x["pane"] and x["pane"]["session"] == e["tmux"]),
-            "mem_kb": sum(live.tree_mem_kb(p["pane_pid"], kids) for p in panes),
+            "mem_kb": sum(live.tree_mem_kb(p["pane_pid"], kids) for p in panes)
+                      + (live.tree_mem_kb(s["pid"], kids) if s and s["host"] else 0),  # a job runs outside the pane
         })
     # a claude with a made-up name (folder-NN) goes by its conversation's title, as the Claude apps list it
     active = [{"pid": s["pid"], "session_id": s["session_id"], "claude_name": s["name"], "cwd": s["cwd"],

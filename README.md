@@ -26,8 +26,8 @@ asctl on 0421               # tmux session das-0421, claude --resume <id> --name
                             # (refused under 20% memory available, or if it would leave under 15%;
                             # --force-memory starts it anyway)
 asctl mode 0421 manual      # its own permission mode: auto (default), manual, skip. A start follows
-                            # the mode the conversation last ran in (its transcript; a shift+tab
-                            # change carries over), skip only when set here; else this one
+                            # the mode the conversation last ran in, whichever it is (its transcript;
+                            # a shift+tab change carries over); this one only when none is found
 asctl rc 0421 on --title "DB work"   # remote control: a running claude at once when idle,
                             # else from its next start (--next-start: only the setting)
 asctl resurrect 0421 on     # bring it back after a reboot (turns rc on; a resurrect start always has rc)

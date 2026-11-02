@@ -456,10 +456,10 @@ function favSheet(e) {
 
   out.push(el("span", "SETTINGS", "lab"));
   // Permissions follow claude: a start uses the mode the conversation last ran in (asc/cli.py)
-  // the mode it runs in (a start keeps it); the next start's only where it differs (skip, plan)
+  // the mode it runs in (a start keeps it); the next start's only where it differs (a claude
+  // started in another mode that has not written its own yet)
   const next = MODE[e.mode_next] || e.mode_next, cur = MODE[e.mode_used] || next;
-  const perm = cur + (e.mode_used && cur !== next ? " · next start " + next +
-    (e.mode_used === "bypassPermissions" ? " (skip only if set on the machine: asctl mode " + e.id4 + " skip)" : "") : "");
+  const perm = cur + (e.mode_used && cur !== next ? " · next start " + next : "");
   out.push(kids(el("div", null, "opts"),
     opt("Resurrect", "Bring it back after a reboot or a tmux crash (always with remote control)",
       sw(e.resurrect, "Resurrect", () => act({ action: "resurrect", on: !e.resurrect, ...ref }), wait || !on))));  // off: like rc

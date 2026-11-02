@@ -131,9 +131,23 @@ started_with() { asctl on "$id2" >/dev/null; lastargs | grep -o -- '--permission
 pm acceptEdits; [ "$(started_with)" = acceptEdits ] && ok "mode: follows the transcript (acceptEdits, set inside claude)" || bad "mode not followed"
 pm bypassPermissions; [ "$(started_with)" = bypassPermissions ] && ok "mode: last ran in skip, the favorite set to skip: skip" || bad "skip with mode skip"
 asctl mode "$id2" auto >/dev/null
-[ "$(started_with)" = auto ] && ok "mode: last ran in skip, the favorite not set to skip: its own mode (auto)" || bad "skip followed without mode skip"
-pm plan; [ "$(started_with)" = auto ] && ok "mode: plan is not followed (its own mode)" || bad "plan followed"
+[ "$(started_with)" = bypassPermissions ] && ok "mode: last ran in skip, the favorite set to auto: skip (kept)" || bad "skip not kept"
+pm plan; [ "$(started_with)" = plan ] && ok "mode: plan is followed too" || bad "plan not followed"
+pm default; [ "$(started_with)" = manual ] && ok "mode: default (manual's old name) starts as manual" || bad "default not mapped"
+pm sudo; [ "$(started_with)" = auto ] && ok "mode: one not known here: its own mode" || bad "an unknown mode passed on"
 pm manual user; [ "$(started_with)" = manual ] && ok "mode: the last message's permissionMode counts too" || bad "message mode not followed"
+# The mode a running claude is in: the transcript's, unless written before it started (claude
+# writes its mode only with a message), then the --permission-mode it was started with.
+modenow() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import cli, live
+print(next(cli.mode_now(s) for s in live.live() if s["session_id"] == sys.argv[2]))' "$REPO" "$SID2"; }
+ts() { printf '{"type":"user","timestamp":"%s","sessionId":"%s"}\n' "$1" "$SID2" >> "$HOME/.claude/projects/-x/$SID2.jsonl"; }
+pm acceptEdits; asctl on "$id2" >/dev/null; claude_in "chat-$id2" >/dev/null
+ts 2020-01-01T00:00:00.000Z; pm bypassPermissions
+[ "$(modenow)" = acceptEdits ] && ok "mode now: a record from before the start: the start's mode" || bad "mode now: $(modenow)"
+ts "$(date -u -d '+5 sec' +%Y-%m-%dT%H:%M:%S.000Z)"; pm dontAsk
+[ "$(modenow)" = dontAsk ] && ok "mode now: a record since the start: the transcript's" || bad "mode now, newer: $(modenow)"
+asctl off "$id2" --force >/dev/null
+pm manual user
 
 echo "== a new name for a running claude: /rename when idle, or a restart"
 asctl on "$id2" >/dev/null; c1=$(claude_in "chat-$id2")
@@ -255,6 +269,30 @@ asctl live | seen aaaaaaaa && bad "a process not named claude counted" || ok "a 
 sfile "$sp" "$SID2" 1
 errof on "$id2" | grep -q 'cannot read or check' && ok "on refused: a well-formed file of a running claude does not check out" || bad "on ignored a file of a running claude that does not check out"
 kill $(pgrep -P "$sp") "$sp" "$np"; wait "$sp" "$np" 2>/dev/null; rm -f "$HOME/.claude/sessions/$sp.json" "$HOME/.claude/sessions/$np.json"
+echo "== a background job: Claude Code's version binary, shown in a favorite's pane"
+mkdir -p "$T/versions"; cp "$(command -v bash)" "$T/versions/2.1.316"
+( exec -a claude "$T/versions/2.1.316" -c 'sleep 300; true' ) >/dev/null 2>&1 & jp=$!
+( exec -a other "$T/versions/2.1.316" -c 'sleep 300; true' ) >/dev/null 2>&1 & op=$!
+JS=cccccccc-0000-4000-8000-000000000001; sleep 0.3
+sfile "$jp" "$JS" "$(start_of "$jp")" ',"kind":"bg","jobId":"cccc0001","status":"idle"'
+sfile "$op" cccccccc-0000-4000-8000-000000000002 "$(start_of "$op")"
+asctl live | seen "$JS" && ok "a background job (a version binary run as claude) is live" || bad "a background job is not live"
+asctl live | seen cccccccc-0000-4000-8000-000000000002 && bad "a version-named process not run as claude counted" || ok "a version-named process not run as claude is not live"
+PS7=dddddddd-aaaa-4bbb-8ccc-000000000007
+tm new-session -d -s park -c "$W" -- "$ASC_CLAUDE" --session-id "$PS7"
+p7=$(claude_in park); asctl fav "$p7" --name park >/dev/null; id7=$(jq -r '.entries[] | select(.name == "park") | .id4' "$REG")
+echo cccc0001 > "$HOME/fake-parked-$PS7"; sleep 0.8
+asctl live | grep "$JS" | seen "fav=$id7 *park-$id7 .*shown by claude $p7" && ok "the job takes the pane of the claude showing it" || bad "job not in the pane: $(asctl live)"
+asctl live | seen "^ *$p7 " && bad "the claude showing a job listed as well" || ok "the claude showing a job is not listed apart"
+asctl list | seen "park-$id7 *on " && ok "its favorite is on" || bad "favorite with a job: $(asctl list | grep park)"
+sfile "$jp" "$JS" "$(start_of "$jp")" ',"kind":"bg","jobId":"cccc0001","status":"busy"'
+errof off "$id7" | seen 'is working' && ok "off refused: the job is working" || bad "off ignored a working job"
+errof restart "$id7" | seen 'background job' && ok "restart refused: its pane shows a background job" || bad "restart with a job: $(errof restart "$id7")"
+sfile "$jp" "$JS" "$(start_of "$jp")" ',"kind":"bg","jobId":"cccc0001","status":"idle"'
+o=$(asctl off "$id7"); st=$(ps -o stat= -p "$p7")  # ended: gone, or a zombie not yet collected
+[[ -z $st || $st == Z* ]] && kill -0 "$jp" 2>/dev/null && seen 'runs on in Claude Code' <<<"$o" && ok "off ends the claude in the pane, not the job (and says so)" || bad "off with a job: $o"
+kill $(pgrep -P "$jp") $(pgrep -P "$op") "$jp" "$op"; wait "$jp" "$op" 2>/dev/null
+rm -f "$HOME/.claude/sessions/$jp.json" "$HOME/.claude/sessions/$op.json" "$HOME/fake-parked-$PS7"
 echo "== busy: a claude asctl cannot read; trust text in a transcript"
 asctl on "$id6" >/dev/null && claude_in "duo-$id6" >/dev/null
 tm new-window -t "=duo-$id6:" -- "$FAKE_BASH" -c 'sleep 300; true'
@@ -358,14 +396,14 @@ if [ "${ASC_MUTANTS:-}" = 1 ]; then
 	echo "== mutants"
 	run_mutants asc.sh ASC_MUTANTS <<'MUTANTS'
 asc/live.py %%% and proc_start is not None and st[2] == str(proc_start) %%% 
-asc/live.py %%% st is not None and st[0] == "claude" and %%% st is not None and
+asc/live.py %%% st is not None and is_claude(pid, st[0]) and %%% st is not None and
 asc/live.py %%%                 if s["status"] == "busy": %%%                 if False:
 asc/live.py %%%                     return f"it runs a claude asctl cannot read (pid {pid})" %%%                     continue
 asc/live.py %%%             if name in WRAPPERS: %%%             if True:
 asc/live.py %%%             if name == "claude": %%%             if False:
 asc/live.py %%% base == str(pid) and %%% 
 asc/live.py %%% (raw.get("pidDomain") is None or raw.get("pidDomain") == domain) %%% True
-asc/live.py %%%         if (st and st[0] == "claude") or %%%         if False and
+asc/live.py %%%         if (st and is_claude(pid, st[0])) or %%%         if False and
 asc/cli.py %%%     if away: %%%     if False:
 asc/cli.py %%%     return live_in(e, lv) or next( %%%     return live_in(e, lv) or None and next(
 asc/cli.py %%%     return (any(l.endswith("No, exit") %%%     return True or (any(l.endswith("No, exit")
@@ -415,6 +453,12 @@ asc/live.py %%%  and m.get("stop_reason") == "end_turn": %%%  and False:
 asc/live.py %%%             if now - os.lstat(path).st_mtime > AGENT_FRESH: %%%             if False:
 asc/live.py %%%                 t = claude_tasks(s, kids) %%%                 t = ""
 asc/cli.py %%%     if s["status"] != "idle": %%%     if False:
+asc/live.py %%%         j["pane"], j["host"] = h["pane"], h %%%         pass
+asc/live.py %%%     known.update({s["host"]["pid"]: s for s in lv if s.get("host")}) %%%     pass
+asc/live.py %%%                                 and _cmdline(pid).split(" ", 1)[0].rsplit("/", 1)[-1] == "claude") %%%                                 )
+asc/cli.py %%%         job, s = (s, s["host"]) if s.get("host") else (None, s) %%%         job = None
+asc/cli.py %%%     if s.get("host"): %%%     if False:
+asc/cli.py %%%     if m is None or (at is not None and s.get("started_at") and at < s["started_at"]): %%%     if m is None:
 asc/cli.py %%%         if not s or s["name"] == new: %%%         if True:
 asc/cli.py %%%         elif not args.restart: %%%         elif False:
 MUTANTS

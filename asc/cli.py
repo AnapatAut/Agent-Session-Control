@@ -14,8 +14,8 @@
   asctl restart ID                 off and on again on the same conversation, only when its
                                    claude is idle and runs no command or subagent
   asctl mode ID auto|manual|skip   permission mode when its transcript names none; a start
-                                   follows the mode the conversation last ran in (shift+tab
-                                   carries over), skip only for a favorite set to skip here
+                                   follows the mode the conversation last ran in, whichever it
+                                   is (shift+tab carries over)
   asctl rc ID on|off [--title T] [--next-start]
                                    remote control (and its title); a running claude also
                                    now, when idle (asc/rclive.py), unless --next-start
@@ -28,6 +28,7 @@
 ID is the 4-digit id or the full NAME-ID. Nothing here starts a tmux server: it would then
 belong to asctl's own process (a later phase adds asctl-tmux.service for that).
 """
+import datetime
 import glob
 import json
 import os
@@ -70,15 +71,18 @@ def claude_argv(e, resurrect=False):
     return a
 
 
-# Modes followed from the transcript as claude takes them ("default" was manual's old name).
-# plan is left out (a step inside a task, not a way of working) and skip has its own rule.
-FOLLOW = {"auto": "auto", "manual": "manual", "default": "manual", "acceptEdits": "acceptEdits", "dontAsk": "dontAsk"}
-_modes = {}  # transcript path -> ((size, mtime), mode): the dashboard asks every 5 s
+# Modes followed from the transcript as claude takes them, every one --permission-mode takes
+# ("default" was manual's old name).
+FOLLOW = {"auto": "auto", "manual": "manual", "default": "manual", "acceptEdits": "acceptEdits",
+          "dontAsk": "dontAsk", "plan": "plan", "bypassPermissions": "bypassPermissions"}
+_modes = {}  # transcript path -> ((size, mtime), (mode, time)): the dashboard asks every 5 s
 
 
-def last_mode(sid, tail=2 << 20):
-    """The permission mode the conversation last ran in: the last permissionMode at the end of
-    its transcript (claude writes it on each message and on each change), or None."""
+def last_mode_at(sid, tail=2 << 20):
+    """(mode, time) the conversation last ran in: the last permissionMode at the end of its
+    transcript (claude writes it with each message and on each change), and the time of that
+    record or the last timestamped one before it (None if none in the tail); (None, None) when
+    none is found."""
     for path in glob.glob(os.path.expanduser(f"~/.claude/projects/*/{sid}.jsonl")):
         f = live.open_regular(path)
         if f is None:
@@ -90,30 +94,59 @@ def last_mode(sid, tail=2 << 20):
                 return _modes[path][1]
             f.seek(max(0, st.st_size - tail))
             lines = f.read(tail).split(b"\n")
-        mode = None
+        found, mode, at = False, None, None
         for line in reversed(lines[1:] if st.st_size > tail else lines):  # the first may be cut
-            if b'"permissionMode"' not in line:
+            if b'"permissionMode"' not in line and not (found and b'"timestamp"' in line):
                 continue
             try:
                 r = json.loads(line.decode("utf-8", "replace"))
             except (ValueError, RecursionError):
                 continue
-            if isinstance(r, dict) and isinstance(r.get("permissionMode"), str):
-                mode = r["permissionMode"][:40]
-                break
-        _modes[path] = (key, mode)
-        return mode
-    return None
+            if not isinstance(r, dict):
+                continue
+            if not found:
+                if not isinstance(r.get("permissionMode"), str):
+                    continue
+                found, mode = True, r["permissionMode"][:40]
+            if isinstance(r.get("timestamp"), str):  # a message carries its own
+                at = iso_time(r["timestamp"])
+                if at is not None:
+                    break
+        _modes[path] = (key, (mode, at))
+        return mode, at
+    return None, None
+
+
+def last_mode(sid):
+    return last_mode_at(sid)[0]
+
+
+def iso_time(t):
+    try:
+        return int(datetime.datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp())
+    except ValueError:
+        return None
+
+
+def mode_now(s):
+    """The mode a running claude s is in: the transcript's, unless that was written before this
+    claude started (claude writes its mode only with a message), then the one it was started
+    with (its --permission-mode)."""
+    m, at = last_mode_at(s["session_id"])
+    if m is None or (at is not None and s.get("started_at") and at < s["started_at"]):
+        a = live._cmdline(s["pid"]).split(" ")
+        if "--permission-mode" in a[:-1]:
+            return a[a.index("--permission-mode") + 1][:40]
+    return m
 
 
 def start_mode(e):
-    """--permission-mode for a start: the mode the conversation last ran in, so a change made
-    inside claude carries over. A conversation that last ran in skip comes back in skip only when
-    the favorite is set to skip on this machine (asctl mode ID skip), else in its own mode; plan,
-    a mode not known here, or none found: the favorite's own mode."""
+    """--permission-mode for a start: the mode the conversation last ran in, whichever it is
+    (skip and plan too), so a change made inside claude carries over; a mode not known here or
+    none found: the favorite's own mode."""
     own = registry.MODES[e.get("mode", "auto")]
     m = last_mode(e["session_id"]) if e.get("started") and e.get("session_id") else None
-    return FOLLOW.get(m) or own  # skip (bypassPermissions) is not in FOLLOW: own, skip only if set
+    return FOLLOW.get(m) or own
 
 
 def live_in(e, lv=None):
@@ -165,8 +198,10 @@ def cmd_live(args):
         out("no live claude")
     for s in lv:
         where = f"{s['pane']['session']} {s['pane']['pane_id']}" if s["pane"] else "(not in tmux)"
-        fav = by_sid.get(s["session_id"], "-")
-        out(f"{s['pid']:>8}  {s['session_id']}  {s['status']:<7} fav={fav:<4}  {where:<24} {s['cwd']}")
+        h = s["host"] or {}  # a background job shown in a claude's pane: that claude's favorite
+        fav = by_sid.get(s["session_id"]) or by_sid.get(h.get("session_id")) or "-"
+        job = f"  (a background job, shown by claude {h['pid']})" if h else ""
+        out(f"{s['pid']:>8}  {s['session_id']}  {s['status']:<7} fav={fav:<4}  {where:<24} {s['cwd']}{job}")
     unknown = [s for s in live.read_sessions() if not s["ok"]]
     if unknown:
         out(f"{len(unknown)} session file(s) in an unknown format: shown nowhere, never acted on")
@@ -382,6 +417,7 @@ def _off(id4, force, say=True):
         x = registry.find(data, e["id4"])
         x["want_on"], x["last_off"] = False, registry.now()
     if s:
+        job, s = (s, s["host"]) if s.get("host") else (None, s)  # the claude in the pane, not its job
         # Checked again just before the signal: the claude may have been moved out meanwhile.
         panes = {p["pane_pid"] for p in tmuxctl.panes(e["tmux"])}
         if not live.alive(s["pid"], s["proc_start"]) or not panes.intersection(live.ancestors(s["pid"])):
@@ -393,6 +429,8 @@ def _off(id4, force, say=True):
             time.sleep(0.1)
         else:
             out(f"claude {s['pid']} still runs 10 s after SIGTERM; closing its tmux session anyway")
+        if job and live.alive(job["pid"], job["proc_start"]):
+            out(f"its background job (claude {job['pid']}, session {job['session_id']}) runs on in Claude Code")
     if up:
         tmuxctl.kill_session(e["tmux"])
     if say:
@@ -409,6 +447,9 @@ def _restart(id4):
     s = live_in(e, lv)
     if not s:
         raise RegistryError(f"no claude runs in {e['tmux']!r}")
+    if s.get("host"):
+        raise RegistryError(f"its pane shows a background job of claude's (session {s['session_id']}); "
+                            f"a restart would not bring it back")
     if s["status"] != "idle":
         raise RegistryError(f"its claude is {'working' if s['status'] == 'busy' else s['status']}")
     why = live.busy_reason(e["tmux"], lv, own_sid=e.get("session_id"))
@@ -473,7 +514,7 @@ def cmd_mode(args):
     with registry.changing() as data:
         e = registry.find(data, args.id)
         e["mode"] = args.mode
-    out(f"{e['tmux']}: mode {args.mode} (used when its transcript names none; skip lets a skip conversation come back in skip)")
+    out(f"{e['tmux']}: mode {args.mode} (used when its transcript names none)")
     return 0
 
 
