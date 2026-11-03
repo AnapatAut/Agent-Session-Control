@@ -24,7 +24,7 @@ _mutant() {
 	local suite=$1 off=$2 m=$3 f rest old new d body out
 	f=${m%%' %%% '*}; rest=${m#*' %%% '}; old=${rest%%' %%% '*}; new=${rest#*' %%% '}
 	d=$(mktemp -d -p "$T") || { echo "bad:no temp folder for $f: $old"; return; }
-	cp -r "$REPO/asc" "$REPO/bin" "$REPO/tests" "$d/"
+	cp -r "$REPO/asc" "$REPO/bin" "$REPO/systemd" "$REPO/tests" "$d/"
 	body=$(<"$d/$f")
 	[[ $body == *"$old"* ]] || { echo "bad:mutant does not apply: $f: $old"; return; }
 	printf '%s\n' "${body/"$old"/"$new"}" > "$d/$f"

@@ -2,13 +2,69 @@
 # Fake systemctl for the tests ($ASC_SYSTEMCTL): "--user start asctl-tmux.service" runs what the
 # unit runs (asctl tmux-server); $HOME/fake-systemctl-fail: that unit is not there. Every call is
 # logged to $HOME/systemctl.log. Anything else fails: the tests never reach a real systemd.
+# For asctl setup, a few more on a fake user manager in $HOME/fake-units: a unit is a file
+# there (its ExecStart= line), enabled/<unit> and active/<unit> mark its state,
+# fail-<verb>-<unit> makes that verb fail for it, and global-<unit> leaves it enabled after a
+# disable (enabled for every user); $F/environment is the manager's environment, and
+# fail-show-environment makes it not answer. show -p LoadState|ExecStart|ActiveState --value,
+# show-environment, list-unit-files --state=enabled --type=service --no-legend (no template
+# instances, as systemd lists them), is-enabled, enable, disable, start, stop, daemon-reload.
 echo "$*" >> "$HOME/systemctl.log"
-if [ "$*" = "--user start asctl-tmux.service" ]; then
+if [ "$*" = "--user start asctl-tmux.service" ] && ! [ -e "$HOME/fake-units/asctl-tmux.service" ]; then
 	if [ -e "$HOME/fake-systemctl-fail" ]; then
 		echo "Failed to start asctl-tmux.service: Unit asctl-tmux.service not found." >&2
 		exit 5
 	fi
 	exec "$(dirname "$0")/../../../bin/asctl" tmux-server
 fi
-echo "fake systemctl: not faked: $*" >&2
-exit 1
+F="$HOME/fake-units"
+[ "${1:-}" = --user ] || { echo "fake systemctl: not faked: $*" >&2; exit 1; }
+shift
+verb=${1:-}
+shift
+fails() { [ -e "$F/fail-$verb-$1" ] && { echo "Failed to $verb $1: faked" >&2; return 0; }; return 1; }
+case $verb in
+show)
+	[ "$1 $3" = "-p --value" ] && [ $# = 4 ] || { echo "fake systemctl: not faked: show $*" >&2; exit 1; }
+	u=$4
+	case $2 in
+	LoadState) [ -f "$F/$u" ] && echo loaded || echo not-found ;;
+	ActiveState) [ -e "$F/active/$u" ] && echo active || echo inactive ;;
+	ExecStart)
+		x=$(sed -n 's/^ExecStart=//p' "$F/$u" 2>/dev/null | head -1)
+		[ -n "$x" ] && echo "{ path=${x%% *} ; argv[]=$x ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }" ;;
+	*) echo "fake systemctl: not faked: show -p $2" >&2; exit 1 ;;
+	esac ;;
+list-unit-files)
+	[ "$*" = "--state=enabled --type=service --no-legend" ] || { echo "fake systemctl: not faked: list-unit-files $*" >&2; exit 1; }
+	for e in "$F"/enabled/*.service; do
+		case ${e##*/} in *@?*.service) continue ;; esac
+		[ -e "$e" ] && echo "$(basename "$e") enabled enabled"
+	done
+	exit 0 ;;
+show-environment)
+	[ -e "$F/fail-show-environment" ] && { echo "Failed to connect to bus: No medium found" >&2; exit 1; }
+	cat "$F/environment" 2>/dev/null
+	exit 0 ;;
+is-enabled)
+	[ -e "$F/enabled/$1" ] && { echo enabled; exit 0; }
+	[ -f "$F/$1" ] && { echo disabled; exit 1; }
+	echo not-found; exit 1 ;;
+enable | disable | start | stop)
+	for u in "$@"; do
+		[ -f "$F/$u" ] || { echo "Failed to $verb unit: Unit $u does not exist." >&2; exit 5; }
+		! fails "$u" || exit 1
+	done
+	mkdir -p "$F/enabled" "$F/active"
+	for u in "$@"; do
+		case $verb in
+		enable) : > "$F/enabled/$u" ;;
+		disable) [ -e "$F/global-$u" ] || rm -f "$F/enabled/$u" ;;
+		start) : > "$F/active/$u" ;;
+		stop) rm -f "$F/active/$u" ;;
+		esac
+	done ;;
+daemon-reload)
+	! fails reload || exit 1 ;;
+*) echo "fake systemctl: not faked: $verb $*" >&2; exit 1 ;;
+esac

@@ -221,6 +221,7 @@ printf "%s\n" "[Service]" "Type=oneshot" "ExecStart=/opt/asc/bin/asctl watch" "E
 printf "%s\n" "[Timer]" "OnActiveSec=1s" "OnUnitActiveSec=30s" "AccuracySec=1s" "[Install]" "WantedBy=timers.target" > "$u/asctl-watch.timer"
 systemctl --user daemon-reload' >/dev/null 2>&1
 OE="ASC_TMUX_SOCKET=oom ASC_CLAUDE=/opt/asc/tests/asc/bin/claude FAKE_BASH=/home/sbuser/fb/claude ASC_MEMINFO=/home/sbuser/meminfo"
+# shellcheck disable=SC2086  # the variable is a list of NAME=value words
 oux() { ux env $OE "$@"; }
 ux systemd-run --user --unit=asc-oomtmux -p Type=forking -p MemoryMax=200M -p MemorySwapMax=0 -p OOMPolicy=continue \
 	-E FAKE_BASH=/home/sbuser/fb/claude -E HOME=/home/sbuser \
@@ -262,7 +263,7 @@ chk "and started it again, in the same session" \
 	'ux jq -s -c ".[-4:]" $EV'
 ux systemctl --user stop asc-oomtmux 2>/dev/null
 
-echo "== 6. the units as installed: the tmux server unit, then a reboot and boot resurrect"
+echo "== 6. the units as installed (a checkout's own): the tmux server unit, boot resurrect"
 # tools/install-units.sh writes them. Drop-ins point them at the fake claude and memory, and
 # claude.ai at a closed port (no network here; boot's wait for it cut to 2 s). The tmux server is
 # the default one now, as on a real machine.
@@ -280,6 +281,7 @@ printf "%s\n" "[Service]" "Environment=ASC_CLAUDE=/opt/asc/tests/asc/bin/claude 
 	"ExecStart=" "ExecStart=/opt/asc/bin/asctl boot --net-wait 2 --wait 300" > "$u/asctl-boot.service.d/test.conf"
 systemctl --user daemon-reload && systemctl --user enable asctl-tmux.service asctl-boot.service' >/dev/null 2>&1
 DE="ASC_CLAUDE=/opt/asc/tests/asc/bin/claude FAKE_BASH=/home/sbuser/fb/claude ASC_MEMINFO=/home/sbuser/meminfo"
+# shellcheck disable=SC2086  # the variable is a list of NAME=value words
 dux() { ux env $DE "$@"; }
 spid() { dux tmux display -p '#{pid}' 2>/dev/null; }
 cgof() { ux cat "/proc/$1/cgroup" 2>/dev/null | cut -d: -f3; }
@@ -314,6 +316,104 @@ chk "its claude is in a tmux scope that goes on after an OOM kill (the installed
 	'wait_for 15 "[ -n \"\$(bpid)\" ]" && u=$(basename "$(cgof "$(bpid)")") && [ "${u#tmux-spawn-}" != "$u" ] && [ "$(uprop "$u" OOMPolicy)" = continue ]' \
 	'echo "claude $(bpid): $(cgof "$(bpid)")"'
 dux /opt/asc/bin/asctl resurrect "$BID" on >/dev/null
+echo "== 7. the machine install (sudo ./install.sh), and asctl setup by a second user"
+# sbuser2 has the old setup as tmux-continuum leaves it: its own tmux.service (enabled, its
+# server up) and continuum's boot on. Setup refuses until that is off, then retires the unit
+# (disabled, its server left alone) and turns on the machine's units; the reboot below must
+# then bring sbuser2's favorite back from the installed code.
+OPT=/opt/agent-session-control R2=/run/user/2002 H2=/home/sbuser2
+u2() { docker exec -u sbuser2 -e XDG_RUNTIME_DIR="$R2" -e DBUS_SESSION_BUS_ADDRESS="unix:path=$R2/bus" -w "$H2" "$C" "$@"; }
+u2prop() { u2 systemctl --user show "$1" -p "$2" --value; }
+D2="ASC_CLAUDE=/opt/asc/tests/asc/bin/claude FAKE_BASH=$H2/fb/claude ASC_MEMINFO=$H2/meminfo"
+# shellcheck disable=SC2086  # the variable is a list of NAME=value words
+d2() { u2 env $D2 "$@"; }
+has() { printf '%s\n' "$out" | grep -q -- "$1"; }
+out=$(ux /opt/asc/install.sh 2>&1); rc=$?
+chk "install.sh as a user: refused" '[ "$rc" = 1 ] && has "run it as root"' 'echo "rc $rc: $out"'
+x sh -c 'echo "#!/bin/sh" > /usr/local/bin/asctl'
+out=$(x /opt/asc/install.sh 2>&1); rc=$?
+chk "a /usr/local/bin/asctl not its own: refused, nothing written" \
+	'[ "$rc" = 1 ] && has "not this installer.s link" && ! x test -e $OPT && ! x test -e /etc/systemd/user/asctl-tmux.service' 'echo "rc $rc: $out"'
+x rm /usr/local/bin/asctl
+out=$(x /opt/asc/install.sh 2>&1); rc=$?
+REL=$(x readlink $OPT/current)
+chk "install: a release, current at it, asctl on PATH, the units in /etc/systemd/user (no scope drop-in)" \
+	'[ "$rc" = 0 ] && [[ $REL =~ ^releases/[0-9a-f]{12}$ ]] && [ "$(x readlink /usr/local/bin/asctl)" = $OPT/current/bin/asctl ] && x grep -qx "ExecStart=$OPT/current/bin/asctl tmux-server" /etc/systemd/user/asctl-tmux.service && x test -f /etc/systemd/user/asctl-dash.socket && ! x test -e /etc/systemd/user/tmux-spawn-.scope.d' \
+	'echo "rc $rc: $out"'
+chk "  all of it root's and not writable by others, compiled; enabled for no one" \
+	'[ -z "$(x find $OPT /etc/systemd/user ! -type l \( ! -user root -o -perm /022 \) -print)" ] && [ -n "$(x find $OPT/$REL/asc/__pycache__ -name "cli.*.pyc")" ] && [ "$(u2 systemctl --user is-enabled asctl-tmux.service 2>&1)" = disabled ]' \
+	'x find $OPT /etc/systemd/user ! -type l \( ! -user root -o -perm /022 \) -print | head; u2 systemctl --user is-enabled asctl-tmux.service'
+out=$(x /opt/asc/install.sh 2>&1); rc=$?
+chk "install again: installed already, nothing written" '[ "$rc" = 0 ] && has "installed already" && ! has "^wrote"' 'echo "rc $rc: $out"'
+x sh -c 'echo "# an edit" >> /etc/systemd/user/asctl-watch.timer'
+out=$(x /opt/asc/install.sh 2>&1); rc=$?
+chk "a unit file changed since: refused; --force puts it back" \
+	'[ "$rc" = 1 ] && has "changed since the last install" && x /opt/asc/install.sh --force >/dev/null 2>&1 && ! x grep -q "an edit" /etc/systemd/user/asctl-watch.timer' 'echo "rc $rc: $out"'
+x ln -s /etc/shadow /opt/asc/asc/web/x.js
+out=$(x /opt/asc/install.sh 2>&1); rc=$?
+x rm /opt/asc/asc/web/x.js
+chk "a link in the checkout: refused" '[ "$rc" = 1 ] && has "x.js is a symbolic link" && [ "$(x readlink $OPT/current)" = "$REL" ]' 'echo "rc $rc: $out"'
+x ln -s /root /opt/asc/asc/rootlink
+out=$(x /opt/asc/install.sh 2>&1); rc=$?
+x rm /opt/asc/asc/rootlink
+chk "  a link to a folder too; no staging folder left behind" \
+	'[ "$rc" = 1 ] && has "asc/rootlink is a symbolic link" && [ -z "$(x sh -c "ls -d /opt/.agent-session-control.stage-* 2>/dev/null")" ]' 'echo "rc $rc: $out"; x ls -a /opt'
+# Upgrades: the release before stays, and an older one while a process runs it; then it goes.
+up() { x sh -c "echo '# upgrade $1' >> /opt/asc/asc/events.py" && x /opt/asc/install.sh >/dev/null 2>&1; x readlink $OPT/current; }
+REL1=$(up 1)
+HOLD=$(x bash -c "(exec -a $OPT/$REL/bin/asctl-wrap sleep 600) </dev/null >/dev/null 2>&1 & echo \$!")
+REL2=$(up 2)
+chk "upgrades: current switched, the release before kept, an older one a process runs kept" \
+	'[ "$REL1" != "$REL" ] && [ "$REL2" != "$REL1" ] && x test -d $OPT/$REL1 && x test -d $OPT/$REL' 'x ls $OPT/releases'
+x kill "$HOLD"
+REL3=$(up 3)
+chk "  once nothing runs it, the older one is gone (the newest two stay)" \
+	'! x test -e $OPT/$REL && ! x test -e $OPT/$REL1 && x test -d $OPT/$REL2 && x test -d $OPT/$REL3' 'x ls $OPT/releases'
+x sed -i '/^# upgrade [123]$/d' /opt/asc/asc/events.py; x /opt/asc/install.sh >/dev/null 2>&1
+u2 sh -ec 'mkdir -p ~/fb ~/w ~/.config/systemd/user && cp /bin/bash ~/fb/claude && echo ~/w > ~/fake-trusted
+printf "MemTotal: 32000000 kB\nMemAvailable: 16000000 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n" > ~/meminfo
+echo "set -g @continuum-boot '\''on'\''" > ~/.tmux.conf
+u=~/.config/systemd/user
+printf "%s\n" "[Unit]" "Description=tmux default session (detached)" "[Service]" "Type=forking" "Environment=FAKE_BASH=%h/fb/claude" \
+	"ExecStart=/usr/bin/tmux new-session -d -s old" "ExecStop=/usr/bin/tmux kill-server" "KillMode=control-group" "[Install]" "WantedBy=default.target" > "$u/tmux.service"
+mkdir -p "$u/asctl-tmux.service.d" "$u/asctl-boot.service.d"
+printf "%s\n" "[Service]" "Environment=FAKE_BASH=%h/fb/claude" > "$u/asctl-tmux.service.d/test.conf"
+printf "%s\n" "[Service]" "Environment=ASC_CLAUDE=/opt/asc/tests/asc/bin/claude ASC_MEMINFO=%h/meminfo ASC_NET=127.0.0.1:9" \
+	"ExecStart=" "ExecStart=/opt/agent-session-control/current/bin/asctl boot --net-wait 2 --wait 300" > "$u/asctl-boot.service.d/test.conf"
+systemctl --user daemon-reload && systemctl --user enable --now tmux.service' >/dev/null 2>&1
+s2pid() { d2 tmux display -p '#{pid}' 2>/dev/null; }
+chk "sbuser2's old tmux.service: enabled, its server up" \
+	'wait_for 10 "d2 tmux has-session -t =old 2>/dev/null" && [ "$(u2 systemctl --user is-enabled tmux.service)" = enabled ]' 'u2 systemctl --user status tmux.service | tail -5'
+OLDSRV=$(s2pid)
+out=$(u2 asctl setup --yes 2>&1); rc=$?
+chk "asctl setup with continuum's boot on: refused (the config line and the server)" \
+	'[ "$rc" = 1 ] && has "$H2/.tmux.conf:1: @continuum-boot" && has "the running tmux server: @continuum-boot on" && [ "$(u2 systemctl --user is-enabled tmux.service)" = enabled ]' 'echo "rc $rc: $out"'
+u2 sed -i "s/'on'/'off'/" "$H2/.tmux.conf"; d2 tmux set -g @continuum-boot off
+out=$(u2 asctl setup 2>&1 </dev/null); rc=$?
+chk "asctl setup, no terminal and no --yes: the plan and the warning, nothing changed" \
+	'[ "$rc" = 1 ] && has "disable tmux.service, which runs tmux" && has "the running tmux server is tmux.service.s and stays so until the next boot" && [ "$(u2 systemctl --user is-enabled asctl-tmux.service 2>&1)" = disabled ]' \
+	'echo "rc $rc: $out"'
+out=$(u2 asctl setup --yes 2>&1); rc=$?
+chk "asctl setup --yes: tmux.service disabled but not stopped (its server still up)" \
+	'[ "$rc" = 0 ] && [ "$(u2 systemctl --user is-enabled tmux.service)" = disabled ] && [ "$(u2prop tmux.service ActiveState)" = active ] && [ "$(s2pid)" = "$OLDSRV" ]' 'echo "rc $rc: $out"'
+chk "  the machine's units on for sbuser2 (not for sbuser), the timer up, the drop-in written" \
+	'[ "$(x readlink -f "$(u2prop asctl-tmux.service FragmentPath)")" = /etc/systemd/user/asctl-tmux.service ] && [ "$(u2 systemctl --user is-enabled asctl-boot.service)" = enabled ] && [ "$(u2prop asctl-watch.timer ActiveState)" = active ] && u2 test -f $H2/.config/systemd/user/tmux-spawn-.scope.d/asctl.conf && [ "$(ux systemctl --user is-enabled asctl-watch.timer 2>&1)" != enabled ]' \
+	'echo "$(u2prop asctl-tmux.service FragmentPath) $(u2prop asctl-watch.timer ActiveState)"; echo "$out"'
+S2S=dddddddd-0000-4000-8000-0000000000cc
+c2pid() { d2 /opt/asc/bin/asctl live | awk -v s="$S2S" '$2 == s {print $1}'; }
+d2 tmux new-session -d -s c2 -c "$H2/w" -- /opt/asc/tests/asc/bin/claude --session-id "$S2S"
+wait_for 15 '[ -n "$(c2pid)" ]'
+d2 asctl fav "$(c2pid)" --name mach >/dev/null 2>&1
+MID=$(u2 jq -r '.entries[] | select(.name == "mach") | .id4' "$H2/.local/state/agent-session-control/registry.json")
+d2 asctl off "$MID" >/dev/null 2>&1; d2 asctl on "$MID" >/dev/null 2>&1; d2 asctl resurrect "$MID" on >/dev/null 2>&1
+wrapof() { u2 cat "/proc/$(u2 ps -o ppid= -p "$1" | tr -d " ")/cmdline" 2>/dev/null | tr "\0" " "; }
+chk "its favorite runs from the installed release (asctl-wrap there), resurrect on" \
+	'wait_for 15 "[ -n \"\$(c2pid)\" ]" && wrapof "$(c2pid)" | grep -q " $OPT/releases/[0-9a-f]*/bin/asctl-wrap " && [ "$(u2 jq -r ".entries[\"$MID\"].resurrect" "$H2/.local/state/agent-session-control/registry.json")" = true ]' \
+	'echo "claude $(c2pid): $(wrapof "$(c2pid)")"'
+u2 env ASC_MEMINFO="$H2/meminfo" python3 -I -c 'import sys, time; sys.path.insert(0, "/opt/asc"); from asc import memory, registry
+s = memory.sample(); now = int(time.time())
+registry.write_private(registry.state_dir() + "/memory.json", [dict(s, t=now - 30 * i) for i in range(12, -1, -1)])'
+echo "== 8. the reboot (both users)"
 # Steady memory before the reboot (the host kernel's boot id stays: a container restart is a
 # boot of its systemd only), then the reboot: shutdown stops the units, the next boot runs them.
 ux env ASC_MEMINFO=/home/sbuser/meminfo python3 -I -c 'import sys, time; sys.path.insert(0, "/opt/asc"); from asc import memory, registry
@@ -334,6 +434,29 @@ chk "claude.ai not answering: boot waited 2 s, said so, started anyway" \
 	'ux jq -s -e "map(select(.kind == \"waiting\" and (.text | test(\"127.0.0.1:9 did not answer in 2 s\")))) | length == 1" $EV >/dev/null' 'ux jq -s -c "map(select(.kind == \"waiting\"))" $EV'
 chk "its server is asctl-tmux.service's (enabled, up at boot)" \
 	'[ "$(uprop asctl-tmux.service ActiveState)" = active ] && cgof "$(spid)" | grep -q "/asctl-tmux.service$"' 'echo "server $(spid): $(cgof "$(spid)")"'
+cg2() { u2 cat "/proc/$1/cgroup" 2>/dev/null | cut -d: -f3; }
+chk "sbuser2 after the reboot: the old tmux.service did not start; the server is asctl-tmux.service's" \
+	'wait_for 30 "[ -n \"\$(s2pid)\" ]" && [ "$(u2prop tmux.service ActiveState)" = inactive ] && cg2 "$(s2pid)" | grep -q "/asctl-tmux.service$"' \
+	'echo "tmux.service $(u2prop tmux.service ActiveState); server $(s2pid): $(cg2 "$(s2pid)")"'
+chk "  its favorite is back, by boot, from the installed release" \
+	'wait_for 60 "d2 tmux has-session -t =mach-$MID 2>/dev/null" && wait_for 15 "[ -n \"\$(c2pid)\" ]" && wrapof "$(c2pid)" | grep -q "$OPT/releases/" && u2 jq -s -e "map(select(.kind == \"on\")) | last | .by == \"boot\"" "$H2/.local/state/agent-session-control/events.jsonl" >/dev/null' \
+	'u2 journalctl --user -u asctl-boot -n 8 --no-pager -o cat'
+
+echo "== 9. asctl setup --remove, then install.sh --uninstall"
+out=$(x /opt/asc/install.sh --uninstall 2>&1); rc=$?
+chk "uninstall while sbuser2 has it set up: refused, the user named" '[ "$rc" = 1 ] && has "asctl is set up for: sbuser2" && x test -d $OPT' 'echo "rc $rc: $out"'
+out=$(u2 asctl setup --remove --yes 2>&1); rc=$?
+chk "asctl setup --remove: its units off, tmux.service enabled again, the server left as it is" \
+	'[ "$rc" = 0 ] && [ "$(u2 systemctl --user is-enabled asctl-tmux.service 2>&1)" = disabled ] && [ "$(u2 systemctl --user is-enabled tmux.service)" = enabled ] && [ "$(u2prop asctl-tmux.service ActiveState)" = active ] && [ "$(u2prop asctl-watch.timer ActiveState)" = inactive ] && ! u2 test -e $H2/.config/systemd/user/tmux-spawn-.scope.d/asctl.conf' \
+	'echo "rc $rc: $out"'
+out=$(x /opt/asc/install.sh --uninstall 2>&1); rc=$?
+chk "uninstall while a pane still runs its asctl-wrap: refused" '[ "$rc" = 1 ] && has "processes still run its code"' 'echo "rc $rc: $out"'
+out=$(x /opt/asc/install.sh --uninstall --force 2>&1); rc=$?
+chk "uninstall --force: its folder, link and units gone; sbuser's own units kept" \
+	'[ "$rc" = 0 ] && ! x test -e $OPT && ! x test -L /usr/local/bin/asctl && ! x test -e /etc/systemd/user/asctl-tmux.service && ux test -f /home/sbuser/.config/systemd/user/asctl-tmux.service' 'echo "rc $rc: $out"'
+chk "  sbuser2's session and its claude still run" 'd2 tmux has-session -t "=mach-$MID" && [ -n "$(c2pid)" ]'
+out=$(x /opt/asc/install.sh --uninstall 2>&1); rc=$?
+chk "uninstall again: nothing to do" '[ "$rc" = 0 ] && has "not installed: nothing to do"' 'echo "rc $rc: $out"'
 
 echo
 echo "sandbox: $pass passed, $fail failed"

@@ -33,6 +33,8 @@
   asctl dash [--socket P] [--idle S]
                                    the dashboard server, on a unix socket (see asc/dash.py)
   asctl tmux-server                asctl-tmux.service's start (only that unit runs it)
+  asctl setup [--remove] [--yes]   turn asctl's units on for this user (once, no sudo), or off
+                                   again; shows what it will do and asks first (asc/setup.py)
 ID is the 4-digit id or the full NAME-ID. With no tmux server running, On starts
 asctl-tmux.service, which owns the server: asctl never starts one from its own process (the
 server would then be that process's, and restarting the dashboard would end every session).
@@ -766,6 +768,11 @@ def cmd_tmux_server(args):
     return 0
 
 
+def cmd_setup(args):
+    from . import setup
+    return setup.remove(args.yes) if args.remove else setup.setup(args.yes)
+
+
 def cmd_dash(args):
     from . import dash
     return dash.serve(args.socket, args.idle)
@@ -833,6 +840,10 @@ def main(argv=None):
     a.add_argument("--net-wait", type=int, default=120, help="wait this long for claude.ai before the first start")
     a.set_defaults(f=cmd_boot)
     sub.add_parser("tmux-server").set_defaults(f=cmd_tmux_server)
+    a = sub.add_parser("setup")
+    a.add_argument("--remove", action="store_true", help="turn it off again (favorites and the log are kept)")
+    a.add_argument("--yes", action="store_true", help="do not ask")
+    a.set_defaults(f=cmd_setup)
     a = sub.add_parser("dash")
     a.add_argument("--socket")
     a.add_argument("--idle", type=int, default=600, help="exit after this many idle seconds (0: never)")

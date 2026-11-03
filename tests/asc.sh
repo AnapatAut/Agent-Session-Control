@@ -394,7 +394,9 @@ rm -f "$HOME/fake-menu-on"
 touch "$HOME/fake-mangle"
 out=$(asctl rc "$id2" on); seen "its prompt now holds 'x/remote-control My chat'; check it" <<<"$out" && [ -z "$(bridge)" ] && screen | seen 'x/remote-control My chat' \
 	&& ok "the prompt not showing the command as typed: Enter not pressed, text not ours left alone" || bad "mangle: $out"
-rm -f "$HOME/fake-mangle"; tm send-keys -t "$pane" $(printf 'BSpace %.0s' $(seq 1 30)); sleep 0.5
+rm -f "$HOME/fake-mangle"
+# shellcheck disable=SC2046  # one key name per word, on purpose
+tm send-keys -t "$pane" $(printf 'BSpace %.0s' $(seq 1 30)); sleep 0.5
 touch "$HOME/fake-two-lines"; tm send-keys -t "$pane" x BSpace; sleep 0.5
 out=$(asctl rc "$id2" on); seen "not changed now: its screen does not show claude's prompt" <<<"$out" && [ -z "$(bridge)" ] \
 	&& ok "a prompt of two lines (the first empty) is not empty" || bad "two lines: $out"
@@ -769,6 +771,122 @@ out=$(ASC_NET=127.0.0.1:$shut_port boot --net-wait 1 --wait 60 2>&1)
 last waiting | seen "127.0.0.1:$shut_port did not answer in 1 s; starting anyway" && [ "$(evn on)" = $((non + 1)) ] \
 	&& ok "claude.ai not answering: started anyway after the wait" || bad "net down: $out $(last waiting)"
 kill "$lp" 2>/dev/null
+echo "== asctl setup (a fake user manager: tests/asc/bin/systemctl)"
+# A home of its own: its fake units must not change how On starts the tmux server above.
+H2="$T/h2" F2="$T/h2/fake-units"; mkdir -p "$H2" "$T/linger"
+# A template's instance, its name put together at run time (the privacy check reads x@y.z as an
+# email); the units setup disables, as setup.json lists them.
+AT=@; IM="tmux${AT}main.service"
+ALL="[\"envtmux.service\",\"shtmux.service\",\"tmux.service\",\"$IM\"]"
+su2() { HOME="$H2" ASC_LINGER_DIR="$T/linger" "$REPO/bin/asctl" setup "$@" 2>&1; }
+SUD="$H2/.config/systemd/user" SJ="$H2/.local/state/agent-session-control/setup.json"
+en() { [ -e "$F2/enabled/$1" ]; }
+calls() { grep -c -E "^--user ($1)" "$H2/systemctl.log" 2>/dev/null || true; }
+out=$(su2 --yes); rc=$?
+[ "$rc" = 1 ] && seen "asctl's units are not installed (asctl-tmux.service, asctl-boot.service" <<<"$out" && [ "$(calls 'enable|disable|start|daemon-reload')" = 0 ] \
+	&& ok "setup, units not installed: refused, nothing changed" || bad "setup, no units: rc $rc $out"
+mkdir -p "$F2/enabled"
+for u in asctl-tmux.service asctl-boot.service asctl-watch.timer asctl-dash.socket; do echo "ExecStart=/x/bin/asctl run" > "$F2/$u"; done
+echo "ExecStart=/usr/bin/tmux new-session -d" > "$F2/tmux.service"; : > "$F2/enabled/tmux.service"
+echo "ExecStart=/usr/bin/python3 -m http.server" > "$F2/web.service"; : > "$F2/enabled/web.service"
+echo "ExecStart=/usr/bin/tmux -L other start-server" > "$F2/asctl-old.service"; : > "$F2/enabled/asctl-old.service"
+echo "ExecStart=/usr/bin/env TERM=xterm tmux new-session -d -s envtmux" > "$F2/envtmux.service"; : > "$F2/enabled/envtmux.service"
+echo "ExecStart=/usr/bin/env python3 tmux" > "$F2/notmux.service"; : > "$F2/enabled/notmux.service"
+echo "ExecStart=/bin/sh -c tmux new-session -d" > "$F2/shtmux.service"; : > "$F2/enabled/shtmux.service"
+# a template enabled as one instance: systemd lists the template, the link names the instance
+echo "ExecStart=/usr/bin/tmux -L %i start-server" > "$F2/tmux@.service"; cp "$F2/tmux@.service" "$F2/$IM"
+: > "$F2/enabled/tmux@.service"; : > "$F2/enabled/$IM"
+mkdir -p "$SUD/default.target.wants"; ln -s "$SUD/tmux@.service" "$SUD/default.target.wants/$IM"
+mkdir -p "$H2/.local/state/tmux-claude-restore"; : > "$H2/.local/state/tmux-claude-restore/manifest.json"
+out=$(su2 --yes); rc=$?
+[ "$rc" = 1 ] && seen "an earlier tmux-claude-restore install is here (its manifest $H2/.local/state/tmux-claude-restore/manifest.json)" <<<"$out" && en tmux.service \
+	&& ok "setup, an old tmux-claude-restore install: refused (its manifest)" || bad "setup, old manifest: rc $rc $out"
+rm -r "$H2/.local/state/tmux-claude-restore"
+printf '%s\n' "set -g mouse on" "# >>> tmux-claude-restore >>> (managed by /old/tcr/install.sh; edits here are overwritten)" "# <<< tmux-claude-restore <<<" > "$H2/.tmux.conf"
+out=$(su2 --yes); rc=$?
+[ "$rc" = 1 ] && seen "its block in $H2/.tmux.conf (installed by /old/tcr/install.sh)" <<<"$out" \
+	&& ok "setup, its block in the tmux config: refused, its installer named" || bad "setup, old block: rc $rc $out"
+printf '%s\n' "set -g mouse on" "# set -g @continuum-restore 'on'" "set -g @continuum-restore 'off'" "set -g @continuum-boot \"on\"  # at boot" > "$H2/.tmux.conf"
+out=$(su2 --yes); rc=$?
+[ "$rc" = 1 ] && seen "$H2/.tmux.conf:4: @continuum-boot 'on'" <<<"$out" && ! seen ":2: @continuum" <<<"$out" && ! seen ":3: @continuum" <<<"$out" \
+	&& ok "setup, continuum's boot on in the config: refused, the line named (a comment and 'off' are not)" || bad "setup, continuum config: rc $rc $out"
+printf '%s\n' "source-file -q ~/.tmux.conf.local" > "$H2/.tmux.conf"; printf '%s\n' "set -g @continuum-restore 'on'" > "$H2/.tmux.conf.local"
+out=$(su2 --yes); rc=$?
+[ "$rc" = 1 ] && seen "$H2/.tmux.conf.local:1: @continuum-restore 'on'" <<<"$out" \
+	&& ok "setup, continuum's restore on in a file the config sources (source-file -q ~/…): refused" || bad "setup, sourced continuum: rc $rc $out"
+rm "$H2/.tmux.conf.local"
+mkdir -p "$H2/.config/tmux"; printf '%s\n' "set-option -gq @continuum-restore on" > "$H2/.config/tmux/tmux.conf"; : > "$H2/.tmux.conf"
+out=$(su2 --yes); rc=$?
+[ "$rc" = 1 ] && seen "$H2/.config/tmux/tmux.conf:1: @continuum-restore 'on'" <<<"$out" \
+	&& ok "setup, continuum's restore on in the XDG config (set-option -gq): refused" || bad "setup, XDG continuum: rc $rc $out"
+rm -r "$H2/.config/tmux"; tm set -g @continuum-restore on
+out=$(su2 --yes); rc=$?
+tm set -gu @continuum-restore
+[ "$rc" = 1 ] && seen "the running tmux server: @continuum-restore on" <<<"$out" \
+	&& ok "setup, continuum's restore on in the running server: refused" || bad "setup, server continuum: rc $rc $out"
+touch "$F2/fail-show-environment"; out=$(su2 --yes); rc=$?; rm "$F2/fail-show-environment"
+[ "$rc" = 1 ] && seen "cannot reach your systemd user manager (systemctl --user: Failed to connect to bus" <<<"$out" && en tmux.service \
+	&& ok "setup, the user manager not answering: refused as that (not as units missing)" || bad "setup, no manager: rc $rc $out"
+out=$(su2 </dev/null); rc=$?
+[ "$rc" = 1 ] && seen "disable tmux.service, which runs tmux" <<<"$out" && seen "enable asctl-tmux.service, asctl-boot.service, asctl-watch.timer, asctl-dash.socket" <<<"$out" \
+	&& seen "run asctl setup --yes to do it" <<<"$out" && en tmux.service && ! en asctl-tmux.service && ! [ -e "$SUD/tmux-spawn-.scope.d/asctl.conf" ] \
+	&& ok "setup, no terminal and no --yes: shows the plan, changes nothing" || bad "setup, no --yes: rc $rc $out"
+out=$(su2 --yes); rc=$?
+dropin_ok() { cmp -s "$SUD/tmux-spawn-.scope.d/asctl.conf" "$REPO/systemd/tmux-spawn-.scope.d/asctl.conf" && [ "$(stat -c %a "$SUD/tmux-spawn-.scope.d/asctl.conf")" = 644 ]; }
+[ "$rc" = 0 ] && ! en tmux.service && ! en envtmux.service && ! en shtmux.service && ! en $IM && en web.service && en asctl-old.service && en notmux.service && dropin_ok \
+	&& en asctl-tmux.service && en asctl-boot.service && en asctl-watch.timer && en asctl-dash.socket \
+	&& [ -e "$F2/active/asctl-watch.timer" ] && [ -e "$F2/active/asctl-dash.socket" ] && ! [ -e "$F2/active/asctl-tmux.service" ] \
+	&& ok "setup --yes: the drop-in, the units that run tmux disabled (through env, sh -c, a template's instance; others left), asctl's units on, timer and socket started" || bad "setup --yes: rc $rc $out"
+[ "$(jq -c .disabled "$SJ")" = "$ALL" ] && [ "$(stat -c %a "$SJ")" = 600 ] \
+	&& ok "  what it disabled is recorded (setup.json, 0600)" || bad "  setup.json: $(cat "$SJ" 2>&1)"
+seen "note: linger is off" <<<"$out" && seen "note: the dashboard has no config yet: $H2/.config/agent-session-control/dash.json" <<<"$out" \
+	&& ok "  notes: linger off, no dashboard config" || bad "  notes: $out"
+jq -s -e 'last | .kind == "setup" and .by == "cli" and (.text | test("disabled tmux.service"))' "$H2/.local/state/agent-session-control/events.jsonl" >/dev/null \
+	&& ok "  logged (kind setup)" || bad "  setup event: $(tail -1 "$H2/.local/state/agent-session-control/events.jsonl")"
+n=$(calls 'enable|disable|start'); : > "$T/linger/$(id -un)"
+out=$(su2 --yes); rc=$?
+[ "$rc" = 0 ] && seen "asctl is set up already: nothing to do" <<<"$out" && [ "$(calls 'enable|disable|start')" = "$n" ] && ! seen "linger" <<<"$out" \
+	&& ok "setup again: nothing to do, nothing called (and no linger note with linger on)" || bad "setup again: rc $rc $out"
+echo "# mine" >> "$SUD/tmux-spawn-.scope.d/asctl.conf"
+out=$(su2 --yes); rc=$?
+[ "$rc" = 0 ] && seen "asctl.conf is not the one asctl ships: left as it is" <<<"$out" && tail -1 "$SUD/tmux-spawn-.scope.d/asctl.conf" | seen -x "# mine" \
+	&& ok "setup, a changed drop-in: left as it is, said so" || bad "setup, changed drop-in: rc $rc $out"
+out=$(su2 --remove --yes); rc=$?
+[ "$rc" = 0 ] && ! en asctl-tmux.service && ! en asctl-boot.service && ! en asctl-watch.timer && ! en asctl-dash.socket && ! [ -e "$F2/active/asctl-watch.timer" ] \
+	&& en tmux.service && en envtmux.service && en $IM && [ -e "$SUD/tmux-spawn-.scope.d/asctl.conf" ] && ! [ -e "$SJ" ] && seen "is not the one asctl ships: left as it is" <<<"$out" \
+	&& ok "setup --remove: asctl's units off, tmux.service enabled again, a changed drop-in left" || bad "setup --remove: rc $rc $out"
+! seen "^--user stop.*asctl-tmux.service" "$H2/systemctl.log" && ok "  the tmux server unit never stopped" || bad "  asctl-tmux.service was stopped"
+out=$(su2 --remove --yes); rc=$?
+[ "$rc" = 0 ] && seen "asctl is not set up: nothing to do" <<<"$out" && ok "setup --remove again: nothing to do" || bad "remove again: rc $rc $out"
+rm "$SUD/tmux-spawn-.scope.d/asctl.conf"; : > "$F2/fail-enable-asctl-tmux.service"
+out=$(su2 --yes); rc=$?
+[ "$rc" = 1 ] && seen "setup stopped part way (wrote .*; disabled $IM): systemctl --user enable" <<<"$out" && ! en tmux.service && [ "$(jq -c .disabled "$SJ")" = "$ALL" ] \
+	&& jq -s -e 'last | .kind == "failed"' "$H2/.local/state/agent-session-control/events.jsonl" >/dev/null \
+	&& ok "setup failing part way: says what it did, logged failed, the disabled unit recorded" || bad "setup part way: rc $rc $out"
+rm "$F2/fail-enable-asctl-tmux.service"
+out=$(su2 --yes); rc=$?
+[ "$rc" = 0 ] && en asctl-tmux.service && ! seen "disable tmux.service" <<<"$out" && ok "  setup again finishes it" || bad "  setup again: rc $rc $out"
+out=$(su2 --remove --yes); rc=$?
+[ "$rc" = 0 ] && en tmux.service && ! [ -e "$SUD/tmux-spawn-.scope.d/asctl.conf" ] && ! [ -e "$SJ" ] \
+	&& ok "  then --remove: tmux.service enabled again, the unchanged drop-in removed" || bad "  remove after: rc $rc $out"
+: > "$F2/fail-disable-tmux.service"
+out=$(su2 --yes); rc=$?; rm "$F2/fail-disable-tmux.service"
+[ "$rc" = 1 ] && seen "disabled envtmux.service; disabled shtmux.service): systemctl --user disable tmux.service" <<<"$out" && ! en envtmux.service && en tmux.service \
+	&& [ "$(jq -c .disabled "$SJ")" = "$ALL" ] \
+	&& ok "setup, a disable failing part way: the ones before it recorded as disabled" || bad "setup, disable part way: rc $rc $out"
+out=$(su2 --remove --yes); rc=$?
+[ "$rc" = 0 ] && en envtmux.service && en shtmux.service && en tmux.service && ! [ -e "$SJ" ] \
+	&& ok "  --remove after it: those enabled again" || bad "  remove after part way: rc $rc $out"
+: > "$F2/global-tmux.service"
+out=$(su2 --yes); rc=$?
+[ "$rc" = 1 ] && seen "tmux.service is still enabled (enabled for every user?" <<<"$out" && ! en asctl-tmux.service \
+	&& [ "$(jq '.disabled | index("tmux.service")' "$SJ")" = null ] && jq -e '.disabled | index("envtmux.service")' "$SJ" >/dev/null \
+	&& ok "setup, a tmux unit a disable does not turn off: stops, says why, and does not record it" || bad "setup, global unit: rc $rc $out $(cat "$SJ")"
+rm "$F2/global-tmux.service"
+ud() { HOME="$H2" XDG_CONFIG_HOME="$1" python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import setup; print(setup.unit_dir())' "$REPO"; }
+[ "$(ud "$T/shellcfg")" = "$H2/.config/systemd/user" ] && echo "XDG_CONFIG_HOME=$H2/mgrcfg" > "$F2/environment" && [ "$(ud "$T/shellcfg")" = "$H2/mgrcfg/systemd/user" ] \
+	&& ok "the unit folder follows the manager's XDG_CONFIG_HOME, not the shell's" || bad "unit_dir: $(ud "$T/shellcfg")"
+rm "$F2/environment"
 # ASC_MUTANTS=1: break asctl one way at a time, in a copy; each must make this test fail.
 if [ "${ASC_MUTANTS:-}" = 1 ]; then
 	echo "== mutants"
@@ -902,6 +1020,31 @@ asc/boot.py %%%             socket.create_connection((host, int(port)), timeout=
 asc/boot.py %%%         cli.ensure_server() %%%         pass
 asc/boot.py %%%         if said.get(e["id4"]) != reason: %%%         if False:
 bin/asctl-wrap %%% for ((i = 0; i < 30; i++)); do %%% for ((i = 0; i < 0; i++)); do
+asc/setup.py %%%     if missing: %%%     if False:
+asc/setup.py %%%     if os.path.lexists(manifest): %%%     if False:
+asc/setup.py %%%             if line.startswith(OLD_MARK): %%%             if False:
+asc/setup.py %%%             if m: %%%             if False:
+asc/setup.py %%% (?:-[A-Za-z]+\s+)*@continuum %%% (?:-g\s+)?@continuum
+asc/setup.py %%%             if r.returncode == 0 and r.stdout.strip() == "on": %%%             if False:
+asc/setup.py %%%     if cont: %%%     if False:
+asc/setup.py %%%     if not sys.stdin.isatty(): %%%     if False:
+asc/setup.py %%%         if old_units:  # recorded before any is disabled %%%         if False:  # recorded before any is disabled
+asc/setup.py %%%  or u.startswith("asctl-"): %%% :
+asc/setup.py %%%  and runs_tmux(_prop(u, "ExecStart")): %%% :
+asc/setup.py %%%  and _enabled(u) and runs_tmux %%%  and runs_tmux
+asc/setup.py %%%         if prog == "env" and %%%         if False and
+asc/setup.py %%%                 if os.path.isabs(q): %%%                 if False:
+asc/setup.py %%%         if prog in ("sh", "bash", "dash", "zsh") and %%%         if False and
+asc/setup.py %%%         if u.endswith("@.service"):  # a template %%%         if False:  # a template
+asc/setup.py %%%         if r.returncode != 0:  # the manager did not answer %%%         if False:
+asc/setup.py %%%     base = manager_env().get("XDG_CONFIG_HOME") or %%%     base = os.environ.get("XDG_CONFIG_HOME") or
+asc/setup.py %%%                 registry.write_private(_record_path(), {"disabled": [x for x in _recorded() if x != u], %%%                 registry.write_private(_record_path(), {"disabled": [x for x in _recorded()],
+asc/setup.py %%%             if _enabled(u): %%%             if False:
+asc/setup.py %%%             os.unlink(dropin) %%%             pass
+asc/setup.py %%%     back = [u for u in _recorded() if %%%     back = [u for u in [] if
+asc/setup.py %%%     return ("same" if _read(p) == _template() else "differs"), p %%%     return "same", p
+asc/setup.py %%%     to_start = [u for u in STARTED if _prop(u, "ActiveState") != "active"] %%%     to_start = []
+asc/setup.py %%%         cli.out("asctl is set up already: nothing to do") %%%         pass
 MUTANTS
 fi
 

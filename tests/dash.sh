@@ -205,6 +205,7 @@ v=$(px icon-maskable-512.png 26 27)  # on the corner's curve: a blend, so edges 
 [ "$(px favicon-512.png 0 0)" = 00000000 ] && [ "$(px favicon-512.png 256 4)" = 3d3df5ff ] && ok "favicon: transparent corners" || bad "favicon pixels"
 [ "$(px icon-192.png 96 96)" = ffffff ] && [ "$(px icon-512.png 256 256)" = ffffff ] && ok "the any icons are plain white" || bad "any icons not white"
 # Drawn once, then served from the cache (the server starts again after every idle exit).
+# shellcheck disable=SC2012  # one cache file name, made by asctl
 ic=$(ls "$HOME/.cache/agent-session-control/icons/"*-icon-maskable-512.png 2>/dev/null | head -1)
 [ -n "$ic" ] && [ "$(stat -c %a "$(dirname "$ic")")" = 700 ] && [ "$(stat -c %a "$ic")" = 600 ] && cmp -s "$ic" <(anon http://x/icon-maskable-512.png) \
 	&& ok "icons cached 0600 in a 0700 folder, the same bytes served" || bad "no icon cache: $ic"

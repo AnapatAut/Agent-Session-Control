@@ -4,7 +4,7 @@
 
 # Home folders other than the test containers' users (/home/$u in scripts is fine).
 # @TESTUSERS@ is filled in by the checker: every `mkuser NAME` in tests/ and every
-# `useradd … NAME` in tests/sandbox/Dockerfile.
+# `useradd … NAME` in tests/sandbox*/Dockerfile.
 /home/(?!(?:@TESTUSERS@)(?:/|\b)|\$|\{)[A-Za-z0-9_][A-Za-z0-9._-]*
 /Users/(?!Shared\b)[A-Za-z0-9_][A-Za-z0-9._-]*
 # The same in the folder names Claude Code makes from a path under ~/.claude/projects/ (each
