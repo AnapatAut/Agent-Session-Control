@@ -1,0 +1,10 @@
+[Unit]
+Description=asctl: the watcher every 30 s
+
+[Timer]
+OnActiveSec=10s
+OnUnitActiveSec=30s
+AccuracySec=2s
+
+[Install]
+WantedBy=timers.target

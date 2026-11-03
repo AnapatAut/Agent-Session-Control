@@ -1,0 +1,13 @@
+# The dashboard's socket, private to this user: tailscale serve (root) passes requests to it.
+[Unit]
+Description=asctl dashboard socket
+
+[Socket]
+ListenStream=%t/asctl/dash.sock
+SocketMode=0600
+DirectoryMode=0700
+# systemd leaves the socket file behind otherwise
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

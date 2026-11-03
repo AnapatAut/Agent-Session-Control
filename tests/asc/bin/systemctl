@@ -1,0 +1,14 @@
+#!/bin/bash
+# Fake systemctl for the tests ($ASC_SYSTEMCTL): "--user start asctl-tmux.service" runs what the
+# unit runs (asctl tmux-server); $HOME/fake-systemctl-fail: that unit is not there. Every call is
+# logged to $HOME/systemctl.log. Anything else fails: the tests never reach a real systemd.
+echo "$*" >> "$HOME/systemctl.log"
+if [ "$*" = "--user start asctl-tmux.service" ]; then
+	if [ -e "$HOME/fake-systemctl-fail" ]; then
+		echo "Failed to start asctl-tmux.service: Unit asctl-tmux.service not found." >&2
+		exit 5
+	fi
+	exec "$(dirname "$0")/../../../bin/asctl" tmux-server
+fi
+echo "fake systemctl: not faked: $*" >&2
+exit 1

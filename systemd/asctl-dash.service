@@ -1,0 +1,13 @@
+# The dashboard (asctl dash; asc/dash.py), started by its socket, ends after 10 idle minutes.
+[Unit]
+Description=asctl dashboard
+Requires=asctl-dash.socket
+After=asctl-dash.socket
+
+[Service]
+ExecStart=@ASCTL@ dash --idle 600
+# SIGTERM to the server only: it waits up to 100 s for running actions (asctl children it runs);
+# whatever is left when it exits is killed
+KillMode=mixed
+TimeoutStopSec=120
+NoNewPrivileges=yes

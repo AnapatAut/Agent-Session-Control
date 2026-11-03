@@ -262,6 +262,79 @@ chk "and started it again, in the same session" \
 	'ux jq -s -c ".[-4:]" $EV'
 ux systemctl --user stop asc-oomtmux 2>/dev/null
 
+echo "== 6. the units as installed: the tmux server unit, then a reboot and boot resurrect"
+# tools/install-units.sh writes them. Drop-ins point them at the fake claude and memory, and
+# claude.ai at a closed port (no network here; boot's wait for it cut to 2 s). The tmux server is
+# the default one now, as on a real machine.
+U=/home/sbuser/.config/systemd/user
+out=$(ux /opt/asc/tools/install-units.sh 2>&1); rc=$?
+chk "install-units: a unit there that is not the same is shown and left" \
+	'[ "$rc" = 1 ] && printf "%s\n" "$out" | grep -q "asctl-dash.service differs" && ux grep -q "idle 5" $U/asctl-dash.service' 'echo "rc $rc"; printf "%s\n" "$out" | head -20'
+out=$(ux /opt/asc/tools/install-units.sh --force 2>&1); rc=$?
+chk "install-units --force: written, with this checkout's asctl, nothing enabled" \
+	'[ "$rc" = 0 ] && ux grep -qx "ExecStart=/opt/asc/bin/asctl tmux-server" $U/asctl-tmux.service && ux test -f $U/tmux-spawn-.scope.d/asctl.conf && [ "$(ux systemctl --user is-enabled asctl-tmux.service 2>/dev/null)" != enabled ]' \
+	'echo "rc $rc"; printf "%s\n" "$out" | head -20'
+ux sh -ec 'u=~/.config/systemd/user; rm -f "$u/tmux-spawn-.scope.d/asctl-test.conf"; mkdir -p "$u/asctl-tmux.service.d" "$u/asctl-boot.service.d"
+printf "%s\n" "[Service]" "Environment=FAKE_BASH=%h/fb/claude" > "$u/asctl-tmux.service.d/test.conf"
+printf "%s\n" "[Service]" "Environment=ASC_CLAUDE=/opt/asc/tests/asc/bin/claude ASC_MEMINFO=%h/meminfo ASC_NET=127.0.0.1:9" \
+	"ExecStart=" "ExecStart=/opt/asc/bin/asctl boot --net-wait 2 --wait 300" > "$u/asctl-boot.service.d/test.conf"
+systemctl --user daemon-reload && systemctl --user enable asctl-tmux.service asctl-boot.service' >/dev/null 2>&1
+DE="ASC_CLAUDE=/opt/asc/tests/asc/bin/claude FAKE_BASH=/home/sbuser/fb/claude ASC_MEMINFO=/home/sbuser/meminfo"
+dux() { ux env $DE "$@"; }
+spid() { dux tmux display -p '#{pid}' 2>/dev/null; }
+cgof() { ux cat "/proc/$1/cgroup" 2>/dev/null | cut -d: -f3; }
+ux systemctl --user start asctl-tmux.service
+chk "asctl-tmux.service: up, its main process the tmux server, kept with no session" \
+	'[ "$(uprop asctl-tmux.service ActiveState)" = active ] && [ -n "$(spid)" ] && [ "$(uprop asctl-tmux.service MainPID)" = "$(spid)" ] && [ -z "$(dux tmux ls 2>/dev/null)" ]' \
+	'echo "$(uprop asctl-tmux.service ActiveState) main $(uprop asctl-tmux.service MainPID) server $(spid)"; journal asctl-tmux'
+chk "it has OOMPolicy=continue and refuses a manual stop (the server stays)" \
+	'[ "$(uprop asctl-tmux.service OOMPolicy) $(uprop asctl-tmux.service RefuseManualStop)" = "continue yes" ] && ! ux systemctl --user stop asctl-tmux.service 2>/dev/null && [ "$(uprop asctl-tmux.service ActiveState)" = active ]'
+# The day of the switch: a server another unit started runs. The start succeeds, no second one.
+dux tmux kill-server; wait_for 10 '[ "$(uprop asctl-tmux.service ActiveState)" = inactive ]'
+ux systemd-run --user --unit=asc-oldtmux -p Type=forking tmux new-session -d -s old >/dev/null 2>&1
+wait_for 10 '[ -n "$(spid)" ]'; old=$(spid)
+ux systemctl --user start asctl-tmux.service; rc=$?
+chk "with another unit's server up: the start succeeds and starts no second server" \
+	'[ "$rc" = 0 ] && [ "$(spid)" = "$old" ] && [ "$(uprop asctl-tmux.service ActiveState)" = inactive ] && [ "$(uprop asctl-tmux.service Result)" = success ]' \
+	'echo "rc $rc server $(spid) (was $old) $(uprop asctl-tmux.service ActiveState) $(uprop asctl-tmux.service Result)"; journal asctl-tmux'
+ux systemctl --user stop asc-oldtmux 2>/dev/null; wait_for 10 '[ -z "$(spid)" ]'
+# A favorite, then On with no server running: On starts asctl-tmux.service, which owns the server.
+BS=dddddddd-0000-4000-8000-0000000000bb
+ux systemctl --user start asctl-tmux.service
+dux tmux new-session -d -s b -c /home/sbuser/w -- /opt/asc/tests/asc/bin/claude --session-id "$BS"
+bpid() { dux /opt/asc/bin/asctl live | awk -v s="$BS" '$2 == s {print $1}'; }
+wait_for 15 '[ -n "$(bpid)" ]'
+dux /opt/asc/bin/asctl fav "$(bpid)" --name bootc >/dev/null 2>&1
+BID=$(ux jq -r '.entries[] | select(.name == "bootc") | .id4' /home/sbuser/.local/state/agent-session-control/registry.json)
+dux /opt/asc/bin/asctl off "$BID" >/dev/null 2>&1; dux tmux kill-server 2>/dev/null; wait_for 10 '[ -z "$(spid)" ]'
+out=$(dux /opt/asc/bin/asctl on "$BID" 2>&1); rc=$?
+chk "On with no tmux server: it starts asctl-tmux.service, the server is that unit's" \
+	'[ "$rc" = 0 ] && [ -n "$(spid)" ] && cgof "$(spid)" | grep -q "/asctl-tmux.service$"' 'echo "rc $rc: $out"; echo "server $(spid): $(cgof "$(spid)")"; journal asctl-tmux'
+chk "its claude is in a tmux scope that goes on after an OOM kill (the installed drop-in)" \
+	'wait_for 15 "[ -n \"\$(bpid)\" ]" && u=$(basename "$(cgof "$(bpid)")") && [ "${u#tmux-spawn-}" != "$u" ] && [ "$(uprop "$u" OOMPolicy)" = continue ]' \
+	'echo "claude $(bpid): $(cgof "$(bpid)")"'
+dux /opt/asc/bin/asctl resurrect "$BID" on >/dev/null
+# Steady memory before the reboot (the host kernel's boot id stays: a container restart is a
+# boot of its systemd only), then the reboot: shutdown stops the units, the next boot runs them.
+ux env ASC_MEMINFO=/home/sbuser/meminfo python3 -I -c 'import sys, time; sys.path.insert(0, "/opt/asc"); from asc import memory, registry
+s = memory.sample(); now = int(time.time())
+registry.write_private(registry.state_dir() + "/memory.json", [dict(s, t=now - 30 * i) for i in range(12, -1, -1)])'
+docker restart -t 60 "$C" >/dev/null 2>&1
+chk "the reboot: systemd and sbuser's manager up again, still no network" \
+	'wait_for 60 "x systemctl is-system-running 2>/dev/null | grep -qE \"running|degraded\"" && wait_for 30 "ux systemctl --user is-system-running 2>/dev/null | grep -qE \"running|degraded\"" && [ "$(x ls /sys/class/net)" = lo ]' \
+	'x systemctl --failed --no-legend; x ls /sys/class/net'
+chk "asctl-boot.service ran and ended cleanly" \
+	'wait_for 60 "[ \"\$(uprop asctl-boot.service ActiveState) \$(uprop asctl-boot.service Result) \$(uprop asctl-boot.service ExecMainStatus)\" = \"inactive success 0\" ]"' \
+	'echo "$(uprop asctl-boot.service ActiveState) $(uprop asctl-boot.service Result) $(uprop asctl-boot.service ExecMainStatus)"; journal asctl-boot'
+EV=/home/sbuser/.local/state/agent-session-control/events.jsonl
+chk "the favorite is back in its tmux session, by boot, with rc" \
+	'dux tmux has-session -t "=bootc-$BID" && wait_for 15 "[ -n \"\$(bpid)\" ]" && ux jq -s -e "map(select(.kind == \"on\")) | last | .by == \"boot\" and .rc == true" $EV >/dev/null' \
+	'journal asctl-boot; ux jq -s -c ".[-4:]" $EV'
+chk "claude.ai not answering: boot waited 2 s, said so, started anyway" \
+	'ux jq -s -e "map(select(.kind == \"waiting\" and (.text | test(\"127.0.0.1:9 did not answer in 2 s\")))) | length == 1" $EV >/dev/null' 'ux jq -s -c "map(select(.kind == \"waiting\"))" $EV'
+chk "its server is asctl-tmux.service's (enabled, up at boot)" \
+	'[ "$(uprop asctl-tmux.service ActiveState)" = active ] && cgof "$(spid)" | grep -q "/asctl-tmux.service$"' 'echo "server $(spid): $(cgof "$(spid)")"'
+
 echo
 echo "sandbox: $pass passed, $fail failed"
 [ "$fail" = 0 ] || printf '  failed: %s\n' "${FAILED[@]}"

@@ -9,7 +9,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 T=$(mktemp -d) || exit 2
 export ASC_TMUX_SOCKET="asc-test-$$" ASC_CLAUDE="$REPO/tests/asc/bin/claude"
 export REPO_HOME="${REPO_HOME:-$HOME}"
-export HOME="$T/home" XDG_STATE_HOME="" SHELL=/bin/bash
+export HOME="$T/home" XDG_STATE_HOME="" XDG_CONFIG_HOME="" SHELL=/bin/bash
 unset TMUX
 mkdir -p "$HOME" "$T/fakebash"
 cp "$(command -v bash)" "$T/fakebash/claude"
@@ -23,6 +23,8 @@ mem 32000000 16000000
 vm() { printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=%s\n' "$1" > "$T/pressure"
 	printf 'nr_free_pages 1\npswpin %s\npswpout %s\noom_kill %s\n' "$2" "$3" "$4" > "$T/vmstat"; }
 export ASC_PRESSURE="$T/pressure" ASC_VMSTAT="$T/vmstat"
+# On starts asctl-tmux.service when no tmux server runs: a fake systemctl (never the real one).
+export ASC_SYSTEMCTL="$REPO/tests/asc/bin/systemctl"
 vm 0 0 0 0
 tm() { tmux -L "$ASC_TMUX_SOCKET" -f /dev/null "$@"; }
 # kill-server has a time limit: it once hung for hours on a stuck test server (and with it this run)
@@ -90,6 +92,12 @@ asctl list | seen "^$id .* off " && ok "list: off" || bad "list: not off"
 echo "== on"
 asctl on "$id" >/dev/null && ok "on" || bad "on failed"
 pid=$(claude_in "das-$id") && ok "claude up in das-$id" || bad "no claude in das-$id"
+# tmux with systemd moves each pane into a scope of its own just after starting it; claude must
+# be forked after that, in the wrapper's scope, not left in the server's cgroup.
+cg() { cut -d: -f3 "/proc/$1/cgroup" 2>/dev/null; }
+wp=$(ps -o ppid= -p "$pid" | tr -d ' '); sp=$(tm display -p '#{pid}')
+if [ "$(cg "$wp")" = "$(cg "$sp")" ]; then ok "no pane scopes here (no user bus for tmux): nothing to check"
+else [ "$(cg "$pid")" = "$(cg "$wp")" ] && ok "claude is in its pane's scope, not the server's cgroup" || bad "claude in $(cg "$pid"), its pane in $(cg "$wp")"; fi
 lastargs | grep -q -- "--resume $SID --name das-$id --permission-mode auto" && ok "started with --resume, --name and the mode" || bad "wrong args: $(lastargs)"
 [ "$(jqe ".entries[\"$id\"].want_on")" = true ] && ok "want_on true after on" || bad "want_on not true after on"
 asctl on "$id" >/dev/null 2>&1 && bad "a second on accepted" || ok "a second on refused (session exists)"
@@ -579,13 +587,14 @@ rk 13000000; seed; watch
 last waiting | jq -r .text | seen 'would leave' && ! claude_in "wat2-$idw" >/dev/null 2>&1 && ok "steady, but no room for its size: waiting" || bad "room check: $(last waiting)"
 rk 400000
 seed; bump; watch; pn=$(claude_in "wat2-$idw") && ok "steady again: started" || bad "not started when steady: $(last waiting)"
-# An end with no sample after it yet: told by the next run, not taken as "no pressure".
+# An end with no sample after it yet: told by the next run, not taken as "no pressure". (The end is
+# 3 s ahead in whole seconds, as samples are: the next sample over 4 s later is surely after it.)
 python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import registry
 with registry.changing() as d: d["entries"][sys.argv[2]]["auto_restarted"] = 1' "$REPO" "$idw"
 pw=$pn; seed; bump; watch; kill -TERM "$pw"; sleep 1.2
 printf '143 %s %s %s\n' "$(( $(date +%s) + 3 ))" "$(cat /proc/sys/kernel/random/boot_id)" "$(tm display -p -t "=wat2-$idw:" '#{pane_pid}')" > "$SD/exit/$idw"; watch
 ended | seen 'no memory samples around that time' || bad "no sample after: $(ended)"
-bump; sleep 3.5; watch; pn=$(claude_in "wat2-$idw") && last restarted | seen '1 OOM kill' && ok "no sample after the end yet: asked again next run, then started" || bad "evidence not asked again: $(last waiting)"
+bump; sleep 4.2; watch; pn=$(claude_in "wat2-$idw") && last restarted | seen '1 OOM kill' && ok "no sample after the end yet: asked again next run, then started" || bad "evidence not asked again: $(jq -s -c '.[-4:] | map([.kind, .text])' "$SD/events.jsonl") / $(cat "$SD/exit/$idw" 2>&1) / $(jq -c '[.[-3:][] | [.t, .oom_kill]]' "$SD/memory.json")"
 pw=$pn; watch; kill -INT "$pw"; sleep 1.2; bump; watch
 ended | seen 'exit 0, .*not started again: it did not end by a signal' && ok "exit 0 (the user ended it): never started again" || bad "exit 0: $(ended)"
 printf '143 %s some-other-boot\n' "$(date +%s)" > "$SD/exit/$idw"; watch
@@ -689,6 +698,77 @@ asctl off "$idw" --force >/dev/null; watch
 claude_in "wat3-$idw" >/dev/null 2>&1 && bad "off, and started anyway" || ok "off: the watcher leaves it off"
 [ "$(jq -r ".entries[\"$idw\"].want_on" "$REG")" = false ] && ok "want_on only changed by off" || bad "want_on changed"
 asctl auto-restart off >/dev/null
+
+echo "== the tmux server unit, and boot"
+SC="$HOME/systemctl.log"
+asctl tmux-server | seen 'already runs' && [ ! -e "$SC" ] && ok "tmux-server with a server up: left as it is" || bad "tmux-server with a server up: $(asctl tmux-server 2>&1)"
+# Before the reboot: idw on, resurrect on, rc off (a resurrect start still has rc); of the others,
+# one with resurrect on that was off, the rest on with resurrect off.
+asctl resurrect "$idw" on >/dev/null; asctl rc "$idw" off --next-start >/dev/null; asctl on "$idw" >/dev/null
+claude_in "wat3-$idw" >/dev/null || bad "not on before the reboot"
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import registry
+with registry.changing() as d:
+    others = sorted(i for i in d["entries"] if i != sys.argv[2])
+    for n, i in enumerate(others):
+        d["entries"][i].update(resurrect=n == 0, want_on=n != 0)' "$REPO" "$idw"
+others=$(jq -r --arg w "$idw" '[.entries[] | select(.id4 != $w) | .tmux] | join(" ")' "$REG")
+tm kill-server; for _ in $(seq 1 25); do tm display -p x >/dev/null 2>&1 || break; sleep 0.2; done
+touch "$HOME/fake-systemctl-fail"
+errof on "$idw" | seen 'asctl-tmux.service did not start one: .*not found' && ! tm display -p x >/dev/null 2>&1 \
+	&& ok "on, no server and no unit: refused, no server started by asctl itself" || bad "on with no unit: $(errof on "$idw")"
+rm -f "$HOME/fake-systemctl-fail"
+# A port that takes connections (claude.ai, for boot) and one that refuses them.
+python3 -c 'import socket, time
+a, b = socket.socket(), socket.socket(); a.bind(("127.0.0.1", 0)); a.listen(8); b.bind(("127.0.0.1", 0))
+print(a.getsockname()[1], b.getsockname()[1], flush=True); time.sleep(300)' > "$T/ports" & lp=$!
+for _ in $(seq 1 50); do [ -s "$T/ports" ] && break; sleep 0.1; done; read -r up_port shut_port < "$T/ports"
+boot() { ASC_BY=boot asctl boot "$@"; }
+# Its lock held by an action: boot waits (here 0 s), then leaves it.
+: > "$SC"; flock "$SD/locks/$idw" sleep 3 & fl=$!; sleep 0.3; seed
+ASC_NET=127.0.0.1:$up_port boot --wait 0 >/dev/null 2>&1; rc=$?
+grep -qx -- '--user start asctl-tmux.service' "$SC" && [ "$(tm show -gv exit-empty)" = off ] \
+	&& ok "boot, no server: asctl-tmux.service started (exit-empty off)" || bad "server at boot: $(cat "$SC")"
+[ "$rc" = 1 ] && last waiting | seen 'not started yet: .*being started or stopped' && last refused | seen 'boot: not started in 0 s' \
+	&& ok "boot: an entry an action holds waits, then is left (refused)" || bad "boot, lock held: rc $rc $(last waiting) $(last refused)"
+wait $fl
+mem 32000000 4000000; seed
+ASC_NET=127.0.0.1:$up_port boot --wait 0 >/dev/null 2>&1; rc=$?
+[ "$rc" = 1 ] && last waiting | seen 'boot: not started yet: memory' && ! claude_in "wat3-$idw" >/dev/null 2>&1 \
+	&& ok "boot, memory short: waits, then left" || bad "boot, memory: rc $rc $(last waiting)"
+mem 32000000 16000000; rm -f "$SD/memory.json"
+ASC_NET=127.0.0.1:$up_port boot --wait 0 >/dev/null 2>&1; rc=$?
+[ "$rc" = 1 ] && last waiting | seen 'boot: not started yet: memory: watched for under 5 min' && ! claude_in "wat3-$idw" >/dev/null 2>&1 \
+	&& ok "boot, memory fine but not watched 5 min: waits" || bad "boot, steady: rc $rc $(last waiting)"
+# Resurrect turned off while boot waits: left, with nothing said.
+seed; flock "$SD/locks/$idw" sleep 1.5 & fl=$!; sleep 0.3
+(ASC_NET=127.0.0.1:$up_port boot --wait 4 > "$T/boot.out" 2>&1; echo $? >> "$T/boot.out") & bp=$!; sleep 0.7
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import registry
+with registry.changing() as d: d["entries"][sys.argv[2]]["resurrect"] = False' "$REPO" "$idw"
+wait $fl $bp
+seen -x 'boot: 0 started' "$T/boot.out" && seen -x 0 "$T/boot.out" && ! claude_in "wat3-$idw" >/dev/null 2>&1 \
+	&& ok "resurrect off while boot waits: left" || bad "resurrect off mid-boot: $(cat "$T/boot.out")"
+asctl resurrect "$idw" on >/dev/null; asctl rc "$idw" off --next-start >/dev/null
+mem 32000000 16000000; seed; nw=$(jq -s '[.[] | select((.text // "") | test("did not answer"))] | length' "$SD/events.jsonl")
+flock "$SD/boot.lock" sleep 2 & fl=$!; sleep 0.3
+errof boot | seen 'another asctl boot is running' && ok "one boot at a time" || bad "two boots: $(errof boot)"
+wait $fl
+t0=$(date +%s); out=$(ASC_NET=127.0.0.1:$up_port boot --net-wait 30 --wait 60 2>&1); rc=$?
+[ "$rc" = 0 ] && seen -x "boot: 1 started (wat3-$idw)" <<<"$out" && claude_in "wat3-$idw" >/dev/null \
+	&& ok "boot: the favorite with resurrect on that was on is started" || bad "boot: rc $rc $out"
+lastargs | seen -- "--resume .*--remote-control wat3-$idw" && ok "with rc (resurrect), rc being off" || bad "boot args: $(lastargs)"
+last on | seen '"by":"boot"' && ok "logged as boot's" || bad "on event: $(last on)"
+[ "$(jq -s '[.[] | select((.text // "") | test("did not answer"))] | length' "$SD/events.jsonl")" = "$nw" ] && [ $(( $(date +%s) - t0 )) -lt 25 ] \
+	&& ok "claude.ai answering: no wait" || bad "net wait with the port up: $(( $(date +%s) - t0 )) s"
+n=0; for o in $others; do tm has-session -t "=$o" 2>/dev/null && n=$((n + 1)); done
+[ "$n" = 0 ] && ok "not started: resurrect on but off, on but resurrect off" || bad "boot started others: $(tm ls)"
+non=$(evn on) nref=$(evn refused); out=$(ASC_NET=127.0.0.1:$up_port boot --net-wait 0 2>&1)
+seen "wat3-$idw: its tmux session is up already" <<<"$out" && [ "$(evn on)" = "$non" ] && [ "$(evn refused)" = "$nref" ] \
+	&& ok "boot again: a session up already is left as it is" || bad "boot, up already: $out"
+tm kill-session -t "=wat3-$idw"; sleep 0.5
+out=$(ASC_NET=127.0.0.1:$shut_port boot --net-wait 1 --wait 60 2>&1)
+last waiting | seen "127.0.0.1:$shut_port did not answer in 1 s; starting anyway" && [ "$(evn on)" = $((non + 1)) ] \
+	&& ok "claude.ai not answering: started anyway after the wait" || bad "net down: $out $(last waiting)"
+kill "$lp" 2>/dev/null
 # ASC_MUTANTS=1: break asctl one way at a time, in a copy; each must make this test fail.
 if [ "${ASC_MUTANTS:-}" = 1 ]; then
 	echo "== mutants"
@@ -808,6 +888,20 @@ asc/events.py %%%     return b if b in BY else "cli" %%%     return b or "cli"
 asc/events.py %%%     return "".join(" " if unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp", "Cs") else c %%%     return "".join(" " if unicodedata.category(c) in ("Cc",) else c
 asc/cli.py %%%         events.log("refused", e, f"{what}: {x}") %%%         pass
 asc/cli.py %%%         elif not args.restart: %%%         elif False:
+asc/cli.py %%%     if pid is not None: %%%     if False:
+asc/cli.py %%%     if pid is None: %%%     if False:
+asc/cli.py %%%         server = ensure_server() %%%         server = tmuxctl.server_pid()
+asc/cli.py %%%         argv = claude_argv(e, resurrect) %%%         argv = claude_argv(e)
+asc/cli.py %%%     if running is not None: %%%     if False:
+asc/boot.py %%%     if not e or e.get("resurrect") is not True or e.get("want_on") is not True: %%%     if not e:
+asc/boot.py %%%     if tmuxctl.has_session(e["tmux"]): %%%     if False:
+asc/boot.py %%%         if not locked:  # an action holds it: the next look %%%         if False:
+asc/boot.py %%%         why = memory.steady(samples) or memory.gate(e.get("rss_kb")) or _start(e, started) %%%         why = _start(e, started)
+asc/boot.py %%%             raise RegistryError("another asctl boot is running") %%%             return 0
+asc/boot.py %%%             socket.create_connection((host, int(port)), timeout=NET_TRY_S).close() %%%             raise OSError
+asc/boot.py %%%         cli.ensure_server() %%%         pass
+asc/boot.py %%%         if said.get(e["id4"]) != reason: %%%         if False:
+bin/asctl-wrap %%% for ((i = 0; i < 30; i++)); do %%% for ((i = 0; i < 0; i++)); do
 MUTANTS
 fi
 

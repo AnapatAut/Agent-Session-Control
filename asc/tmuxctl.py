@@ -34,6 +34,13 @@ def server_running():
     return server_pid() is not None
 
 
+def start_server():
+    """A tmux server that stays up with no session (exit-empty off); only asctl-tmux.service
+    runs this, so the server is that unit's (asctl tmux-server). The user's tmux config loads
+    first, and a plugin line in it can hold the start for a while: a minute, not 5 s."""
+    return run("start-server", ";", "set", "-g", "exit-empty", "off", timeout=60)
+
+
 def has_session(name):
     return run("has-session", "-t", "=" + name).returncode == 0
 

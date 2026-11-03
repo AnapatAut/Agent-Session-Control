@@ -1,0 +1,10 @@
+# One watcher run (asctl watch; asc/watch.py), every 30 s from asctl-watch.timer.
+[Unit]
+Description=asctl: one watcher run
+
+[Service]
+Type=oneshot
+ExecStart=@ASCTL@ watch
+Environment=ASC_BY=watch
+NoNewPrivileges=yes
+TimeoutStartSec=300

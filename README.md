@@ -44,8 +44,9 @@ line each: time, who (cli, page, watch, boot), what, text). A refused action is 
 `refused`, one that went wrong after changing something as `failed`. The file is trimmed to
 7 days and 2 MB; logging never stops an action.
 
-It never starts a tmux server itself (the server would belong to asctl's process); a later
-phase adds `asctl-tmux.service` to own it. Every tmux target is exact (`=name`, `=name:`), every
+It never starts a tmux server from its own process (the server would belong to it, and
+restarting the dashboard would end every session): with no server running, On starts
+`asctl-tmux.service`, which owns it. Every tmux target is exact (`=name`, `=name:`), every
 command an argument list (no shell), and a session counts as live only when its PID runs, is a
 claude (named `claude`, or Claude Code's version binary run as claude, as background jobs are)
 and started when Claude Code's session file says. Tests: `tests/asc.sh`.
@@ -76,6 +77,37 @@ all hold: ended by a signal (143 SIGTERM, 137 SIGKILL) in this boot, memory pres
 that end, memory steady at 20% for 5 minutes with room for its size, not started again in the
 last 30 minutes, its session one pane running only its shell, one restart per run. The watcher
 never turns a favorite off or on; an entry an action is changing is left to the next run.
+
+`asctl boot` (`asctl-boot.service`, once per boot) starts again the favorites with resurrect
+on that were on, the one turned on last first, one at a time: each needs memory at 20% steady
+for 5 minutes (so the first start comes 5 minutes after the boot at the earliest) and room for
+its size; before the first it waits up to 2 minutes for claude.ai, then starts anyway. A
+favorite whose tmux session is up already is left to the watcher. What waits is logged; after an
+hour the rest are left for Start. After a tmux server that ended without a reboot:
+`systemctl --user start asctl-boot.service`.
+
+The units are in `systemd/`; `tools/install-units.sh` writes them into
+`~/.config/systemd/user/` with this checkout's `bin/asctl` in them, and only that (a unit there
+that is not the same is shown and left, unless `--force`). Then, by hand:
+`systemctl --user daemon-reload` and `systemctl --user enable asctl-tmux.service
+asctl-boot.service asctl-watch.timer asctl-dash.socket`. `asctl-tmux.service` (`Type=forking`)
+runs `asctl tmux-server`: a server kept up with no session (`exit-empty off`), or nothing when
+one runs already (the old tmux unit's, on the day of the switch: no second server); a stop or
+restart of it would end every session, so it refuses a manual one (`RefuseManualStop`), and a
+kernel OOM kill in it does not stop it (`OOMPolicy=continue`). The drop-in
+`tmux-spawn-.scope.d/asctl.conf` does the same for the scope tmux runs each session in: without
+it the kernel's OOM kill of one claude ends its whole session. Linger must be on for the units
+to start at boot without a login (`loginctl enable-linger`). Tests: `tests/sandbox.sh` (real
+systemd in a container: the units as installed, a kernel OOM kill, a reboot).
+
+Before enabling them where tmux-claude-restore (below) is installed, retire it first: its
+`tmux.service` (the server would otherwise be that unit's, whose stop kills it), and the tmux
+config block with tmux-continuum's restore and boot (the server asctl-tmux.service starts loads
+your tmux config, and a continuum restore would bring every saved session back at once, past
+boot's memory gates). The server gets the user manager's environment, not a login shell's: an
+old unit's `Environment=` (such as `DISPLAY`) goes in a drop-in for asctl-tmux.service.
+`asctl-wrap` starts claude only once tmux has moved the pane into its scope, so claude is in that
+scope too (forked before the move, it stayed in the server's cgroup).
 
 `asctl dash` serves a dashboard of the same for one Tailscale login, on a unix socket only its
 user can open, meant to sit behind `tailscale serve`; it installs as an app (home screen,

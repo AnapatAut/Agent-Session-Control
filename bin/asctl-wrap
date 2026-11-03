@@ -5,6 +5,17 @@
 # 143 (SIGTERM) or 137 (SIGKILL) means a signal ended it; 0 means the user did (/exit, Ctrl-C).
 #   asctl-wrap EXIT-FILE CLAUDE [ARG…]
 f=$1; shift
+# tmux built with systemd moves the pane's process into a scope of its own (tmux-spawn-*.scope)
+# just after starting it. A child forked before that stays in the server's cgroup, where the
+# kernel's OOM kill of it can stop the tmux unit and with it every session (OOMPolicy=stop). So
+# claude starts once this shell has left the cgroup of its parent, the tmux server: up to 1.5 s
+# (tmux gives the move 1 s, then none comes; a tmux without systemd never moves it).
+IFS= read -r server < "/proc/$PPID/cgroup" 2>/dev/null
+for ((i = 0; i < 30; i++)); do
+	IFS= read -r cg < "/proc/$$/cgroup" 2>/dev/null || break
+	[ "$cg" = "${server:-}" ] && [ "${cg#0::/}" != "$cg" ] || break  # moved (or not cgroup v2: no scopes)
+	sleep 0.05
+done
 "$@"
 rc=$?
 # 0600, in a subshell: the login shell after it keeps the user's own umask

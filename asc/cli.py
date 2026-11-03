@@ -27,10 +27,15 @@
   asctl watch                      one watcher run (asctl-watch.timer, every 30 s; asc/watch.py)
   asctl auto-restart on|off        whether the watcher starts again a claude ended by a signal
                                    under memory pressure (off: it only logs; the default)
+  asctl boot [--wait S] [--net-wait S]
+                                   bring back the favorites with resurrect on that were on, one
+                                   at a time past the memory gates (asctl-boot.service; asc/boot.py)
   asctl dash [--socket P] [--idle S]
                                    the dashboard server, on a unix socket (see asc/dash.py)
-ID is the 4-digit id or the full NAME-ID. Nothing here starts a tmux server: it would then
-belong to asctl's own process (a later phase adds asctl-tmux.service for that).
+  asctl tmux-server                asctl-tmux.service's start (only that unit runs it)
+ID is the 4-digit id or the full NAME-ID. With no tmux server running, On starts
+asctl-tmux.service, which owns the server: asctl never starts one from its own process (the
+server would then be that process's, and restarting the dashboard would end every session).
 """
 import contextlib
 import datetime
@@ -38,6 +43,7 @@ import glob
 import json
 import os
 import signal
+import subprocess
 import sys
 import time
 import uuid
@@ -398,15 +404,43 @@ def cmd_on(args):
         return _on(e["id4"], args.force_memory)
 
 
-def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None):
+SYSTEMCTL_S = 30  # systemctl --user start asctl-tmux.service: a start takes a second or two
+
+
+def ensure_server():
+    """The tmux server's PID; with none running, asctl-tmux.service is started first (the
+    server-owner rule: the server is that unit's, never this process's)."""
+    pid = tmuxctl.server_pid()
+    if pid is not None:
+        return pid
+    cmd = [os.environ.get("ASC_SYSTEMCTL", "systemctl"), "--user", "start", "asctl-tmux.service"]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=SYSTEMCTL_S, stdin=subprocess.DEVNULL)
+        why = (r.stderr or r.stdout).strip() if r.returncode != 0 else ""
+    except subprocess.TimeoutExpired:
+        why = f"no answer in {SYSTEMCTL_S} s"
+    except OSError as x:
+        why = str(x)
+    pid = tmuxctl.server_pid()
+    if pid is None:
+        raise RegistryError("no tmux server is running, and asctl-tmux.service did not start one"
+                            + (f": {why}" if why else ""))
+    return pid
+
+
+def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, resurrect=False):
     """On, with the entry's lock held. pane, pane_pid: a pane %N of the entry's own tmux session
     whose claude ended, and the PID asctl-wrap left there (the watcher's restart): claude runs
     there again in place of its shell (the session and anyone attached stay), after the same
-    checks and pane_free just before. starting: called once nothing can refuse any more."""
+    checks and pane_free just before. starting: called once nothing can refuse any more.
+    resurrect: asctl boot's start (with rc when resurrect is on, as claude_argv says)."""
     e = registry.find(registry.load(), id4)
-    server = tmuxctl.server_pid()
-    if server is None:
-        raise RegistryError("no tmux server is running; asctl does not start one (it would own it)")
+    if pane is not None:
+        server = tmuxctl.server_pid()  # a pane to start in: its server, never a new one
+        if server is None:
+            raise RegistryError("no tmux server is running")
+    else:
+        server = ensure_server()
     if pane is None and tmuxctl.has_session(e["tmux"]):
         raise RegistryError(f"tmux session {e['tmux']!r} already exists")
     if pane is not None:
@@ -428,7 +462,7 @@ def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None):
     with registry.changing() as data:
         e = registry.find(data, e["id4"])
         e["want_on"], e["last_on"] = True, registry.now()
-        argv = claude_argv(e)
+        argv = claude_argv(e, resurrect)
         e["started"] = True
     try:
         os.unlink(exit_file(e["id4"]))
@@ -711,6 +745,27 @@ def cmd_auto_restart(args):
     return 0
 
 
+def cmd_boot(args):
+    from . import boot
+    return boot.run(args.wait, args.net_wait)
+
+
+def cmd_tmux_server(args):
+    """asctl-tmux.service's start (Type=forking): a tmux server kept up with no session, left in
+    that unit when this exits. A server already running (the one the old tmux unit started, on
+    the day of the switch) is left as it is: the start succeeds and starts no second one."""
+    running = tmuxctl.server_pid()
+    if running is not None:
+        out(f"a tmux server already runs (pid {running}): left as it is, nothing started")
+        return 0
+    r = tmuxctl.start_server()
+    pid = tmuxctl.server_pid()
+    if pid is None:
+        raise RegistryError(f"tmux start-server failed: {r.stderr.strip() or 'no server came up'}")
+    out(f"tmux server {pid} started, kept up with no session (exit-empty off)")
+    return 0
+
+
 def cmd_dash(args):
     from . import dash
     return dash.serve(args.socket, args.idle)
@@ -773,6 +828,11 @@ def main(argv=None):
     a = sub.add_parser("auto-restart")
     a.add_argument("state")
     a.set_defaults(f=cmd_auto_restart)
+    a = sub.add_parser("boot")
+    a.add_argument("--wait", type=int, default=3600, help="give up on memory after this many seconds")
+    a.add_argument("--net-wait", type=int, default=120, help="wait this long for claude.ai before the first start")
+    a.set_defaults(f=cmd_boot)
+    sub.add_parser("tmux-server").set_defaults(f=cmd_tmux_server)
     a = sub.add_parser("dash")
     a.add_argument("--socket")
     a.add_argument("--idle", type=int, default=600, help="exit after this many idle seconds (0: never)")

@@ -9,6 +9,7 @@ The watcher (asc/watch.py) keeps the samples of the last KEEP_S seconds (memory.
 an automatic start also needs memory steady at START_PCT for STEADY_S (steady), and an automatic
 restart after a claude was ended by a signal needs memory pressure seen around then (evidence).
 """
+import fcntl
 import os
 import time
 
@@ -116,11 +117,18 @@ def load_samples(d=None):
 
 
 def add_sample(s, d=None):
+    """Keep sample s with the others (the watcher and asctl boot both add them: one at a time)."""
     from . import registry
-    keep = [x for x in load_samples(d)
-            if x["boot"] == s["boot"] and s["t"] - KEEP_S <= x["t"] <= s["t"]][-(MAX_SAMPLES - 1):] + [s]
-    registry.write_private(os.path.join(d or registry.state_dir(), "memory.json"), keep)
-    return keep
+    d = d or registry.state_dir()
+    fd = os.open(os.path.join(d, "memory.lock"), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        keep = [x for x in load_samples(d)
+                if x["boot"] == s["boot"] and s["t"] - KEEP_S <= x["t"] <= s["t"]][-(MAX_SAMPLES - 1):] + [s]
+        registry.write_private(os.path.join(d, "memory.json"), keep)
+        return keep
+    finally:
+        os.close(fd)
 
 
 def steady(samples, now=None, pct=START_PCT, span=STEADY_S):

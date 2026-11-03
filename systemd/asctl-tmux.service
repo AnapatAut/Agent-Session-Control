@@ -1,0 +1,17 @@
+# The tmux server, owned by this unit (asctl tmux-server): never by the dashboard, the watcher
+# or a shell, so restarting those ends no session. On starts it when no server runs.
+[Unit]
+Description=asctl: the tmux server
+# A stop or restart ends every tmux session (KillMode=control-group): only shutdown stops it.
+RefuseManualStop=yes
+
+[Service]
+Type=forking
+ExecStart=@ASCTL@ tmux-server
+KillMode=control-group
+# A kernel OOM kill of a process still in this unit's cgroup must not stop the server too.
+OOMPolicy=continue
+# No ExecStop: nothing to save (asctl keeps its own state); shutdown stops it as it is.
+
+[Install]
+WantedBy=default.target

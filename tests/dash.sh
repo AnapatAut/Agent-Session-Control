@@ -17,6 +17,7 @@ export FAKE_BASH="$T/fakebash/claude"
 # Memory as asctl sees it (asc/memory.py): plenty, unless a test says otherwise.
 mem() { printf 'MemTotal: %s kB\nMemAvailable: %s kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n' "$1" "$2" > "$T/meminfo"; }
 export ASC_MEMINFO="$T/meminfo"
+export ASC_SYSTEMCTL="$REPO/tests/asc/bin/systemctl"  # never the real one (On with no server)
 mem 32000000 16000000
 export PATH="$REPO/tests/dash/bin:$PATH"  # a fake tailscale: the operator setting
 tm() { tmux -L "$ASC_TMUX_SOCKET" -f /dev/null "$@"; }
