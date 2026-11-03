@@ -23,7 +23,7 @@
                                    resurrect start always has rc
   asctl note ID TEXT               a note shown with it ("" clears it)
   asctl forget ID                  drop the favorite; a running session is left alone
-  asctl events [ID] [--limit N]    what happened, oldest first (kept 7 days; asc/events.py)
+  asctl events [ID] [--limit N]    what happened, oldest first (a favorite's last 200; asc/events.py)
   asctl watch                      one watcher run (asctl-watch.timer, every 30 s; asc/watch.py)
   asctl auto-restart on|off        whether the watcher starts again a claude ended by a signal
                                    under memory pressure (off: it only logs; the default)
@@ -723,7 +723,7 @@ def cmd_events(args):
     id4 = registry.find(registry.load(), args.id)["id4"] if args.id else None
     evs = events.read(id4, args.limit)
     if not evs:
-        out("no events" + (f" for {id4}" if id4 else "") + f" (kept {events.KEEP_DAYS} days)")
+        out("no events" + (f" for {id4}" if id4 else ""))
     for r in reversed(evs):
         when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r["t"]))
         out(f"{when}  {r.get('by', '?'):<5} {r['kind']:<9} {r.get('tmux') or '-':<24} {r.get('text', '')}")

@@ -55,7 +55,7 @@ import threading
 import time
 import urllib.parse
 
-from . import cli, events, icons, live, memory, past, registry, tmuxctl
+from . import boot, cli, events, icons, live, memory, past, registry, tmuxctl
 from .registry import RegistryError
 
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
@@ -236,6 +236,84 @@ def top_processes(n=5):
     return {"mine": mine[:n], "others_kb": others}
 
 
+def boot_status():
+    """What asctl boot still brings back after this boot ({"todo": [id4, ...], "why": ...}), or
+    None when it is not running: done, from an earlier boot, or boot.lock not held (it holds it
+    as long as it runs, whatever ended it)."""
+    d = registry.state_dir()
+    b = registry.read_private(os.path.join(d, boot.STATUS))
+    if not isinstance(b, dict) or b.get("done") is not False or b.get("boot") != memory.boot_id():
+        return None
+    todo, why = b.get("todo"), b.get("why")
+    if not isinstance(todo, list) or not isinstance(why, str):
+        return None
+    if not flock_held(os.path.join(d, "boot.lock")):
+        return None
+    return {"todo": [i for i in todo if isinstance(i, str) and registry.ID4_RE.fullmatch(i)], "why": why[:300]}
+
+
+def flock_held(path):
+    """True when someone holds an flock on path, read from /proc/locks: never taken here, as even
+    a moment's shared lock could make an asctl boot starting then refuse to run."""
+    try:
+        st = os.lstat(path)
+        with open("/proc/locks", encoding="ascii", errors="replace") as f:
+            rows = f.read().splitlines()
+    except OSError:
+        return False
+    dev = f"{os.major(st.st_dev):02x}:{os.minor(st.st_dev):02x}:{st.st_ino}"
+    for row in rows:
+        w = row.split()
+        if len(w) >= 6 and w[1] == "FLOCK" and w[5] == dev:
+            return True
+        if len(w) >= 7 and w[1] == "->" and w[2] == "FLOCK" and w[6] == dev:  # a waiter
+            return True
+    return False
+
+
+def events_version():
+    """The event log's size and change time: the page reloads an open sheet's history only when
+    this moves."""
+    try:
+        st = os.stat(events.path())
+        return f"{st.st_size}:{st.st_mtime_ns}"
+    except OSError:
+        return ""
+
+
+def watch_at():
+    """When the watcher's last run began, or None (it never ran)."""
+    w = registry.read_private(os.path.join(registry.state_dir(), "watch.json"))
+    t = w.get("at") if isinstance(w, dict) else None
+    return t if type(t) is int and t > 0 else None
+
+
+_setup = {"at": -1e9, "ok": None}
+
+
+def set_up():
+    """True when asctl setup has run for this user (asctl-boot.service and asctl-watch.timer
+    enabled), False when not, None when the user manager does not say. Cached 60 s."""
+    now = time.monotonic()
+    if now - _setup["at"] < 60:
+        return _setup["ok"]
+    ok = True
+    for unit in ("asctl-boot.service", "asctl-watch.timer"):
+        try:
+            r = subprocess.run([os.environ.get("ASC_SYSTEMCTL", "systemctl"), "--user", "is-enabled", unit],
+                               capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL)
+            word = r.stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            word = ""
+        if word not in ("enabled", "enabled-runtime", "disabled", "not-found", "masked", "static", "linked"):
+            ok = None  # no answer, or one that is not about the unit (no user manager)
+            break
+        if word not in ("enabled", "enabled-runtime"):
+            ok = False
+    _setup.update(at=now, ok=ok)
+    return ok
+
+
 _snap = threading.Lock()
 
 
@@ -260,6 +338,7 @@ def _snapshot():
         s["task"] = live.claude_tasks(s, kids) if s["status"] in ("idle", "shell") else ""
     shown = lambda s: ("busy", None) if s["task"] else (s["status"], s["status_at"])  # status, since
     favs, fav_sids, fav_tmux = [], set(), set()
+    lens = past.lengths(registry.state_dir())
     for e in sorted(data["entries"].values(), key=lambda e: e["tmux"]):
         st, s = cli.state_of(e, lv, up)
         if s and count.get(s["session_id"], 0) > 1:
@@ -285,6 +364,9 @@ def _snapshot():
             "claudes": sum(1 for x in lv if x["pane"] and x["pane"]["session"] == e["tmux"]),
             "mem_kb": sum(live.tree_mem_kb(p["pane_pid"], kids) for p in panes)
                       + (live.tree_mem_kb(s["pid"], kids) if s and s["host"] else 0),  # a job runs outside the pane
+            # its conversation's length as the watcher last counted it (None until then)
+            "conv_lines": lens.get(e.get("session_id"), {}).get("lines"),
+            "conv_bytes": lens.get(e.get("session_id"), {}).get("bytes"),
         })
     # a claude with a made-up name (folder-NN) goes by its conversation's title, as the Claude apps list it
     active = [{"pid": s["pid"], "session_id": s["session_id"], "claude_name": s["name"], "cwd": s["cwd"],
@@ -295,9 +377,12 @@ def _snapshot():
                "duplicate": count.get(s["session_id"], 0) > 1}
               for s in lv if s["session_id"] not in fav_sids and not (s["pane"] and s["pane"]["session"] in fav_tmux)]
     unknown = sum(1 for s in live.read_sessions() if not s["ok"])
+    settings = data.get("settings") if isinstance(data.get("settings"), dict) else {}
     return {"time": int(time.time()), "memory": memory.meminfo(), "top": top_processes(),
             "server": bool(pane_list) or tmuxctl.server_running(),
             "favorites": favs, "active": active, "unknown_files": unknown,
+            "boot": boot_status(), "watch_at": watch_at(), "setup": set_up(), "events_v": events_version(),
+            "settings": {"auto_restart": settings.get("auto_restart") is True},
             "on": sum(1 for f in favs if f["state"] == "on")}, fav_sids | {s["session_id"] for s in lv}
 
 
@@ -308,6 +393,10 @@ def action_argv(a):
     if not isinstance(a, dict):
         raise RegistryError("the body must be a JSON object")
     kind, id4 = a.get("action"), a.get("id")
+    if kind == "auto_restart":
+        if not isinstance(a.get("on"), bool):
+            raise RegistryError("auto_restart needs on: true or false")
+        return ["auto-restart", "on" if a["on"] else "off"]
     if kind == "fav":
         ref = a.get("ref")
         if not isinstance(ref, str) or not (live.UUID_RE.fullmatch(ref) or re.fullmatch(r"[0-9]{1,10}", ref)):
@@ -479,7 +568,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("id", [None])[0]
             if q is not None and not registry.ID4_RE.fullmatch(q):
                 return self._send(400, {"error": "id must be a 4-digit id"})
-            return self._send(200, {"events": events.read(q, 200), "keep_days": events.KEEP_DAYS})
+            return self._send(200, {"events": events.read(q), "keep": events.KEEP_PER})
         if path == "/api/past":
             q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("q", [""])[0]
             _, exclude = snapshot()

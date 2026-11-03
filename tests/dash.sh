@@ -96,6 +96,15 @@ printf '%s\n' "$W" > "$HOME/fake-trusted"
 SID=11111111-2222-4333-8444-555555555555
 PREFIX=
 
+echo "== the page's own logic (tests/dash/page.js, in node)"
+if command -v node >/dev/null; then
+	while IFS= read -r line; do
+		case $line in "  ok    "*) ok "${line#  ok    }" ;; *) bad "${line#  FAIL  }" ;; esac
+	done < <(node "$REPO/tests/dash/page.js" "$REPO" 2>&1)
+else
+	echo "  (node not installed: skipped)"
+fi
+
 echo "== config"
 # A refusal is exit 1 at once; a server that starts anyway is cut off by timeout (124).
 refuses() { timeout 5 "$REPO/bin/asctl" dash --idle 0 2>"$T/err"; [ $? = 1 ]; }
@@ -321,13 +330,14 @@ seen 'claude and its claude.ai title too' <<<"$out" && state | jq -e --arg t "$T
 	&& ok "rename to the same name sends it to a claude that goes by another (renamed while busy)" || bad "same-name rename: $out"
 [ "$(post '{"action":"restart","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 400 ] && ok "no restart action from the page" || bad "the page can restart"
 post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'","force":true}' >/dev/null
-[ "$(post '{"action":"forget","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] && state | jq -e '.favorites | length == 0' >/dev/null && ok "forget" || bad "forget failed"
 ev=$(dc "http://x/api/events?id=$id")
-jq -e '.keep_days == 7 and (.events | length > 5) and ([.events[] | select(.kind != "mode") | .by] | all(. == "page"))
+jq -e '.keep == 200 and (.events | length > 5) and ([.events[] | select(.kind != "mode") | .by] | all(. == "page"))
 	and any(.events[]; .kind == "mode" and .by == "cli")
-	and ([.events[].kind] | index("fav") and index("off") and index("on") and index("rename") and index("forget") and index("refused"))
-	and .events[0].kind == "forget"' <<<"$ev" >/dev/null && ok "events: the page's actions by page (asctl's own by cli), newest first" || bad "events: $(jq -c '[.events[] | [.kind, .by]]' <<<"$ev")"
-dc "http://x/api/events" | jq -e '.events | length > 5' >/dev/null && ok "events: all of them without an id" || bad "events: all"
+	and ([.events[].kind] | index("fav") and index("off") and index("on") and index("rename") and index("refused"))
+	and .events[0].kind == "off"' <<<"$ev" >/dev/null && ok "events: the page's actions by page (asctl's own by cli), newest first" || bad "events: $(jq -c '[.events[] | [.kind, .by]]' <<<"$ev")"
+[ "$(post '{"action":"forget","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] && state | jq -e '.favorites | length == 0' >/dev/null && ok "forget" || bad "forget failed"
+dc "http://x/api/events?id=$id" | jq -e '.events == []' >/dev/null && ok "events of an id: none from before its forget (an earlier favorite's)" || bad "events after forget: $(dc "http://x/api/events?id=$id" | jq -c '[.events[].kind]')"
+dc "http://x/api/events" | jq -e '(.events | length > 5) and .events[0].kind == "forget"' >/dev/null && ok "events: all of them without an id" || bad "events: all"
 [ "$(dc -o /dev/null -w '%{http_code}' "http://x/api/events?id=12")" = 400 ] && ok "events: a bad id is 400" || bad "events: bad id accepted"
 
 echo "== past conversations"
@@ -469,6 +479,70 @@ state | jq -e '.memory.warn' >/dev/null && ok "state: the memory warning is on b
 post '{"action":"off","force":true,'"$R3"'}' >/dev/null
 mem 32000000 16000000
 
+echo "== the page's notices (boot, the watcher, setup), settings, a conversation's length"
+SD="$HOME/.local/state/agent-session-control"
+BID=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import memory; print(memory.boot_id())' "$REPO")
+bootjs() { printf '{"boot": "%s", "at": 1, "todo": ["%s"], "why": "memory: watched for under 5 min", "done": %s}\n' "$1" "$id3" "$2" > "$SD/boot.json"; }
+bootjs "$BID" false
+state | jq -e '.boot == null' >/dev/null && ok "boot.lock not held: no boot shown (one that was killed)" || bad "boot with no lock: $(state | jq -c .boot)"
+python3 -I -c 'import fcntl, sys, time; f = open(sys.argv[1], "a"); fcntl.flock(f, fcntl.LOCK_EX); time.sleep(60)' "$SD/boot.lock" & bl=$!
+for _ in $(seq 1 50); do flock -n "$SD/boot.lock" true || break; sleep 0.1; done
+state | jq -e --arg i "$id3" '.boot == {"todo": [$i], "why": "memory: watched for under 5 min"}' >/dev/null \
+	&& ok "state: what boot still brings back, and why the next waits (boot.lock held)" || bad "boot: $(state | jq -c .boot)"
+bootjs "$BID" true
+state | jq -e '.boot == null' >/dev/null && ok "boot done: no boot shown" || bad "boot done: $(state | jq -c .boot)"
+bootjs "not-this-boot" false
+state | jq -e '.boot == null' >/dev/null && ok "a boot.json from an earlier boot: none shown" || bad "old boot: $(state | jq -c .boot)"
+printf '{"boot": "%s", "todo": "x", "why": 5, "done": false}\n' "$BID" > "$SD/boot.json"
+state | jq -e '.boot == null' >/dev/null && ok "an odd boot.json: none shown, no error" || bad "odd boot.json: $(state | jq -c .boot)"
+bootjs "$BID" false; mv "$SD/boot.json" "$T/boot.json"; ln -s "$T/boot.json" "$SD/boot.json"
+state | jq -e '.boot == null' >/dev/null && ok "a symlinked boot.json is not read" || bad "symlinked boot.json read"
+kill "$bl"; wait "$bl" 2>/dev/null
+rm -f "$SD/boot.json"
+state | jq -e '.watch_at == null' >/dev/null && ok "state: no watcher run yet" || bad "watch_at: $(state | jq -c .watch_at)"
+echo '{"at": 1700000000, "ended": {}}' > "$SD/watch.json"
+state | jq -e '.watch_at == 1700000000' >/dev/null && ok "state: when the watcher last ran" || bad "watch_at: $(state | jq -c .watch_at)"
+echo '{"at": "soon"}' > "$SD/watch.json"
+state | jq -e '.watch_at == null' >/dev/null && ok "an odd watch.json: no time" || bad "odd watch_at: $(state | jq -c .watch_at)"
+rm -f "$SD/watch.json"
+state | jq -e '.setup == false' >/dev/null && ok "state: not set up (asctl's units not enabled)" || bad "setup: $(state | jq -c .setup)"
+mkdir -p "$HOME/fake-units/enabled"; : > "$HOME/fake-units/asctl-boot.service"; : > "$HOME/fake-units/enabled/asctl-boot.service"
+stop_dash; start_dash
+state | jq -e '.setup == false' >/dev/null && ok "boot enabled, the watcher not: not set up" || bad "half set up: $(state | jq -c .setup)"
+: > "$HOME/fake-units/enabled/asctl-watch.timer"
+state | jq -e '.setup == false' >/dev/null && ok "setup is asked once a minute, not on every request" || bad "setup not cached"
+stop_dash; start_dash
+state | jq -e '.setup == true' >/dev/null && ok "state: set up (boot and the watcher enabled)" || bad "set up: $(state | jq -c .setup)"
+stop_dash; ASC_SYSTEMCTL=/bin/false start_dash
+state | jq -e '.setup == null' >/dev/null && ok "no answer from the user manager: setup unknown (no notice)" || bad "no manager: $(state | jq -c .setup)"
+stop_dash; start_dash
+rm -rf "$HOME/fake-units"
+state | jq -e '.settings == {"auto_restart": false}' >/dev/null && ok "state: auto-restart off by default" || bad "settings: $(state | jq -c .settings)"
+ev1=$(state | jq -r .events_v)
+[ "$(post '{"action":"auto_restart","on":true}' | tail -1)" = 200 ] && state | jq -e '.settings.auto_restart' >/dev/null \
+	&& [ "$(jq -r '.settings.auto_restart' "$REG")" = true ] && ok "auto-restart on from the page" || bad "auto-restart on failed"
+tail -1 "$SD/events.jsonl" | jq -e '.kind == "setting" and .by == "page" and .text == "auto-restart on"' >/dev/null \
+	&& ok "logged as the page's setting" || bad "setting event: $(tail -1 "$SD/events.jsonl")"
+ev2=$(state | jq -r .events_v)
+[ -n "$ev1" ] && [ "$ev1" != "$ev2" ] && [ "$ev2" = "$(state | jq -r .events_v)" ] \
+	&& ok "state: the event log's version moves with a new event, not otherwise" || bad "events_v: $ev1 then $ev2"
+[ "$(post '{"action":"auto_restart","on":"yes"}' | tail -1)" = 400 ] && ok "auto-restart on must be a boolean" || bad "auto-restart took a non-boolean"
+[ "$(post '{"action":"auto_restart","on":false}' | tail -1)" = 200 ] && state | jq -e '.settings.auto_restart == false' >/dev/null \
+	&& ok "auto-restart off from the page" || bad "auto-restart off failed"
+sid3=$(jq -r ".entries[\"$id3\"].session_id" "$REG")
+state | jq -e --arg i "$id3" '.favorites[] | select(.id4 == $i) | .conv_lines == null and .conv_bytes == null' >/dev/null \
+	&& ok "state: no length before the watcher counted it" || bad "length before a count"
+printf '{"%s": {"ino": 7, "size": 1024, "lines": 6, "seen": 2048}}\n' "$sid3" > "$SD/lengths.json"
+state | jq -e --arg i "$id3" '.favorites[] | select(.id4 == $i) | .conv_lines == null' >/dev/null && ok "a first count not done yet: no length shown" || bad "partial length shown"
+printf '{"%s": {"ino": 7, "size": 2048, "lines": 12, "seen": 2048}, "x": {"ino": 1, "size": 1, "lines": 1, "seen": 1}}\n' "$sid3" > "$SD/lengths.json"
+state | jq -e --arg i "$id3" '.favorites[] | select(.id4 == $i) | .conv_lines == 12 and .conv_bytes == 2048' >/dev/null \
+	&& ok "state: a conversation's lines and bytes, as the watcher counted them" || bad "length: $(state | jq -c --arg i "$id3" '.favorites[] | select(.id4 == $i) | [.conv_lines, .conv_bytes]')"
+for odd in '"size": 2048, "lines": "12", "seen": 2048' '"size": 2048, "lines": -12, "seen": 2048' '"size": "2048", "lines": 12, "seen": "2048"'; do
+	printf '{"%s": {"ino": 7, %s}}\n' "$sid3" "$odd" > "$SD/lengths.json"
+	state | jq -e --arg i "$id3" '.favorites[] | select(.id4 == $i) | .conv_lines == null' >/dev/null && ok "odd lengths: none shown ($odd)" || bad "odd lengths shown: $odd"
+done
+rm -f "$SD/lengths.json"
+
 echo "== prefix and idle exit"
 stop_dash
 printf '{"login": "%s", "host": "%s", "prefix": "/u"}\n' "$LOGIN" "$HOST" > "$CONF"
@@ -586,6 +660,24 @@ asc/icons.py %%% os.O_NOFOLLOW, 0o600), "wb") %%% os.O_NOFOLLOW, 0o644), "wb")
 asc/dash.py %%%             if self.command in ("GET", "HEAD") and self._path() == "/": %%%             if True:
 asc/live.py %%%                 if line.startswith("Pss:"): %%%                 if line.startswith("Rss:"):
 asc/cli.py %%%             if path in _modes and _modes[path][0] == key: %%%             if path in _modes:
+asc/dash.py %%%     if not isinstance(b, dict) or b.get("done") is not False or b.get("boot") != memory.boot_id(): %%%     if not isinstance(b, dict) or b.get("done") is not False:
+asc/dash.py %%%     if not flock_held(os.path.join(d, "boot.lock")): %%%     if False:
+asc/dash.py %%%         if len(w) >= 6 and w[1] == "FLOCK" and w[5] == dev: %%%         if False:
+asc/dash.py %%%     if now - _setup["at"] < 60: %%%     if False:
+asc/dash.py %%%         if word not in ("enabled", "enabled-runtime"): %%%         if False:
+asc/dash.py %%%             ok = None  # no answer %%%             ok = False  # no answer
+asc/dash.py %%%     t = w.get("at") if isinstance(w, dict) else None %%%     t = None
+asc/dash.py %%%         return f"{st.st_size}:{st.st_mtime_ns}" %%%         return "1"
+asc/web/app.js %%% const m = t.match(/: (?:rc|resurrect) (on|off)\b/); %%% const m = t.match(/\b(on|off)\b/);
+asc/web/app.js %%%        .replace(UUID_G, "…"); %%%        ;
+asc/web/app.js %%%   if (S && S.home) t = t.split(S.home + "/").join("~/"); %%%   if (false) t = "";
+asc/web/app.js %%%     if (g && g.key === key) { g.n++; g.first = x.t; } %%%     if (false) { g.n++; g.first = x.t; }
+asc/web/app.js %%% return n + (n === 1 ? " day ago" : " days ago"); %%% return n + " days ago";
+asc/web/app.js %%%            why: e.resurrect ? "Off, so a reboot won't bring it back." : "", whyCls: "wait" }; %%%            why: "", whyCls: "wait" };
+asc/web/app.js %%%   if (why.startsWith("pause") || !why) return "Starts in a moment."; %%%   if (why.startsWith("pause") || !why) return "Starts in a moment."; return why;
+asc/dash.py %%%         if not isinstance(a.get("on"), bool): %%%         if False:
+asc/dash.py %%%             "conv_lines": lens.get(e.get("session_id"), {}).get("lines"), %%%             "conv_lines": None,
+asc/past.py %%%     ok = isinstance(x, dict) and all(type(x.get(k)) is int and x[k] >= 0 for k in ("ino", "size", "lines", "seen")) %%%     ok = isinstance(x, dict)
 MUTANTS
 fi
 

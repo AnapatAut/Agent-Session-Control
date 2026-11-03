@@ -1,4 +1,4 @@
-"""The event log: what happened to each favorite, kept KEEP_DAYS (plan row 10).
+"""The event log: what happened to each favorite, its last KEEP_PER events (plan row 10).
 
 <state>/events.jsonl, mode 0600, one JSON object per line:
   {"t": epoch seconds, "id4": "0421", "tmux": "das-0421", "kind": "on", "by": "cli", "text": "..."}
@@ -7,10 +7,13 @@ something was changed (the text says what). by: who did it (cli, page, watch, bo
 by the dashboard and the units; anything else counts as cli).
 Appended under an flock of its own (events.lock: nothing else is locked while it is held, so it
 cannot deadlock with the registry lock), one write per line, to a regular file only (a symlink or
-a FIFO in its place is refused, never followed or waited on). Pruned in place when its first line
-is older than KEEP_DAYS or the file grows past MAX_BYTES (then the oldest half goes): bounded
-however busy the machine is. Logging never fails an action: an error is reported on stderr and
-the action goes on.
+a FIFO in its place is refused, never followed or waited on). Pruned in place: a favorite keeps
+its last KEEP_PER events however old (cut back to that once it has KEEP_SLACK more, so the file
+is not rewritten on every event); anything else (an event of no favorite, of one forgotten since,
+or from before its id was forgotten and drawn again) goes after KEEP_DAYS. Past MAX_BYTES it is
+cut to half that: the oldest of those other events first, then each favorite's oldest, as evenly
+as halving how many each keeps allows: bounded however busy the machine is. Logging never fails
+an action: an error is reported on stderr and the action goes on.
 """
 import contextlib
 import fcntl
@@ -26,8 +29,11 @@ import unicodedata
 
 from . import registry
 
+KEEP_PER = 200
+KEEP_SLACK = 50
 KEEP_DAYS = 7
 MAX_BYTES = 2 << 20
+CHECK_BYTES = 16000  # a favorite's line is over 80 bytes: under this none can have KEEP_PER
 KINDS = {"fav", "forget", "on", "off", "restart", "rename", "rc", "resurrect", "mode", "refused",
          "failed", "ended", "restarted", "followed", "waiting", "duplicate", "memory", "setting",
          "setup"}
@@ -95,11 +101,23 @@ def log(kind, e=None, text="", d=None, **extra):
         print(f"asctl: event not logged ({x})", file=sys.stderr)
 
 
+def _favorites(d):
+    """The id4s of the favorites now, or None when the registry does not read (then every id4
+    counts as one: nothing of a favorite is dropped for its age)."""
+    try:
+        return set(registry.load(d)["entries"])
+    except Exception:
+        return None
+
+
 def _prune(d, fd):
-    """Drop what is past KEEP_DAYS, and the oldest half past MAX_BYTES. With the lock held."""
+    """Keep each favorite's last KEEP_PER events, anything else for KEEP_DAYS, and past
+    MAX_BYTES only half that (see the top). With the lock held; the file is rewritten only when
+    a line has to go."""
     size = os.fstat(fd).st_size
     first = os.pread(fd, 4096, 0).split(b"\n", 1)[0]
-    if size <= MAX_BYTES and _time(first) >= time.time() - KEEP_DAYS * 86400:
+    cut = time.time() - KEEP_DAYS * 86400
+    if size <= CHECK_BYTES and _time(first) >= cut:
         return
     data, off = [], 0
     while off < size:
@@ -109,10 +127,37 @@ def _prune(d, fd):
         data.append(b)
         off += len(b)
     lines = b"".join(data).splitlines(keepends=True)
-    cut = time.time() - KEEP_DAYS * 86400
-    keep = [l for l in lines if _time(l) >= cut]
-    while keep and sum(map(len, keep)) > MAX_BYTES // 2 and size > MAX_BYTES:
-        keep = keep[len(keep) // 2:]
+    # newest first: each favorite's lines ranked back to its forget; the rest, if not too old
+    favs, rank, gone, mine, other, drop = _favorites(d), {}, set(), [], [], False
+    for i in range(len(lines) - 1, -1, -1):
+        t, id4, kind = _meta(lines[i])
+        if not t:
+            drop = True  # broken
+            continue
+        fav = bool(id4) and id4 not in gone and (favs is None or id4 in favs)
+        if fav and kind == "forget":  # it and what came before belong to an earlier favorite
+            gone.add(id4)
+            fav = False
+        if fav:
+            rank[id4] = rank.get(id4, -1) + 1
+            mine.append((rank[id4], i))
+            drop |= rank[id4] + 1 >= KEEP_PER + KEEP_SLACK
+        elif t >= cut:
+            other.append(i)
+        else:
+            drop = True  # too old
+    per, n_other = KEEP_PER, len(other)
+    total = lambda: sum(len(lines[i]) for r, i in mine if r < per) + sum(len(lines[i]) for i in other[:n_other])
+    if size > MAX_BYTES:
+        drop = True
+        while n_other and total() > MAX_BYTES // 2:
+            n_other //= 2
+        while per > 1 and total() > MAX_BYTES // 2:
+            per //= 2
+    if not drop:
+        return
+    kept = sorted([i for r, i in mine if r < per] + other[:n_other])
+    keep = [lines[i] for i in kept]
     for old in glob.glob(os.path.join(d, ".events.*")):  # left by a prune that was killed
         with contextlib.suppress(OSError):
             if time.time() - os.lstat(old).st_mtime > 3600:
@@ -132,18 +177,30 @@ def _prune(d, fd):
 
 def _time(line):
     """The time of one line, or 0 when broken or not a plausible time (so it is pruned)."""
+    return _meta(line)[0]
+
+
+def _meta(line):
+    """(time, id4, kind) of one line; time 0 when broken or not a plausible time."""
     try:
         r = json.loads(line)
     except (ValueError, RecursionError):
-        return 0
-    t = r.get("t") if isinstance(r, dict) else None
+        return 0, "", ""
+    if not isinstance(r, dict):
+        return 0, "", ""
+    t, id4, kind = r.get("t"), r.get("id4"), r.get("kind")
+    return (t if _plausible(t) else 0, id4 if isinstance(id4, str) else "", kind if isinstance(kind, str) else "")
+
+
+def _plausible(t):
     ok = isinstance(t, (int, float)) and not isinstance(t, bool) and math.isfinite(t)
-    return t if ok and 0 < t <= time.time() + 86400 else 0
+    return ok and 0 < t <= time.time() + 86400
 
 
-def read(id4=None, limit=200, d=None):
-    """The latest events (newest first), of one favorite or all; lines that do not parse or do
-    not look like an event are skipped."""
+def read(id4=None, limit=KEEP_PER, d=None):
+    """The latest events (newest first), of all or of one favorite: back to its id's last forget,
+    which ended an earlier favorite of that id. Lines that do not parse or do not look like an
+    event are skipped."""
     if limit <= 0:
         return []
     try:
@@ -166,11 +223,13 @@ def read(id4=None, limit=200, d=None):
             r = json.loads(line)
         except (ValueError, RecursionError):
             continue
-        if (not isinstance(r, dict) or not _time(line) or r.get("kind") not in KINDS
+        if (not isinstance(r, dict) or not _plausible(r.get("t")) or r.get("kind") not in KINDS
                 or not all(isinstance(r.get(k, ""), str) for k in ("by", "id4", "tmux", "text"))):
             continue
         if id4 is not None and r.get("id4") != id4:
             continue
+        if id4 is not None and r["kind"] == "forget":
+            break
         out.append(r)
         if len(out) >= limit:
             break

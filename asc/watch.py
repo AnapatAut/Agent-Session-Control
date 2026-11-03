@@ -19,16 +19,20 @@ Each run, one at a time (watch.lock; a run that finds another still going does n
     session is that one pane, still the shell asctl-wrap left (the PID in the exit record),
     running nothing, not scrolled back and with no one typing in the last 2 min (cli.pane_free,
     checked again just before), and no other restart in this run.
-Every entry is handled under its own lock, taken without waiting: one that an asctl action holds
-is left to the next run. An error with one entry is logged and the others go on. A favorite's
-want_on is never changed here (plan row 16: only On, Off and Forget change it).
+ 5. the length of each favorite's conversation counted on (asc/past.py, lengths.json).
+watch.json keeps what a run tells the next, and "at", when the last run began (the dashboard
+warns when that is old: the timer stopped). Every entry is handled under its own lock, taken
+without waiting: one that an asctl action holds is left to the next run. An error with one entry
+is logged and the others go on. A favorite's want_on is never changed here (plan row 16: only
+On, Off and Forget change it).
 """
 import fcntl
 import os
 import re
+import sys
 import time
 
-from . import cli, events, live, memory, rclive, registry, tmuxctl
+from . import cli, events, live, memory, past, rclive, registry, tmuxctl
 
 RESTART_EVERY = 1800   # at most one automatic restart of a favorite per 30 min
 RESTART_WITHIN = 3600  # and only for an end at most this old
@@ -59,10 +63,12 @@ def run():
         except BlockingIOError:
             return 0
         st = _state(d)
+        st["at"] = int(time.time())
         try:
             _run(st)
         finally:
             registry.write_private(os.path.join(d, "watch.json"), st)
+        _lengths(d)
         return 0
     finally:
         os.close(fd)
@@ -103,6 +109,15 @@ def _run(st):
             st["failed"][e["id4"]] = msg
         if run["restarted"] and not before:  # a restart takes a while: what was read is old
             lv, up, kids = live.live(), set(tmuxctl.sessions()), live.children_map()
+
+
+def _lengths(d):
+    """Count on the favorites' conversation lengths: last, as it reads the most; an error only
+    makes the count late (nothing else depends on it)."""
+    try:
+        past.update_lengths([e.get("session_id") for e in registry.load()["entries"].values()], d)
+    except Exception as x:
+        print(f"asctl watch: conversation lengths not counted ({type(x).__name__}: {x})", file=sys.stderr)
 
 
 def _set(e, expect, changes):

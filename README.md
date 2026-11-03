@@ -112,13 +112,14 @@ asctl rename 0421 db        # db-0421; a running claude, when idle, gets /rename
                             # which claude also sends to its claude.ai session (the rc title)
 asctl restart 0421          # off and on again (--resume), only when idle and running nothing
 asctl forget 0421
-asctl events 0421           # what happened to it (on, off, rename, refused, ended, ...), kept 7 days
+asctl events 0421           # what happened to it (on, off, rename, refused, ended, ...): its last 200
 ```
 
 Every action is logged in `~/.local/state/agent-session-control/events.jsonl` (0600; one JSON
 line each: time, who (cli, page, watch, boot), what, text). A refused action is logged as
-`refused`, one that went wrong after changing something as `failed`. The file is trimmed to
-7 days and 2 MB; logging never stops an action.
+`refused`, one that went wrong after changing something as `failed`. Each favorite keeps its
+last 200 events, however old; anything else (machine events, a forgotten favorite's) goes after
+7 days, and the file stays under 2 MB. Logging never stops an action.
 
 It never starts a tmux server from its own process (the server would belong to it, and
 restarting the dashboard would end every session): with no server running, On starts
@@ -177,7 +178,11 @@ launcher). The main page is a list (needs attention, on, off, running claudes no
 past conversations, memory used; a running claude with a made-up name goes by its chat title,
 as the Claude apps list it; a session's memory is the PSS of its pane's processes, shared
 pages split, so the figures add up); a tap opens a session's sheet with On/Off, remote control
-(live), resurrect, permissions, rename and forget, and what claude itself last reported.
+(live), resurrect, permissions, rename and forget, what claude itself last reported, how long
+its conversation is (past 100,000 lines Claude Code stops sending it to claude.ai) and its
+history (its last 200 events, by day, repeats folded). Notices say when asctl boot is bringing
+favorites back after a reboot, when asctl is not set up for the user, and when the watcher has
+not run for 5 min; Settings has the out-of-memory auto-restart switch.
 Every request needs that login and host; every action the page's token and Origin; the config
 must be its user's and writable only by them. A refused page shows only its title and icon;
 the manifest's `x_title` names it for readers that list serve ports. See `asc/dash.py`;

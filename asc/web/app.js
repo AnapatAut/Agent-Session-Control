@@ -1,10 +1,13 @@
-// The dashboard page over its API (GET api/state, GET api/past?q=, POST api/action), in the look
+// The dashboard page over its API (GET api/state, GET api/past?q=, GET api/events?id=, POST
+// api/action), in the look
 // of the serve dashboard: a list of sessions, and a details sheet for each where every action is.
 // Every value from the server is user text (titles, folders): it is set as textContent only.
 "use strict";
 const token = document.querySelector('meta[name="asctl-token"]').content;
 const $ = (id) => document.getElementById(id);
 const STALE_MS = 20000;  // no good update for this long: the warning triangle
+const WATCH_LATE_S = 300;  // the watcher runs every 30 s: no run for this long, and it has stopped
+const HIST_FIRST = 5, HIST_PAGE = 50;  // a sheet's history: the newest lines, then this many more at a time
 
 let S = null;            // the last state from the server
 let past = [];           // past conversations for the search box
@@ -12,6 +15,9 @@ let filter = "all";      // the chip pressed
 let sheetOf = null;      // {kind: "fav" | "active" | "past", key}, while the sheet is open
 let sheetSig = "";       // the data the open sheet was drawn from: redrawn only when it changes
 const pending = new Set();  // ids with an action running: their controls stay disabled across redraws
+const hist = new Map();     // id4: its events (newest first), for its open sheet
+const histOpen = new Map(); // id4: how many lines of its history are open (after Show more)
+let histV = null;           // the event log's version (state.events_v) the open sheet's history is from
 let lastOk = Date.now(), lastOkTime = null;
 
 function el(tag, text, cls) {
@@ -23,6 +29,9 @@ function el(tag, text, cls) {
 function kids(parent, ...children) { for (const c of children) if (c) parent.append(c); return parent; }
 
 // --- formatting ------------------------------------------------------------------------------
+function bytes(n) {
+  return n >= 1 << 20 ? size(n / 1024) : Math.max(1, Math.round(n / 1024)) + " KB";
+}
 function size(kb) {
   if (!kb) return "";
   return kb >= 1024 * 1024 ? (kb / 1024 / 1024).toFixed(1) + " GB" : Math.round(kb / 1024) + " MB";
@@ -54,7 +63,9 @@ function when(ts) {
 function statusText(x) {
   if (!x.status) return "";
   const [label] = STATUS[x.status] || STATUS.unknown;
-  const why = x.waiting_for || x.task;  // what claude waits for, or what it still runs while idle
+  // what claude waits for (a prompt it names no reason for: a question or a command to approve),
+  // or what it still runs while idle
+  const why = x.waiting_for || x.task || (x.status === "waiting" ? "a prompt in its pane" : "");
   return label + (why ? " (" + why + ")" : "") +
     (x.status_at ? " since " + hms(new Date(x.status_at * 1000)) : "");
 }
@@ -62,13 +73,24 @@ function ago(ts) {
   const s = Date.now() / 1000 - ts;
   if (s < 3600) return Math.max(1, Math.round(s / 60)) + " min ago";
   if (s < 86400) return Math.round(s / 3600) + " h ago";
-  if (s < 86400 * 14) return Math.round(s / 86400) + " days ago";
+  if (s < 86400 * 14) { const n = Math.round(s / 86400); return n + (n === 1 ? " day ago" : " days ago"); }
   return when(ts);
 }
 const STATUS = { busy: ["Working", "busy"], idle: ["Idle", "idle"], waiting: ["Waiting for you", "wait"],
                  shell: ["Shell", "idle"], unknown: ["Running", "idle"] };
 
-// What a favorite's state means on the page: which list, the dot, a label and why.
+// What asctl boot says the next favorite it brings back waits for (asc/boot.py), in words.
+function bootWhy(why) {
+  if (/^memory: (watched for under|down to|[0-9.]+% available, a start needs)/.test(why))
+    return "Starts once memory has stayed under 80% used for 5 min.";
+  if (why.startsWith("network")) return "Starts once claude.ai answers (at most 2 min).";
+  if (why.startsWith("pause") || !why) return "Starts in a moment.";
+  why = why.replace(/^memory: /, "");
+  return why.charAt(0).toUpperCase() + why.slice(1) + ".";
+}
+
+// What a favorite's state means on the page: which list, the dot, a label, why (on the row and
+// in the sheet) and a hint (the row only: the sheet says it in Status).
 function look(e) {
   const st = e.state || "";
   const code = (st.match(/\((\d+)\)/) || [])[1];
@@ -76,7 +98,9 @@ function look(e) {
     if (e.claudes > 1) return { group: "attention", dot: "bad", label: e.claudes + " claudes",
       why: `${e.claudes} claudes run in its tmux session; Off would end them all.` };
     const [label, dot] = STATUS[e.status] || STATUS.unknown;
-    return { group: "on", dot, label };
+    const hint = e.status === "waiting"
+      ? (e.waiting_for || "A prompt in its pane") + (e.status_at ? ", since " + hm(new Date(e.status_at * 1000)) : "") : "";
+    return { group: "on", dot, label, hint };
   }
   if (st === "duplicate") return { group: "attention", dot: "bad", label: "Duplicate",
     why: "Two claudes hold this session or its name. asctl does nothing about it by itself." };
@@ -86,9 +110,14 @@ function look(e) {
     why: `Claude was ended by a signal (${code}); its tmux session is still up. Turn it on to start claude again.` };
   if (st.startsWith("tmux up")) return { group: "attention", dot: "wait", label: "Claude ended",
     why: `Claude ended${code ? " (exit " + code + ")" : ""}; its tmux session is still up.` };
+  const boot = S && S.boot ? S.boot.todo : [];
+  if (boot.includes(e.id4) && !isOn(e)) return { group: "attention", dot: "wait", label: "Coming back",
+    why: boot.find((id) => S.favorites.some((f) => f.id4 === id && !isOn(f))) === e.id4 ? bootWhy(S.boot.why)
+                                                                                    : "Waits its turn: one start at a time." };
   if (st === "off (wanted on)") return { group: "attention", dot: "wait", label: "Off, wanted on",
     why: "It should be on but is not: a reboot without resurrect, or a start that failed." };
-  return { group: "off", dot: "", label: e.last_off ? "off since " + when(e.last_off) : "off" };
+  return { group: "off", dot: "", label: e.last_off ? "off since " + when(e.last_off) : "off",
+           why: e.resurrect ? "Off, so a reboot won't bring it back." : "", whyCls: "wait" };
 }
 const isOn = (e) => e.state === "on" || e.state === "duplicate" || (e.state || "").startsWith("on (");
 
@@ -161,7 +190,8 @@ function favRow(e) {
   if (e.resurrect) meta.push(tag("↻ resurrect"));
   const m = MODE_TAG[isOn(e) ? e.mode_used : e.mode_next];  // auto has no tag
   if (m) meta.push(tag(m));
-  return rowEl("fav:" + e.id4, () => openSheet("fav", e.id4), l.dot, e.name, e.id4, tilde(e.cwd), meta, "", l.why, l.dot === "wait" ? "wait" : "");
+  return rowEl("fav:" + e.id4, () => openSheet("fav", e.id4), l.dot, e.name, e.id4, tilde(e.cwd), meta, "", l.why || l.hint,
+               l.whyCls || (l.dot === "wait" ? "wait" : ""));
 }
 
 function section(title, pillCls, rows) {
@@ -201,6 +231,28 @@ function draw() {
   if (s.unknown_files) warn.push(`${s.unknown_files} session file(s) in a format asctl does not know.`);
   $("banner").hidden = !warn.length;
   $("banner").textContent = warn.join(" ");
+  // after a reboot, no setup, a watcher that stopped: each only while it is so
+  const notes = [], name = (id) => (s.favorites.find((e) => e.id4 === id) || {}).name || id;
+  // asctl boot's list, less any favorite on by now (by hand) or gone
+  const back = (s.boot ? s.boot.todo : []).filter((id) => s.favorites.some((e) => e.id4 === id && !isOn(e)));
+  if (back.length) notes.push(el("div", `Bringing back ${back.length} favorite${back.length === 1 ? "" : "s"} ` +
+                                        `(${back.map(name).join(", ")}), one at a time.`, "notice info"));
+  if (s.setup === false) notes.push(el("div", "Not set up: favorites won't come back after a reboot. Run asctl setup.", "notice"));
+  else if (s.setup && !s.watch_at) notes.push(el("div", "The watcher has not run yet: ended claudes go unnoticed. Check asctl-watch.timer.", "notice"));
+  else if (s.setup && s.time - s.watch_at > WATCH_LATE_S)
+    notes.push(el("div", `Watcher stopped ${Math.round((s.time - s.watch_at) / 60)} min ago: ended claudes go unnoticed. Check asctl-watch.timer.`, "notice"));
+  const nsig = notes.map((x) => x.className + x.textContent).join("|");
+  if ($("notes").dataset.sig !== nsig) { $("notes").replaceChildren(...notes); $("notes").dataset.sig = nsig; }
+
+  // settings: the switch is made once and then only updated, so it keeps a tap and the focus
+  const ar = !!(s.settings && s.settings.auto_restart);
+  if (!$("opts").firstChild)
+    $("opts").append(opt("Restart after an out-of-memory kill",
+      "Starts a favorite again after its claude is killed under memory pressure. At most once per 30 min.",
+      sw(ar, "Restart after an out-of-memory kill", () => autoRestart(!(S.settings && S.settings.auto_restart)))));
+  const arb = $("opts").querySelector("[role=switch]");
+  arb.setAttribute("aria-checked", String(ar));
+  if (pending.has("auto_restart")) arb.disabled = true;
 
   // chips
   const n = { all: s.favorites.length, on: s.favorites.filter(isOn).length };
@@ -358,8 +410,31 @@ async function refresh() {
     lastOk = Date.now();
     lastOkTime = new Date();
     render();  // outside the try: a bug here shows in the console, never as "not updating"
+    if (sheetOf && sheetOf.kind === "fav" && S.events_v !== histV) loadHist(sheetOf.key);  // only when the log changed
   }
   staleCheck();
+}
+
+// The one page-wide setting (its own function: draw() has an act of its own, the active rows).
+async function autoRestart(on) {
+  await act({ action: "auto_restart", id: "auto_restart", on });
+  // the switch was disabled while it ran, which dropped the focus: back to it once enabled again
+  const b = $("opts").querySelector("[role=switch]");
+  setTimeout(() => { if (b && document.activeElement === document.body) b.focus({ preventScroll: true }); });
+}
+
+// A favorite's events for its open sheet (asctl keeps its last 200: one request has them all).
+async function loadHist(id4) {
+  const v = S ? S.events_v : null;
+  let got = null;
+  try {
+    const r = await fetch("api/events?id=" + encodeURIComponent(id4), { cache: "no-store" });
+    if (r.ok) got = (await r.json()).events;
+  } catch (e) { /* the network: the next refresh tries again */ }
+  if (!Array.isArray(got) || !sheetOf || sheetOf.kind !== "fav" || sheetOf.key !== id4) return;
+  hist.set(id4, got);
+  histV = v;
+  renderSheet();
 }
 
 async function loadPast() {
@@ -427,6 +502,91 @@ function kv(pairs) {
   return d;
 }
 
+// --- a favorite's history in its sheet: in words, with no pids, session ids or whole paths ---
+const EV_KIND = { on: "Turned on", off: "Turned off", restart: "Restarted", restarted: "Restarted after an out-of-memory kill",
+  ended: "Claude ended", refused: "Refused", failed: "Failed", followed: "Followed", rename: "Renamed", resurrect: "Resurrect",
+  rc: "Remote control", fav: "Favorited", mode: "Permissions", waiting: "Waiting", duplicate: "Two claudes", setting: "Setting" };
+const EV_BY = { cli: "asctl", page: "page", watch: "watcher", boot: "boot" };
+const UUID_G = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+function evLabel(x) {
+  const t = x.text || "";
+  if (x.kind === "resurrect" || x.kind === "rc") {
+    const m = t.match(/: (?:rc|resurrect) (on|off)\b/);
+    return EV_KIND[x.kind] + (m ? " " + m[1] : "");
+  }
+  if (x.kind === "followed") return /moved to /.test(t) ? "Folder moved" : "New conversation";
+  if (x.kind === "rename") {
+    const m = t.match(/^renamed(?: to|:) ([a-z0-9-]+?)(?:-\d{4})?(?:[;,. ]|$)/);
+    return "Renamed" + (m ? " to " + m[1] : "");
+  }
+  return EV_KIND[x.kind] || x.kind;
+}
+// The why of a refusal, a failure or a wait, short: its prefixes (on:, boot:, NAME-ID:) and
+// pids, session ids, tmux commands and the home folder taken out.
+function evDetail(x) {
+  let t = x.text || "";
+  if (x.kind === "followed") {
+    const m = t.match(/moved to (.+?) \(was /);
+    if (m) return "Now " + tilde(m[1]);
+    return /chose it at start/.test(t) ? "Claude started in another conversation" : "A branch, a rewind, /clear or /resume inside claude";
+  }
+  const named = x.kind === "rc" && !/: rc (on|off)\b/.test(t);  // its name not sent to claude.ai, and why
+  if (!named && !["refused", "failed", "waiting", "ended", "restarted", "duplicate", "mode"].includes(x.kind)) return "";
+  if (x.kind === "ended") t = t.split(";")[0].replace(/^claude ended, /, "");
+  t = t.replace(/^(?:(?:boot|watch|on|off|rename|rc|resurrect|mode|forget|restart|fav|note|start again after exit \d+)(?: [\w.-]+)?: |[a-z0-9][a-z0-9-]*-\d{4}: )+/, "");
+  t = t.replace(/^\d{4} is being started or stopped by another asctl; try again$/, "busy with another start or stop");
+  t = t.replace(/ \(see: [^)]*\)/g, "").replace(/ \((?:pids? )?[\d, ]{3,}\)/g, "").replace(/\bclaude \d{3,}\b/g, "claude")
+       .replace(UUID_G, "…");
+  if (S && S.home) t = t.split(S.home + "/").join("~/");
+  t = t.charAt(0).toUpperCase() + t.slice(1);
+  return t.length > 160 ? t.slice(0, 159) + "…" : t;
+}
+function evDay(t) {
+  const w = when(t);
+  if (w.startsWith("today ")) return "Today";
+  if (w.startsWith("yesterday ")) return "Yesterday";
+  return new Date(t * 1000).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+}
+// One line per run of the same event (a start retried and refused 8 times: "Refused ×8").
+function evFold(evs) {
+  const out = [];
+  for (const x of evs) {
+    const g = out[out.length - 1], key = x.kind + "|" + x.by + "|" + evLabel(x) + "|" + evDetail(x);
+    if (g && g.key === key) { g.n++; g.first = x.t; } else out.push({ key, x, n: 1, first: x.t });
+  }
+  return out;
+}
+function historyBlock(e) {
+  const evs = hist.get(e.id4);
+  if (!evs) return [];  // not loaded yet: it comes with the next answer
+  const lab = el("span", "HISTORY", "lab");
+  if (evs.length) lab.append(el("span", " · " + evs.length, "n"));
+  const box = el("div", null, "hist");
+  if (!evs.length) box.append(el("div", "Nothing logged for it yet.", "none"));
+  const groups = evFold(evs), open = histOpen.get(e.id4) || 0, n = open || HIST_FIRST;
+  let day = "";
+  for (const g of groups.slice(0, n)) {
+    const d = evDay(g.x.t);
+    if (d !== day) { box.append(el("div", d, "day")); day = d; }
+    const bad = g.x.kind === "failed" || g.x.kind === "ended", warn = g.x.kind === "refused" || g.x.kind === "waiting";
+    const k = el("div", evLabel(g.x) + (g.n > 1 ? " ×" + g.n : ""), "k" + (bad ? " bad" : warn ? " wait" : ""));
+    k.append(el("small", " · " + (EV_BY[g.x.by] || g.x.by)));
+    const det = [evDetail(g.x), g.n > 1 ? "from " + hm(new Date(g.first * 1000)) : ""].filter(Boolean).join(" · ");
+    const row = kids(el("div", null, "ev"), el("span", hm(new Date(g.x.t * 1000)), "w"), k, det ? el("div", det, "d") : null);
+    row.title = full(g.x.t);
+    box.append(row);
+  }
+  const more = (text, to) => {
+    const b = el("button", text, "all");
+    b.type = "button";
+    b.addEventListener("click", () => { if (to) histOpen.set(e.id4, to); else histOpen.delete(e.id4); renderSheet(); });
+    return b;
+  };
+  if (groups.length > n) box.append(more(`Show more (${groups.length - n} left)`, open ? n + HIST_PAGE : HIST_PAGE));
+  if (open) box.append(more("Show less", 0));
+  return [lab, box];
+}
+
 function favSheet(e) {
   const l = look(e), ref = { id: e.id4, tmux: e.tmux }, on = isOn(e), wait = pending.has(e.id4);
   const out = [el("h2", e.name), el("div", "#" + e.id4 + " · " + tilde(e.cwd), "s2 mono")];
@@ -465,8 +625,11 @@ function favSheet(e) {
       sw(e.resurrect, "Resurrect", () => act({ action: "resurrect", on: !e.resurrect, ...ref }), wait || !on))));  // off: like rc
 
   out.push(el("span", "SESSION", "lab"), kv([
-    ["Status", on ? statusText(e) : l.label.replace(/^off since.*/, "Off")], ["Memory", on ? size(e.mem_kb) : ""], ["Permissions", perm], ["Claude's name", on && e.claude_name !== e.tmux ? e.claude_name + (e.claude_name_kept ? " (from an old job record of its own)" : "") : ""], ["tmux", e.tmux], ["Session id", e.session_id], ["Claudes", e.claudes > 1 ? e.claudes : ""],
+    ["Status", on ? statusText(e) : l.label.replace(/^off since.*/, "Off")], ["Memory", on ? size(e.mem_kb) : ""], ["Permissions", perm], ["Claude's name", on && e.claude_name !== e.tmux ? e.claude_name + (e.claude_name_kept ? " (from an old job record of its own)" : "") : ""], ["tmux", e.tmux], ["Session id", e.session_id],
+    ["Length", typeof e.conv_lines === "number" ? e.conv_lines.toLocaleString("en") + " lines · " + bytes(e.conv_bytes) : ""],
+    ["Claudes", e.claudes > 1 ? e.claudes : ""],
     ["Last on", full(e.last_on)], ["Last off", full(e.last_off)]]));
+  out.push(...historyBlock(e));
   out.push(kids(el("div", null, "acts"),
     btn("Rename", "", async () => {
       // claude may go by another name (favorited while it ran, renamed while busy): the same name
@@ -524,7 +687,9 @@ function renderSheet() {
   // A redraw replaces every button: only when the data changed, or a tap lands on a removed one.
   // The memory figure changes on every refresh: it alone is updated in place.
   const id = sheetOf.kind === "fav" ? item.id4 : item.session_id;
-  const sig = sheetOf.kind + ":" + pending.has(id) + ":" + JSON.stringify({ ...item, mem_kb: 0 });
+  const h = sheetOf.kind === "fav" && hist.get(id);  // its history too: new events, or more of it open
+  const sig = sheetOf.kind + ":" + pending.has(id) + ":" + (h ? h.length + ":" + (h[0] ? h[0].t + h[0].kind : "") : "-") +
+              ":" + (histOpen.get(id) || 0) + ":" + JSON.stringify({ ...item, mem_kb: 0 });
   if (sig === sheetSig) {
     const mem = sheet.querySelector('dd[data-k="Memory"]');  // the one figure that moves on its own
     if (mem && item.mem_kb) mem.textContent = size(item.mem_kb);
@@ -562,6 +727,7 @@ function openSheet(kind, key) {
   sheetSig = "";
   renderSheet();
   if (!sheetOf) return;
+  if (kind === "fav") loadHist(key);
   if (first) opener = document.activeElement;
   // the page behind is out of reach (Tab, screen readers) while the sheet is open
   for (const c of document.body.children) if (c.id !== "scrim" && c.id !== "toast" && c.id !== "dscrim") c.inert = true;
@@ -575,6 +741,9 @@ function closeSheet(fromBack) {
   if (!sheetOf) return;
   if (ask.cancel) ask.cancel();
   sheetOf = null;
+  hist.clear();
+  histOpen.clear();
+  histV = null;
   $("scrim").classList.remove("on");
   document.documentElement.classList.remove("locked");
   for (const c of document.body.children) c.inert = false;

@@ -10,12 +10,16 @@ that does not come up shows on the dashboard. A favorite whose tmux session is u
 whose conversation a live claude holds, is left alone (the watcher looks after the first). What
 waits is logged once per reason; after --wait seconds the rest are left, each with a "refused"
 event (Start them by hand). After a tmux server that ended without a reboot, run it again:
-systemctl --user start asctl-boot.service.
+systemctl --user start asctl-boot.service. While it runs, boot.json in the state folder says
+what it still brings back and what it waits for (the dashboard shows it, while boot.lock is
+held); "done" once it ends, also when stopped (SIGTERM ends it as an exit, not a kill).
 """
 import fcntl
 import os
 import re
+import signal
 import socket
+import sys
 import time
 
 from . import cli, events, memory, registry, tmuxctl
@@ -25,6 +29,7 @@ TICK_S = 30   # while waiting: a sample and another look this often (the watcher
 PAUSE_S = 30  # after a start, before the next: the next sample shows what the last one took
 NET = "claude.ai:443"  # $ASC_NET: what must answer before the first start
 NET_TRY_S = 5
+STATUS = "boot.json"
 
 
 def run(wait=3600, net_wait=120):
@@ -35,9 +40,27 @@ def run(wait=3600, net_wait=120):
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise RegistryError("another asctl boot is running")
-        return _run(time.time() + max(wait, 0), max(wait, 0), net_wait)
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))  # stopped: its finally still runs
+        try:
+            return _run(time.time() + max(wait, 0), max(wait, 0), net_wait)
+        finally:
+            _status([], "", done=True)
     finally:
         os.close(fd)
+
+
+def _status(todo, why, done=False):
+    """boot.json: the id4s still to bring back (the next first; one turned off, resurrect off or
+    forgotten since is left out) and why the next waits ("" when it does not); read by the
+    dashboard, so a failure to write it changes nothing here."""
+    try:
+        if todo:
+            es = registry.load()["entries"]
+            todo = [i for i in todo if es.get(i, {}).get("resurrect") is True and es[i].get("want_on") is True]
+        registry.write_private(os.path.join(registry.state_dir(), STATUS),
+                               {"boot": memory.boot_id(), "at": int(time.time()), "todo": list(todo), "why": why, "done": done})
+    except (OSError, RegistryError):
+        pass
 
 
 def _todo():
@@ -56,6 +79,7 @@ def _run(deadline, wait, net_wait):
     except RegistryError as x:
         events.log("failed", None, f"boot: {x}")
         raise
+    _status(todo, "network: waiting for claude.ai to answer")
     _network(net_wait)
     said, started = {}, []
     while todo:
@@ -66,13 +90,16 @@ def _run(deadline, wait, net_wait):
                 cli.out(f"boot: {e['tmux']}: {why}")
             todo.pop(0)
             continue
+        _status(todo, "")
         samples = memory.add_sample(memory.sample())
         why = memory.steady(samples) or memory.gate(e.get("rss_kb")) or _start(e, started)
         if why is None:  # started, or tried and said why not (On logged it): the next one
             todo.pop(0)
             if todo:
+                _status(todo, "pause: the last start settles first")
                 time.sleep(PAUSE_S)
             continue
+        _status(todo, why)
         reason = re.sub(r"[0-9][0-9.]*", "N", why)  # the same reason with other numbers is not news
         if said.get(e["id4"]) != reason:
             events.log("waiting", e, f"boot: not started yet: {why}")

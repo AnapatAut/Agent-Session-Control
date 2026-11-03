@@ -18,7 +18,7 @@ Built:
   That needs clear evidence of the kill, and happens at most once per 30 minutes (the watcher).
 - **A dashboard.** One web page per Linux user, reached through a unix socket that other local
   users cannot open, behind `tailscale serve`. It installs as an app.
-- **An event log** of every action, kept 7 days.
+- **An event log** of every action: each favorite's last 200.
 - **A tmux server of its own** (`asctl-tmux.service`). Restarting the dashboard or the watcher
   never ends a session, and one session's out-of-memory kill does not end the others.
 - **A machine-wide install** (`sudo ./install.sh`). Each user opts in with `asctl setup`.

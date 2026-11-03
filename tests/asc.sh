@@ -3,7 +3,7 @@
 # tests/asc/bin, a throwaway HOME and a tmux server of their own (tmux -L). Touches neither
 # your tmux nor your ~/.claude. Seconds, no network.
 #   tests/asc.sh                  prints ok/FAIL per check; exit 0 = all passed
-#   ASC_MUTANTS=1 tests/asc.sh    also 30 mutants of asctl, each must make it fail (minutes)
+#   ASC_MUTANTS=1 tests/asc.sh    also the mutants of asctl below, each must make it fail (minutes)
 set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 T=$(mktemp -d) || exit 2
@@ -467,13 +467,123 @@ printf '%s\n' '{"t": 1e20, "kind": "on", "by": "cli"}' '{"t": NaN, "kind": "on"}
 python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import events
 events.log("mode", {"id4": "0000", "tmux": "s\udce9-0000"}, "folder /tmp/\udce9 \u202e!")
 r = events.read(limit=1)[0]; assert r["tmux"] == "s -0000" and r["text"] == "folder /tmp/   !", r
-assert events.read(limit=0) == [] and events.read(limit=-1) == []' "$REPO" && ok "a lone surrogate and bidi controls become spaces; limit 0 is none" || bad "surrogate or limit"
+assert events.read(limit=0) == [] and events.read(limit=-1) == []
+assert events._plausible(5) and not any(map(events._plausible, (True, float("inf"), float("nan"), "5")))' "$REPO" \
+	&& ok "a lone surrogate and bidi controls become spaces; limit 0 is none; a time is a finite number" || bad "surrogate, limit or time"
 asctl events >/dev/null && ok "asctl events reads past odd lines" || bad "asctl events broke on odd lines"
+# What is kept: a favorite's last 200 however old, anything else 7 days; an id's events from
+# before its forget belong to an earlier favorite. A state folder of its own.
+python3 -I - "$REPO" "$T/evd" <<'PY' && ok "kept: a favorite's last 200 however old; others 7 days; before a forget is an earlier favorite's" || bad "event keeping"
+import json, os, sys, time
+sys.path.insert(0, sys.argv[1]); from asc import events, registry
+d = sys.argv[2]; os.makedirs(d, mode=0o700)
+reg = lambda ids, dd=d: registry.save({"version": 1, "entries": {i: {"id4": i, "tmux": "x-" + i} for i in ids}}, dd)
+reg(["1111", "2222", "6666"])
+now, old = int(time.time()), int(time.time()) - 30 * 86400
+line = lambda t, i, k="on", x="": json.dumps({"t": t, "kind": k, "by": "cli", "text": x, **({"id4": i, "tmux": "x-" + i} if i else {})}) + "\n"
+texts = lambda dd=d: [json.loads(l)["text"] for l in open(events.path(dd))]
+numbered = lambda: [x for x in texts() if x[:1] in "ns" and x[1:].isdigit()]  # 6666's
+with open(events.path(d), "w") as f:
+    f.write(line(old, "2222", x="old of a favorite") + line(old, "3333", x="old of no favorite") + line(old, None, x="old machine")
+            + line(old, "1111", x="earlier life") + line(old + 1, "1111", "forget") + line(old + 2, "1111", x="this life, old")
+            + line(now, "3333", x="new of no favorite") + line(now, "1111", x="this life, new")
+            + "".join(line(now, "6666", x=f"n{i}") for i in range(300)))
+events.log("mode", {"id4": "2222", "tmux": "x-2222"}, "now", d=d)
+t = texts()
+many = numbered()
+assert len(many) == 200 and many[-1] == "n299" and many[0] == "n100", (len(many), many[0])
+assert {"old of a favorite", "this life, old", "this life, new", "new of no favorite"} <= set(t), t[:6]
+assert not {"old of no favorite", "old machine", "earlier life"} & set(t), t[:6]
+assert t[-1] == "now" and oct(os.stat(events.path(d)).st_mode & 0o777) == "0o600"
+# under 200 + KEEP_SLACK, nothing to drop: not rewritten (same inode); at 250 it is cut back to 200
+ino = os.stat(events.path(d)).st_ino
+with open(events.path(d), "a") as f:
+    f.write("".join(line(now, "6666", x=f"s{i}") for i in range(49)))
+events.log("mode", {"id4": "2222", "tmux": "x-2222"}, "again", d=d)
+assert os.stat(events.path(d)).st_ino == ino and len(numbered()) == 249
+events.log("on", {"id4": "6666", "tmux": "x-6666"}, "s49", d=d)
+assert os.stat(events.path(d)).st_ino != ino and len(numbered()) == 200
+# read: an id's events back to its last forget only, at most 200, parsed once
+with open(events.path(d), "a") as f:
+    f.write(line(now, "2222", "forget") + line(now, "2222", "fav", "a new favorite with the old id"))
+assert [r["kind"] for r in events.read("2222", d=d)] == ["fav"], events.read("2222", d=d)
+assert [r["text"] for r in events.read("1111", d=d)] == ["this life, new", "this life, old"]
+assert len(events.read("6666", d=d)) == 200 and len(events.read("6666", limit=3, d=d)) == 3
+# a registry that does not read: no favorite's event dropped for its age
+with open(events.path(d), "a") as f:
+    f.write(line(old, "4444", x="old, registry broken"))
+open(os.path.join(d, "registry.json"), "w").write("{")
+with open(events.path(d), "r+") as f:
+    body = f.read(); f.seek(0); f.write(line(old, None, x="old first") + body)
+events.log("mode", None, "with a broken registry", d=d)
+assert "old, registry broken" in texts() and "old first" not in texts(), texts()[:3]
+# nothing old at all: a favorite far over 200 is still cut (the size alone sets off a look)
+d2 = d + "2"; os.makedirs(d2, mode=0o700); reg(["5555"], d2)
+open(events.path(d2), "w").write("".join(line(now, "5555", x=f"m{i}") for i in range(300)))
+events.log("mode", {"id4": "5555", "tmux": "x-5555"}, "last", d=d2)
+got = texts(d2)
+assert len(got) == 200 and got[-1] == "last" and got[0] == "m101", (len(got), got[0])
+# past 2 MB: halved, other events first, then evenly: a quiet favorite keeps its history
+d3 = d + "3"; os.makedirs(d3, mode=0o700); reg([f"{i:04d}" for i in range(60)] + ["7777"], d3)
+pad = "x" * 300
+with open(events.path(d3), "w") as f:
+    f.write(line(now - 9, "7777", x="quiet"))
+    f.write("".join(line(now, None, x=pad) for i in range(3000)))
+    f.write("".join(line(now, f"{i % 60:04d}", x=pad) for i in range(60 * 200)))
+assert os.path.getsize(events.path(d3)) > events.MAX_BYTES
+events.log("mode", {"id4": "0001", "tmux": "x-0001"}, "big", d=d3)
+got = texts(d3)
+assert os.path.getsize(events.path(d3)) <= events.MAX_BYTES // 2 and "quiet" in got and got[-1] == "big", (os.path.getsize(events.path(d3)), got[:2])
+PY
 python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import events
 assert events._clean("a\x1b[31mb\nc\x7f") == "a [31mb c "
 try: events.log("nonsense")
 except ValueError: pass
 else: raise SystemExit(1)' "$REPO" && ok "event text: control characters become spaces; an unknown kind is a bug" || bad "event text not cleaned"
+# A conversation's length, counted on by the watcher (asc/past.py): only what was added.
+python3 -I - "$REPO" "$T/lend" <<'PY' && ok "lengths: counted on from where the last count stopped; a replaced, shrunk or symlinked transcript handled" || bad "conversation lengths"
+import json, os, sys
+sys.path.insert(0, sys.argv[1]); from asc import past
+d = sys.argv[2]; home = os.path.join(d, "home"); os.makedirs(os.path.join(home, ".claude", "projects", "p"))
+a, b, c = (f"{n}" * 8 + "-1111-4111-8111-" + f"{n}" * 12 for n in "abc")
+p = lambda sid: os.path.join(home, ".claude", "projects", "p", sid + ".jsonl")
+open(p(a), "w").write("x\n" * 3)
+past.update_lengths([a, b, None, "not-an-id"], d, home)
+L = past.lengths(d)
+assert L == {a: {"lines": 3, "bytes": 6}}, L
+assert oct(os.stat(os.path.join(d, past.LENGTHS)).st_mode & 0o777) == "0o600"
+with open(p(a), "a") as f:
+    f.write("yy\nzz")  # a last line not ended yet
+st = json.load(open(os.path.join(d, past.LENGTHS)))
+st[a]["lines"] = 100  # only what was added is read: the old count stays
+json.dump(st, open(os.path.join(d, past.LENGTHS), "w"))
+past.update_lengths([a], d, home)
+assert past.lengths(d)[a] == {"lines": 101, "bytes": 11}, past.lengths(d)
+os.replace(p(a), p(a) + ".old"); open(p(a), "w").write("1\n2\n")  # replaced: counted again
+past.update_lengths([a], d, home)
+assert past.lengths(d)[a] == {"lines": 2, "bytes": 4}, past.lengths(d)
+open(p(a), "w").write("1\n")  # shrunk in place: counted again
+past.update_lengths([a], d, home)
+assert past.lengths(d)[a] == {"lines": 1, "bytes": 2}, past.lengths(d)
+open(p(b), "w").write("l\n" * 1000)
+past.update_lengths([a, b], d, home, budget=500)  # a large first count goes on over runs, not shown until done
+assert b not in past.lengths(d) and json.load(open(os.path.join(d, past.LENGTHS)))[b]["size"] < 2000
+for _ in range(10):
+    past.update_lengths([a, b], d, home, budget=500)
+assert past.lengths(d)[b] == {"lines": 1000, "bytes": 2000}, past.lengths(d)
+os.makedirs(os.path.join(home, ".claude", "projects", "a"))  # a folder move left an old copy (sorted first): the newer one counts
+q = os.path.join(home, ".claude", "projects", "a", a + ".jsonl"); open(q, "w").write("o\n" * 7); os.utime(q, (1, 1))
+past.update_lengths([a], d, home)
+assert past.lengths(d)[a]["lines"] == 1, past.lengths(d)
+os.symlink(p(a), p(c))
+past.update_lengths([a, c], d, home)
+L = past.lengths(d)
+assert set(L) == {a}, L  # b no longer asked for: dropped; c a symlink: not read
+open(os.path.join(d, past.LENGTHS), "w").write("[1")
+assert past.lengths(d) == {}
+past.update_lengths([a], d, home)
+assert past.lengths(d)[a]["lines"] == 1
+PY
 echo "== watcher: memory, sizes, following, a pending rename, duplicates"
 SD="$HOME/.local/state/agent-session-control"
 watch() { ASC_BY=watch asctl watch; }
@@ -486,9 +596,16 @@ s = memory.sample(); now = int(time.time())
 registry.write_private(registry.state_dir() + "/memory.json", [dict(s, t=now - 30 * i) for i in range(12, 0, -1)])' "$REPO"; }
 watch && jq -e 'length == 1 and .[0].avail_pct == 50 and .[0].oom_kill == 0 and (.[0].boot | length) > 0' "$SD/memory.json" >/dev/null \
 	&& [ "$(stat -c %a "$SD/memory.json" "$SD/watch.json" | sort -u)" = 600 ] && ok "watch: a memory sample kept, its files 0600" || bad "watch: no sample: $(cat "$SD/memory.json")"
+jq -e --argjson n "$(date +%s)" '.at <= $n and .at > $n - 60' "$SD/watch.json" >/dev/null && ok "watch: when its run began, for the dashboard" || bad "watch.json at: $(cat "$SD/watch.json")"
 flock "$SD/watch.lock" sleep 2 & fl=$!; sleep 0.3
 watch; [ "$(jq length "$SD/memory.json")" = 1 ] && ok "watch: a run while another holds the lock does nothing" || bad "watch ran twice at once"
 wait $fl
+# The length of a favorite's conversation: one with no transcript yet gets one of 4 lines.
+lsid=$(jq -r '[.entries[].session_id] | .[]' "$REG" | while read -r x; do compgen -G "$HOME/.claude/projects/*/$x.jsonl" >/dev/null || { echo "$x"; break; }; done)
+mkdir -p "$HOME/.claude/projects/-len"; printf 'a\nb\nc\nd\n' > "$HOME/.claude/projects/-len/$lsid.jsonl"
+watch; jq -e --arg s "$lsid" '.[$s].lines == 4 and .[$s].size == 8' "$SD/lengths.json" >/dev/null && [ "$(stat -c %a "$SD/lengths.json")" = 600 ] \
+	&& ok "watch: a favorite's conversation length counted (lengths.json, 0600)" || bad "watch lengths ($lsid): $(cat "$SD/lengths.json" 2>&1)"
+rm -f "$HOME/.claude/projects/-len/$lsid.jsonl"
 python3 -I -c 'import sys, time; sys.path.insert(0, sys.argv[1]); from asc import memory, registry
 s = memory.sample(); now = int(time.time())
 registry.write_private(registry.state_dir() + "/memory.json", [dict(s, t=now - 600), dict(s, t=now - 400), dict(s, boot="old"), dict(s, t=now + 99)])' "$REPO"
@@ -744,12 +861,27 @@ ASC_NET=127.0.0.1:$up_port boot --wait 0 >/dev/null 2>&1; rc=$?
 # Resurrect turned off while boot waits: left, with nothing said.
 seed; flock "$SD/locks/$idw" sleep 1.5 & fl=$!; sleep 0.3
 (ASC_NET=127.0.0.1:$up_port boot --wait 4 > "$T/boot.out" 2>&1; echo $? >> "$T/boot.out") & bp=$!; sleep 0.7
+jq -e --arg i "$idw" '.done == false and .todo == [$i] and (.why | test("being started or stopped"))' "$SD/boot.json" >/dev/null \
+	&& ! flock -n "$SD/boot.lock" true && [ "$(stat -c %a "$SD/boot.json")" = 600 ] \
+	&& ok "boot.json while boot runs (its lock held): what it still brings back, and why it waits (0600)" || bad "boot.json mid-boot: $(cat "$SD/boot.json")"
 python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import registry
 with registry.changing() as d: d["entries"][sys.argv[2]]["resurrect"] = False' "$REPO" "$idw"
 wait $fl $bp
+jq -e '.done == true and .todo == []' "$SD/boot.json" >/dev/null && ok "boot.json once boot ends: done" || bad "boot.json after: $(cat "$SD/boot.json")"
+python3 -I -c 'import json, sys; sys.path.insert(0, sys.argv[1]); from asc import boot, registry
+boot._status([sys.argv[2], "9999"], "x")
+assert json.load(open(registry.state_dir() + "/boot.json"))["todo"] == [], "kept"' "$REPO" "$idw" \
+	&& ok "boot.json leaves out a favorite turned off, resurrect off or forgotten since" || bad "boot.json kept one no longer wanted"
 seen -x 'boot: 0 started' "$T/boot.out" && seen -x 0 "$T/boot.out" && ! claude_in "wat3-$idw" >/dev/null 2>&1 \
 	&& ok "resurrect off while boot waits: left" || bad "resurrect off mid-boot: $(cat "$T/boot.out")"
 asctl resurrect "$idw" on >/dev/null; asctl rc "$idw" off --next-start >/dev/null
+# Stopped while it waits (memory short): a SIGTERM ends it as an exit, so boot.json says done.
+mem 32000000 4000000; seed; rm -f "$SD/boot.json"
+ASC_BY=boot ASC_NET=127.0.0.1:$up_port "$REPO/bin/asctl" boot --wait 60 >/dev/null 2>&1 & bp=$!
+for _ in $(seq 1 50); do jq -e '.done == false and (.why | startswith("memory"))' "$SD/boot.json" >/dev/null 2>&1 && break; sleep 0.1; done
+kill -TERM "$bp"; wait "$bp"; rc=$?
+[ "$rc" = 143 ] && jq -e '.done == true' "$SD/boot.json" >/dev/null && ok "boot stopped (SIGTERM): exit 143, boot.json done" || bad "boot stopped: rc $rc $(cat "$SD/boot.json")"
+mem 32000000 16000000
 mem 32000000 16000000; seed; nw=$(jq -s '[.[] | select((.text // "") | test("did not answer"))] | length' "$SD/events.jsonl")
 flock "$SD/boot.lock" sleep 2 & fl=$!; sleep 0.3
 errof boot | seen 'another asctl boot is running' && ok "one boot at a time" || bad "two boots: $(errof boot)"
@@ -957,12 +1089,12 @@ asc/cli.py %%%         job, s = (s, s["host"]) if s.get("host") else (None, s) %
 asc/cli.py %%%     if s.get("host"): %%%     if False:
 asc/cli.py %%%     if m is None or (at is not None and s.get("started_at") and at < s["started_at"]): %%%     if m is None:
 asc/cli.py %%%         if not s or s["name"] == new: %%%         if True:
-asc/events.py %%%     if size <= MAX_BYTES and _time(first) >= time.time() - KEEP_DAYS * 86400: %%%     if True:
-asc/events.py %%%     keep = [l for l in lines if _time(l) >= cut] %%%     keep = lines
-asc/events.py %%%     while keep and sum(map(len, keep)) > MAX_BYTES // 2 and size > MAX_BYTES: %%%     while False:
+asc/events.py %%%     ok = isinstance(t, (int, float)) and not isinstance(t, bool) and math.isfinite(t) %%%     ok = isinstance(t, (int, float))
+asc/events.py %%%             drop = True  # too old %%%             pass
+asc/events.py %%%         while n_other and total() > MAX_BYTES // 2: %%%         while False:
 asc/events.py %%%     fd = os.open(p, flags | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, 0o600) %%%     fd = os.open(p, flags | os.O_CLOEXEC, 0o600)
 asc/events.py %%%     if not stat.S_ISREG(os.fstat(fd).st_mode): %%%     if False:
-asc/events.py %%%     return t if ok and 0 < t <= time.time() + 86400 else 0 %%%     return t if ok else 0
+asc/events.py %%%     return ok and 0 < t <= time.time() + 86400 %%%     return ok
 asc/cli.py %%%         events.log("failed", e, f"{what}: {x}") %%%         events.log("refused", e, f"{what}: {x}")
 asc/cli.py %%%             out(ended) %%%             say("off", e, ended)
 asc/cli.py %%%                 pending(id4, new) %%%                 pass
@@ -1045,6 +1177,27 @@ asc/setup.py %%%     back = [u for u in _recorded() if %%%     back = [u for u i
 asc/setup.py %%%     return ("same" if _read(p) == _template() else "differs"), p %%%     return "same", p
 asc/setup.py %%%     to_start = [u for u in STARTED if _prop(u, "ActiveState") != "active"] %%%     to_start = []
 asc/setup.py %%%         cli.out("asctl is set up already: nothing to do") %%%         pass
+asc/events.py %%% [i for r, i in mine if r < per] %%% [i for r, i in mine]
+asc/events.py %%%         elif t >= cut: %%%         else:
+asc/events.py %%%         if fav and kind == "forget": %%%         if False:
+asc/events.py %%%     if size <= CHECK_BYTES and _time(first) >= cut: %%%     if _time(first) >= cut:
+asc/events.py %%%         return set(registry.load(d)["entries"]) %%%         return None
+asc/events.py %%%     if not drop: %%%     if False:
+asc/events.py %%%         if id4 is not None and r["kind"] == "forget": %%%         if False:
+asc/past.py %%%             if c is None or c["ino"] != st.st_ino or c["size"] > st.st_size: %%%             if c is None:
+asc/past.py %%%             f.seek(start) %%%             f.seek(0)
+asc/past.py %%%                 budget -= len(b) %%%                 pass
+asc/past.py %%%         f = live.open_regular(p) if p else None %%%         f = open(p, "rb") if p else None
+asc/watch.py %%%         st["at"] = int(time.time()) %%%         pass
+asc/watch.py %%%         past.update_lengths( %%%         (lambda *a: None)(
+asc/boot.py %%%         signal.signal(signal.SIGTERM, lambda *_: sys.exit(143)) %%%         pass
+asc/boot.py %%%             todo = [i for i in todo if es.get(i, {}).get("resurrect") is True and es[i].get("want_on") is True] %%%             pass
+asc/events.py %%%             drop |= rank[id4] + 1 >= KEEP_PER + KEEP_SLACK %%%             drop = True
+asc/events.py %%%         while per > 1 and total() > MAX_BYTES // 2: %%%         while False:
+asc/past.py %%%     return max(sorted(paths), key=mtime) if paths else None %%%     return sorted(paths)[0] if paths else None
+asc/past.py %%%             if isinstance(k, str) and _entry(v) and v["size"] == v["seen"]} %%%             if isinstance(k, str) and _entry(v)}
+asc/boot.py %%%             _status([], "", done=True) %%%             pass
+asc/boot.py %%%         _status(todo, why) %%%         pass
 MUTANTS
 fi
 

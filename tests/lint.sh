@@ -27,7 +27,7 @@ fi
 python3 -I -m py_compile asc/*.py && echo "python: ok (asc/*.py compile)" || rc=1
 find asc -name __pycache__ -prune -exec rm -r {} + 2>/dev/null
 if command -v node >/dev/null; then
-	for js in asc/web/app.js asc/web/splash.js; do node --check "$js" && echo "js: ok ($js parses)" || rc=1; done
+	for js in asc/web/app.js asc/web/splash.js tests/dash/page.js; do node --check "$js" && echo "js: ok ($js parses)" || rc=1; done
 else
 	echo "js: node not installed, skipped"
 fi
