@@ -150,7 +150,7 @@ function keepFocus(draw) {
 const MODE = { auto: "Auto", manual: "Manual", default: "Manual", acceptEdits: "Accept edits", dontAsk: "Don't ask",
                plan: "Plan", bypassPermissions: "Skip permissions" };
 const MODE_TAG = { manual: "asks first", default: "asks first", acceptEdits: "accept edits", dontAsk: "don't ask",
-                   plan: "plan" };  // skip has no tag either (Aut: not on the main list)
+                   plan: "plan" };  // skip has no tag either (not on the main list)
 
 function favRow(e) {
   const l = look(e);
