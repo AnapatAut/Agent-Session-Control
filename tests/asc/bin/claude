@@ -14,7 +14,8 @@
 # selected; status "waiting"; Up from the top wraps to the bottom), Up/Down and Enter, Esc
 # closes it. Lines entered are logged. A "/word" being typed shows a command menu under the box
 # (Enter takes its first entry). Up in an empty prompt brings back the last line entered.
-# $HOME/fake-menu-first: another command ranks first in the menu. $HOME/fake-menu-on: a menu
+# $HOME/fake-menu-first: another command ranks first in the menu. $HOME/fake-menu-slow: the menu
+# shows 1 s after the last key (until then the status line), as a claude with many commands. $HOME/fake-menu-on: a menu
 # stays open under the box after a space too. $HOME/fake-slow-dialog: the dialog opens after
 # 1.5 s, and the transcript quotes its lines. $HOME/fake-mangle: an x shows before typed text.
 # $HOME/fake-two-lines: the prompt has a second line (text after an empty first line).
@@ -117,7 +118,7 @@ draw() {
 		else printf '❯\xc2\xa0%s\n' "$buf"; fi
 		[ -e "$HOME/fake-two-lines" ] && echo "  a second line"
 		rule
-		if [[ $buf == /* && ( $buf != *" "* || -e $HOME/fake-menu-on ) ]]; then
+		if [[ $buf == /* && ( $buf != *" "* || -e $HOME/fake-menu-on ) ]] && [ "$menu_at" = 0 ]; then
 			[ -e "$HOME/fake-menu-first" ] && echo "  /remote-controller   a plugin's command"
 			echo "  /remote-control      Connect this session to claude.ai"
 			echo "  /resume              Resume a conversation"
@@ -127,6 +128,7 @@ draw() {
 	fi
 }
 now_ms() { local t=${EPOCHREALTIME/./}; echo $((t / 1000)); }
+menu_at=0
 said=""
 enter() {
 	echo "pid=$$ line: $buf" >> "$log"
@@ -149,6 +151,7 @@ while :; do
 	if [ -e "$HOME/fake-hog" ]; then rm -f "$HOME/fake-hog"; hog=$(head -c 400000000 /dev/zero | tr '\0' x); fi
 	IFS= read -rsn1 -t 0.3 k; r=$?
 	if [ $pend != 0 ] && [ "$(now_ms)" -ge $pend ]; then pend=0; dialog=1; sel=2; draw; fi
+	if [ $menu_at != 0 ] && [ "$(now_ms)" -ge $menu_at ]; then menu_at=0; draw; fi
 	[ $r -gt 128 ] && continue        # timeout: write the session file again
 	[ $r != 0 ] && [ -z "$k" ] && { sleep 0.3; continue; }  # no terminal input
 	if [ "$k" = $'\e' ]; then
@@ -170,5 +173,6 @@ while :; do
 		[ -z "$buf" ] && [ -e "$HOME/fake-mangle" ] && buf=x
 		buf+=$k
 	fi
+	[ -e "$HOME/fake-menu-slow" ] && [ $dialog = 0 ] && [ -n "$k" ] && menu_at=$(($(now_ms) + 1000))
 	draw
 done

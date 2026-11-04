@@ -137,7 +137,10 @@ pane not in copy mode and the prompt empty, and checks the screen and the sessio
 and after. Otherwise it changes only the setting and says why. See `asc/rclive.py`.
 
 A rename does not restart: `--resume` reconnects to the conversation's claude.ai session, which
-keeps its title, so only `/rename` changes it. A conversation that once ran as a Claude Code
+keeps its title, so only `/rename` changes it. A start with remote control (also a restart,
+and Restart in tmux) sends `/rename` with its name once rc is up; when it cannot (claude busy,
+rc slow), the name stays owed to claude.ai and the watcher sends it once claude is idle. A
+conversation that once ran as a Claude Code
 background job takes that job's recorded name back at every start (`nameSource: "peer"`).
 
 A restart (`asctl restart`, `rename --restart`) goes ahead only when the

@@ -9,6 +9,8 @@ Each run, one at a time (watch.lock; a run that finds another still going does n
     - followed: a new session id (a branch, a rewind, /resume inside claude) into lineage, a
       new folder (/cd);
     - a rename asctl could not send because claude was busy (rename_pending) sent once idle;
+      also, after a restart, the name to its claude.ai session (rename_title: a resumed
+      claude.ai session keeps its old title, though claude has the name);
     - an exit record older than that claude dropped (it ended before this claude was started);
  4. a favorite that is wanted on whose claude ended while its tmux session stayed: logged once
     with its exit code and the memory evidence. Started again (in its own pane, which keeps the
@@ -201,21 +203,23 @@ def _pending_rename(st, e, s):
     if not pend:
         tries.pop(e["id4"], None)
         return
-    if pend != e["tmux"] or s["name"] == pend:  # renamed again since, or claude has it now
-        _set(e, {"rename_pending": pend}, {"rename_pending": None})
+    done = {"rename_pending": None, "rename_title": None}
+    # renamed again since, or claude has it now (its claude.ai title too, unless one is owed)
+    if pend != e["tmux"] or (s["name"] == pend and not e.get("rename_title")):
+        _set(e, {"rename_pending": pend}, done)
         tries.pop(e["id4"], None)
         return
     if rclive.guard(s) is not None:  # busy, waiting, typing: the next run
         return
     why = rclive.rename(s, pend)
     if not why:
-        _set(e, {"rename_pending": pend}, {"rename_pending": None})
+        _set(e, {"rename_pending": pend}, done)
         tries.pop(e["id4"], None)
         events.log("rename", e, f"claude took the name {pend} now that it is idle, its claude.ai title too")
         return
     tries[e["id4"]] = tries.get(e["id4"], 0) + 1
     if tries[e["id4"]] >= RENAME_TRIES:
-        _set(e, {"rename_pending": pend}, {"rename_pending": None})
+        _set(e, {"rename_pending": pend}, done)
         tries.pop(e["id4"], None)
         events.log("failed", e, f"rename: claude did not take the name {pend} after {RENAME_TRIES} tries ({why}); "
                    f"rename it again by hand")

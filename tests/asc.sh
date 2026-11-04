@@ -319,7 +319,7 @@ echo "== a claude outside its tmux session: where it runs, off of a background s
 OS=eeeeeeee-0000-4000-8000-000000000001
 tm new-session -d -s outer -c "$W" -- "$ASC_CLAUDE" --session-id "$OS"
 po=$(claude_in outer); asctl fav "$po" --name outer >/dev/null; ido=$(jq -r '.entries[] | select(.name == "outer") | .id4' "$REG")
-asctl off "$ido" >/dev/null
+asctl off "$ido" >/dev/null; asctl rc "$ido" on --next-start >/dev/null
 # a claude that ends on SIGTERM, as the real one does; $1: anything: it ignores SIGTERM
 printf '%s\n' '[ -n "${1:-}" ] && trap "" TERM || trap '"'"'kill $! 2>/dev/null; exit 143'"'"' TERM' 'sleep 300 & wait; wait' > "$T/outside.sh"
 outer_tty() { script -qfc "exec -a claude '$FAKE_BASH' '$T/outside.sh' ${1:-}" /dev/null >/dev/null 2>&1 & sc=$!
@@ -336,12 +336,26 @@ tm new-session -d -s "outer-$ido" -- sleep 300
 o=$(errof restart "$ido"); tm kill-session -t "=outer-$ido"
 seen "is up without it: close that session first" <<<"$o" && kill -0 "$tp" && ok "restart refused: its tmux session is up without it (nothing ended)" || bad "outside restart, session up: $o"
 asctl restart "$ido" >/dev/null 2>&1; r=$?; pn=$(claude_in "outer-$ido")
-[ $r = 0 ] && ! kill -0 "$tp" 2>/dev/null && [ -n "$pn" ] && tail -1 "$HOME/claude-args.log" | seen "pid=$pn .*--resume $OS" \
+[ $r = 0 ] && ! kill -0 "$tp" 2>/dev/null && [ -n "$pn" ] && seen "^pid=$pn .*--resume $OS" "$HOME/claude-args.log" \
 	&& ok "restart: the idle claude outside ended, and started in its tmux session on the same conversation" || bad "outside restart: rc $r tp $tp pn $pn"
 jq -s -c --arg i "$ido" '[.[] | select(.id4 == $i and .kind == "off")] | last | .text' "$EVF" | seen "in a terminal outside tmux (script, pts/[0-9]*) ended, to start again in its tmux session" \
 	&& ok "restart: its off event says where it ran" || bad "outside off event: $(tail -3 "$EVF")"
 o=$(errof restart "$ido" --outside); seen "runs in 'outer-$ido', not outside it: nothing to move in" <<<"$o" && [ "$(claude_in "outer-$ido")" = "$pn" ] \
 	&& ok "restart --outside (the page's): refused for a claude in its tmux session" || bad "restart --outside in tmux: $o"
+seen "pid=$pn line: /rename outer-$ido" "$HOME/claude-args.log" && [ "$(jq -r --arg i "$ido" '.entries[$i].rename_pending' "$REG")" = null ] \
+	&& ok "restart with rc: its name sent to claude.ai at the start (a resumed claude.ai session keeps its old title)" || bad "title at start: $(jq -c --arg i "$ido" '.entries[$i]' "$REG")"
+asctl off "$ido" >/dev/null; touch "$HOME/fake-busy"
+o=$(asctl on "$ido" 2>&1); pb=$(claude_in "outer-$ido")
+seen "its name not sent to claude.ai: claude is busy" <<<"$o" && [ "$(jq -r --arg i "$ido" '.entries[$i] | "\(.rename_pending) \(.rename_title)"' "$REG")" = "outer-$ido true" ] \
+	&& ok "a start that cannot send its name to claude.ai (claude busy): owed to it, though claude has the name" || bad "title owed: $o / $(jq -c --arg i "$ido" '.entries[$i]' "$REG")"
+rm -f "$HOME/fake-busy"; sleep 0.8
+# the watcher's step for it alone (a whole watcher run here would start the watcher tests' state early)
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import cli, registry, watch
+e = registry.find(registry.load(), sys.argv[2])
+with registry.entry_lock(e["id4"]):
+    watch._pending_rename({"rename_tries": {}}, e, cli.live_in(e))' "$REPO" "$ido"
+seen "pid=$pb line: /rename outer-$ido" "$HOME/claude-args.log" && [ "$(jq -r --arg i "$ido" '.entries[$i] | "\(.rename_pending) \(.rename_title)"' "$REG")" = "null null" ] \
+	&& ok "the watcher sends it once claude is idle (/rename, though claude has the name), and it is no longer owed" || bad "title sent: $(jq -c --arg i "$ido" '.entries[$i]' "$REG")"
 kill "$sc" 2>/dev/null; asctl off "$ido" >/dev/null
 outer_tty hold; sfile "$tp" "$OS" "$(start_of "$tp")" ',"kind":"interactive","status":"idle"'
 o=$(errof restart "$ido")
@@ -426,9 +440,13 @@ screen | seen 'Try "fix lint"' && out=$(asctl rc "$id2" on) && seen 'live now' <
 rm -f "$HOME/fake-hint"
 empty() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import rclive; sys.exit(rclive.prompt_text(rclive.screen(sys.argv[2])) != "")' "$REPO" "$pane"; }
 touch "$HOME/fake-menu-first"
-out=$(asctl rc "$id2" off); seen 'not changed now: its command menu did not offer /remote-control first; nothing was sent' <<<"$out" && [ -n "$(bridge)" ] && empty \
-	&& ! seen 'remote-controller' "$HOME/claude-args.log" && ok "off: another command first in the menu: Enter not pressed, the prompt cleared" || bad "menu first: $out"
+out=$(asctl rc "$id2" off); seen "not changed now: its command menu did not offer /remote-control first (it showed: /remote-controller   a plugin's command); nothing was sent" <<<"$out" && [ -n "$(bridge)" ] && empty \
+	&& ! seen 'remote-controller' "$HOME/claude-args.log" && ok "off: another command first in the menu: Enter not pressed, the prompt cleared, what it showed named" || bad "menu first: $out"
 rm -f "$HOME/fake-menu-first"
+touch "$HOME/fake-menu-slow"
+out=$(asctl rc "$id2" off); rm -f "$HOME/fake-menu-slow"
+seen 'live now\|off now' <<<"$out" && [ -z "$(bridge)" ] && ok "off: a menu drawn a moment after the typed text is waited for" || bad "slow menu: $out"
+asctl rc "$id2" on >/dev/null
 touch "$HOME/fake-slow-dialog"
 out=$(asctl rc "$id2" off); seen 'off now' <<<"$out" && [ -z "$(bridge)" ] && empty \
 	&& ok "off: a slow dialog, its lines quoted in the transcript: waited for the dialog itself" || bad "slow dialog: $out / $(screen | tail -4)"
@@ -450,7 +468,7 @@ touch "$HOME/fake-two-lines"; tm send-keys -t "$pane" x BSpace; sleep 0.5
 out=$(asctl rc "$id2" on); seen "not changed now: its screen does not show claude's prompt" <<<"$out" && [ -z "$(bridge)" ] \
 	&& ok "a prompt of two lines (the first empty) is not empty" || bad "two lines: $out"
 rm -f "$HOME/fake-two-lines"; tm send-keys -t "$pane" x BSpace; sleep 0.5
-[ "$(grep 'line: ' "$HOME/claude-args.log" | grep -vc 'line: /rename ')" = 4 ] && ok "nothing else ever reached its prompt (four rc lines, besides /rename)" || bad "lines entered: $(grep 'line: ' "$HOME/claude-args.log")"
+[ "$(grep 'line: ' "$HOME/claude-args.log" | grep -vc 'line: /rename ')" = 6 ] && ok "nothing else ever reached its prompt (six rc lines, besides /rename)" || bad "lines entered: $(grep 'line: ' "$HOME/claude-args.log")"
 asctl rc "$id2" off --next-start >/dev/null  # the tests below start from rc off
 asctl off "$id2" --force >/dev/null
 asctl rc "$id2" on --title=-x >/dev/null 2>&1 && bad "a title starting with - accepted" || ok "a title starting with - refused (claude would read an option)"
@@ -1120,7 +1138,7 @@ asc/cli.py %%%         elif s["rc"] == on: %%%         elif False:
 asc/rclive.py %%%     if prompt_text(scr) != cmd: %%%     if False:
 asc/rclive.py %%% if menu(under(scr)) - menu(before) else None %%% if False else None
 asc/rclive.py %%% if menu(under(scr)) - menu(before) else None %%% if under(scr) != before else None
-asc/rclive.py %%%         None if offers_cmd(scr) else %%%         None if True else
+asc/rclive.py %%%     if wait_for(lambda: offers_cmd(screen(pane)), timeout): %%%     if True:
 asc/rclive.py %%%     if not wait_for(lambda: seen() > n and (session(s["pid"]) or {}).get("name") == name, confirm): %%%     if False:
 asc/rclive.py %%%             n += f.read(tail).count(text) %%%             n = 1
 asc/cli.py %%%             why = rclive.rename(s, new) %%%             why = None
@@ -1248,6 +1266,9 @@ asc/cli.py %%%         raise RegistryError(f"its claude runs in {w['text']}, and
 asc/cli.py %%%     if away and not away.get("host"): %%%     if False:
 asc/cli.py %%%     if outside: %%%     if False:
 asc/cli.py %%%         raise ActionFailed(f"claude stop {now['job']}: {(r.stderr or r.stdout).strip()[:200] or 'failed'}") %%%         pass
+asc/cli.py %%%             x["rename_title"] = True if title else None %%%             x["rename_title"] = None
+asc/watch.py %%%     if pend != e["tmux"] or (s["name"] == pend and not e.get("rename_title")): %%%     if pend != e["tmux"] or s["name"] == pend:
+asc/rclive.py %%%     if wait_for(lambda: offers_cmd(screen(pane)), timeout): %%%     if offers_cmd(steady(pane)):
 asc/events.py %%% [i for r, i in mine if r < per] %%% [i for r, i in mine]
 asc/events.py %%%         elif t >= cut: %%%         else:
 asc/events.py %%%         if fav and kind == "forget": %%%         if False:

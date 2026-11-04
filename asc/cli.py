@@ -506,8 +506,8 @@ def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, r
         events.log("followed", e, f"session {e['session_id']} is now {s['session_id']} (claude chose it at start)")
     if "--remote-control" in argv and (e.get("rc_title") or e["tmux"]) == e["tmux"]:
         why = send_title(s, e["tmux"])
-        if why:
-            pending(e["id4"], e["tmux"])
+        if why:  # claude has the name (--name), its claude.ai session not yet: owed to it
+            pending(e["id4"], e["tmux"], title=True)
             say("rc", e, f"{e['tmux']}: its name not sent to claude.ai: {why}")
     if loud:
         out(f"on: {e['tmux']} (claude {s['pid']}, session {s['session_id']})")
@@ -525,12 +525,16 @@ def send_title(s, name, wait=20):
     return rclive.rename(s, name)
 
 
-def pending(id4, name):
-    """A name claude has not taken yet: the watcher types /rename once claude is idle."""
+def pending(id4, name, title=False):
+    """A name claude has not taken yet: the watcher types /rename once claude is idle. title: one
+    its claude.ai session has not taken, although claude has (a restart gives claude its name
+    with --name, but --resume reconnects to the claude.ai session, which keeps its title): sent
+    all the same."""
     with registry.changing() as data:
         x = data["entries"].get(id4)
         if x and x["tmux"] == name:
             x["rename_pending"] = name
+            x["rename_title"] = True if title else None
 
 
 def cmd_off(args):
@@ -718,7 +722,7 @@ def cmd_rename(args):
             if e.get("rc_title") == e["tmux"]:
                 e["rc_title"] = new
             old = e["tmux"]
-            e["name"], e["tmux"], e["rename_pending"] = name, new, None
+            e["name"], e["tmux"], e["rename_pending"], e["rename_title"] = name, new, None, None
         s = live_in(e)
         if not s or s["name"] == new:
             say("rename", e, f"renamed: {new}", old=old)

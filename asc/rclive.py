@@ -4,7 +4,8 @@ The one command asctl types into a running claude, and only when it cannot land 
 else: claude idle (its session file), its pane not in copy mode, its prompt empty (read from
 the screen, `capture-pane -e`). After typing, before Enter: the prompt shows exactly the
 command, claude is still idle, and nothing else opened under the prompt (for on, the screen
-under it is as before; for off, the command menu offers /remote-control first). Otherwise what
+under it is as before; for off, the command menu offers /remote-control first, waited for up to
+3 s: a claude with many commands draws it after the typed text). Otherwise what
 was typed is taken back, only when the prompt holds nothing but that.
 On: `/remote-control <title>` (always the title: without one claude.ai shows a random name;
 only letters, digits, space, . _ -, as anything else could open a menu or be read by tmux).
@@ -83,6 +84,16 @@ def offers_cmd(scr):
     """True when the command menu's first entry (the one Enter takes) is /remote-control itself."""
     first = next((l.strip() for l in under(scr) if l.strip()), "")
     return re.match(re.escape(CMD) + r"(\s|$)", first.lstrip("❯›> ")) is not None
+
+
+def offers(pane, timeout=3):
+    """None once the command menu offers /remote-control first, else why not, naming the line it
+    showed first. A claude with many commands (plugins, skills) draws its menu a moment after the
+    typed text, after the screen has looked steady: so it is waited for, up to timeout."""
+    if wait_for(lambda: offers_cmd(screen(pane)), timeout):
+        return None
+    first = next((l.strip() for l in under(steady(pane)) if l.strip()), "")
+    return "its command menu did not offer /remote-control first" + (f" (it showed: {first[:60]})" if first else "")
 
 
 def bottom(scr, n=10):
@@ -218,8 +229,7 @@ def switch(s, on, title, confirm=10):
     if on and not TITLE.fullmatch(title):
         return "its title has characters asctl does not type (only letters, digits, space, . _ -)"
     pid, pane = s["pid"], s["pane"]["pane_id"]
-    why = enter(s, f"{CMD} {title}" if on else CMD, no_menu if on else lambda scr, before: (
-        None if offers_cmd(scr) else "its command menu did not offer /remote-control first"))
+    why = enter(s, f"{CMD} {title}" if on else CMD, no_menu if on else lambda scr, before: offers(pane))
     if why:
         return why
     if not on:
