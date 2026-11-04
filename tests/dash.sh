@@ -675,6 +675,7 @@ asc/web/app.js %%%     if (g && g.key === key) { g.n++; g.first = x.t; } %%%    
 asc/web/app.js %%% return n + (n === 1 ? " day ago" : " days ago"); %%% return n + " days ago";
 asc/web/app.js %%%            why: e.resurrect ? "Off, so a reboot won't bring it back." : "", whyCls: "wait" }; %%%            why: "", whyCls: "wait" };
 asc/web/app.js %%%   if (why.startsWith("pause") || !why) return "Starts in a moment."; %%%   if (why.startsWith("pause") || !why) return "Starts in a moment."; return why;
+asc/web/app.js %%% month: "short", year: "numeric" %%% month: "short"
 asc/dash.py %%%         if not isinstance(a.get("on"), bool): %%%         if False:
 asc/dash.py %%%             "conv_lines": lens.get(e.get("session_id"), {}).get("lines"), %%%             "conv_lines": None,
 asc/past.py %%%     ok = isinstance(x, dict) and all(type(x.get(k)) is int and x[k] >= 0 for k in ("ino", "size", "lines", "seen")) %%%     ok = isinstance(x, dict)

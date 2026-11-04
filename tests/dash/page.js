@@ -33,6 +33,7 @@ S = { home: "${HOME}", boot: { todo: ["0003", "0004", "0005"], why: "memory: wat
 var F = (id) => S.favorites.find((e) => e.id4 === id);`);
 
 check("1 day ago, 3 days ago", `ago(Date.now() / 1000 - 86400) === "1 day ago" && ago(Date.now() / 1000 - 3 * 86400) === "3 days ago"`);
+check("the time it was updated: day, month, year and seconds", `stamp(new Date(2026, 10, 4, 11, 27, 42)) === "4 Nov 2026, 11:27:42"`);
 check("waiting with no reason: a prompt in its pane", `statusText(F("0001")).startsWith("Waiting for you (a prompt in its pane) since ")`);
 check("waiting: the row's hint, not a why (the sheet says it in Status)",
   `look(F("0001")).hint === "A prompt in its pane, since " + hm(new Date((T - 60) * 1000)) && !look(F("0001")).why`);

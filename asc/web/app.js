@@ -45,6 +45,8 @@ function tilde(p) {
 const pad = (n) => String(n).padStart(2, "0");
 function hm(d) { return pad(d.getHours()) + ":" + pad(d.getMinutes()); }
 function hms(d) { return hm(d) + ":" + pad(d.getSeconds()); }
+// "4 Nov 2026, 11:27:42"
+function stamp(d) { return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) + ", " + hms(d); }
 function full(ts) {
   if (!ts) return "";
   const d = new Date(ts * 1000);
@@ -212,9 +214,8 @@ function draw() {
   const s = S;
   $("me").textContent = s.login.split("@")[0];  // the name only; the whole login on hover
   $("me").title = s.login;
-  const h = location.hostname;
-  $("host").textContent = /^[\d.:\[\]]+$/.test(h) ? h : h.split(".")[0];
-  $("upd").textContent = "Updated " + hms(new Date(s.time * 1000));
+  $("host").textContent = location.hostname;
+  $("upd").textContent = "Updated " + stamp(new Date(s.time * 1000));
 
   // memory
   const m = s.memory, used = m.total_kb ? 100 - m.avail_pct : 0;
