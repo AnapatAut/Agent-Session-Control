@@ -214,26 +214,29 @@ def remote_client(headers):
 
 # --- what the page shows -------------------------------------------------------------------
 
-def top_processes(n=5):
+def top_processes(mem, n=5):
     """This user's n biggest processes (name and size only: command lines can hold paths and
-    arguments), and the total of every other user's, with no names (R7)."""
-    me, mine, others = os.getuid(), [], 0
+    arguments), all of this user's together (mine_kb), and the rest of the memory in use with no
+    names (others_kb: other users and the system, R7). The rest is what is in use (mem: total
+    less available, as the memory card shows) less this user's: adding up other users' RSS
+    would count each page they share once per process (their PSS cannot be read), more than
+    the machine has."""
+    me, mine = os.getuid(), []
     for d in os.listdir("/proc"):
         if not d.isdigit():
             continue
         try:
-            uid = os.stat(f"/proc/{d}").st_uid
+            if os.stat(f"/proc/{d}").st_uid != me:
+                continue
         except OSError:
-            continue
-        if uid != me:
-            others += live.rss_kb(int(d))  # their PSS cannot be read: RSS
             continue
         kb = live.pss_kb(int(d))
         st = live.proc_stat(int(d))
         if st and kb:
             mine.append({"name": st[0], "mem_kb": kb})
     mine.sort(key=lambda p: p["mem_kb"], reverse=True)
-    return {"mine": mine[:n], "others_kb": others}
+    total = sum(p["mem_kb"] for p in mine)
+    return {"mine": mine[:n], "mine_kb": total, "others_kb": max(0, mem["total_kb"] - mem["avail_kb"] - total)}
 
 
 def boot_status():
@@ -378,7 +381,8 @@ def _snapshot():
               for s in lv if s["session_id"] not in fav_sids and not (s["pane"] and s["pane"]["session"] in fav_tmux)]
     unknown = sum(1 for s in live.read_sessions() if not s["ok"])
     settings = data.get("settings") if isinstance(data.get("settings"), dict) else {}
-    return {"time": int(time.time()), "memory": memory.meminfo(), "top": top_processes(),
+    mem = memory.meminfo()
+    return {"time": int(time.time()), "memory": mem, "top": top_processes(mem),
             "server": bool(pane_list) or tmuxctl.server_running(),
             "favorites": favs, "active": active, "unknown_files": unknown,
             "boot": boot_status(), "watch_at": watch_at(), "setup": set_up(), "events_v": events_version(),

@@ -246,6 +246,12 @@ jq -e '.memory.avail_pct > 0 and .memory.total_kb > 0' <<<"$s" >/dev/null && ok 
 jq -e --arg s "$SID" '.active | map(select(.session_id == $s and .tmux == "dev")) | length == 1' <<<"$s" >/dev/null && ok "state: the running claude, not favorited" || bad "state: active list wrong: $s"
 jq -e '.top.mine | length > 0 and all(keys == ["mem_kb", "name"])' <<<"$s" >/dev/null && ok "state: own biggest processes, names and sizes only" || bad "state: top processes wrong"
 jq -e '.top.others_kb | type == "number"' <<<"$s" >/dev/null && ok "state: other users as one total" || bad "state: no others total"
+mem 100000000 60000000
+jq -e '(.top.mine_kb > 0) and (.top.mine_kb >= (.top.mine | map(.mem_kb) | add)) and (.top.others_kb + .top.mine_kb == 40000000)' <<<"$(state)" >/dev/null \
+	&& ok "state: other users and the system are what is in use less this user's (never more than the machine has)" || bad "state: others $(state | jq -c .top)"
+mem 100000000 99999990
+jq -e '.top.others_kb == 0' <<<"$(state)" >/dev/null && ok "state: less in use than this user's own: the rest is 0, not below" || bad "state: others below 0: $(state | jq -c .top)"
+mem 32000000 16000000
 jq -e '.server == true' <<<"$s" >/dev/null && ok "state: the tmux server is up" || bad "state: server not seen"
 
 echo "== actions: token, origin, body"
@@ -678,6 +684,8 @@ asc/web/app.js %%%   if (why.startsWith("pause") || !why) return "Starts in a mo
 asc/web/app.js %%% month: "short", year: "numeric" %%% month: "short"
 asc/dash.py %%%         if not isinstance(a.get("on"), bool): %%%         if False:
 asc/dash.py %%%             "conv_lines": lens.get(e.get("session_id"), {}).get("lines"), %%%             "conv_lines": None,
+asc/dash.py %%% max(0, mem["total_kb"] - mem["avail_kb"] - total) %%% mem["total_kb"] - mem["avail_kb"] - total
+asc/dash.py %%% mem["avail_kb"] - total)} %%% mem["avail_kb"])}
 asc/past.py %%%     ok = isinstance(x, dict) and all(type(x.get(k)) is int and x[k] >= 0 for k in ("ino", "size", "lines", "seen")) %%%     ok = isinstance(x, dict)
 MUTANTS
 fi

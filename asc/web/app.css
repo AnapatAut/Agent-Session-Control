@@ -103,6 +103,7 @@ details.top[open] summary::after { transform: rotate(90deg); }
 .procs { margin-top: 10px; }
 .proc { display: flex; justify-content: space-between; gap: 12px; padding: 9px 16px; border-top: 1px solid var(--line); font-size: 13px; }
 .proc:first-child { border-top: 0; }
+.proc.sum { font-weight: 600; }
 
 @media (max-width: 760px) {
   .row { grid-template-columns: minmax(0, 1fr) 24px; grid-template-areas: "head sw" "meta meta" "note note";

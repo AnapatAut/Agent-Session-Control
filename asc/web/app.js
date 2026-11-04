@@ -285,9 +285,12 @@ function draw() {
   $("lists").replaceChildren(...parts);
   sweepRows("fav:", "active:");
 
-  // biggest processes: names and sizes only
-  $("top").replaceChildren(...s.top.mine.map((p) => kids(el("div", null, "proc"), el("span", p.name), el("span", size(p.mem_kb), "mono"))),
-    kids(el("div", null, "proc"), el("span", "Other users together"), el("span", size(s.top.others_kb), "mono")));
+  // memory in use, by whom (adds up to the memory card's "used"), then this user's biggest
+  // processes: names and sizes only
+  const proc = (name, kb, cls) => kids(el("div", null, "proc" + (cls ? " " + cls : "")), el("span", name), el("span", size(kb), "mono"));
+  $("use").replaceChildren(proc("You", s.top.mine_kb), proc("Other users and the system", s.top.others_kb),
+    proc("In use", s.top.mine_kb + s.top.others_kb, "sum"));
+  $("top").replaceChildren(...s.top.mine.map((p) => proc(p.name, p.mem_kb)));
 
   if (sheetOf) renderSheet();
 }
