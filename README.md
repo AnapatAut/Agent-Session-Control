@@ -112,7 +112,8 @@ asctl resurrect 0421 on     # bring it back after a reboot (turns rc on; a resur
 asctl note 0421 "talks to the API"
 asctl rename 0421 db        # db-0421; a running claude, when idle, gets /rename db-0421,
                             # which claude also sends to its claude.ai session (the rc title)
-asctl restart 0421          # off and on again (--resume), only when idle and running nothing
+asctl restart 0421          # off and on again (--resume), only when idle and running nothing;
+                            # a claude of it outside its tmux session is moved into it
 asctl forget 0421
 asctl events 0421           # what happened to it (on, off, rename, refused, ended, ...): its last 200
 ```
@@ -143,6 +144,16 @@ A restart (`asctl restart`, `rename --restart`) goes ahead only when the
 claude is idle and runs nothing: no command (each runs as a child bash that sources claude's
 shell snapshot, a background one too) and no subagent (a recent subagent transcript not marked
 finished and not ending in a final answer). The same counts as busy for Off.
+
+A favorite's claude can run outside its tmux session: in a terminal window or an IDE's
+terminal, in another tmux session, or as a Claude Code background session (`claude --bg`,
+`claude agents`; leaving one keeps it running). asctl says where (the program and the terminal,
+or the background job) and Off leaves it alone, with one exception: an idle background
+session, which Off ends with Claude Code's own `claude stop JOB` (the conversation is kept).
+`asctl restart` moves any idle one into its tmux session: it ends it there (`claude stop`, or
+SIGTERM as Off sends in a pane), waits until it has ended, and starts it in its tmux session on
+the same conversation. The dashboard offers that as "Restart in tmux" (`restart --outside`: the
+page restarts nothing else).
 
 `asctl watch` is one run of the watcher (`asctl-watch.timer`, every 30 s; `asc/watch.py`). It
 keeps 8 minutes of memory samples (available memory, and counters that only grow: PSI `full`,

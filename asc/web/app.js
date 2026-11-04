@@ -107,7 +107,8 @@ function look(e) {
   if (st === "duplicate") return { group: "attention", dot: "bad", label: "Duplicate",
     why: "Two claudes hold this session or its name. asctl does nothing about it by itself." };
   if (st.startsWith("on (outside")) return { group: "attention", dot: "wait", label: "Running outside its tmux",
-    why: `Its claude runs, but not in tmux session ${e.tmux}.` };
+    why: e.outside ? `Its claude runs in ${e.outside.text}, not in tmux session ${e.tmux}.`
+                   : `Its claude runs, but not in tmux session ${e.tmux}.` };
   if (st.startsWith("ended by a signal")) return { group: "attention", dot: "bad", label: "Ended unexpectedly",
     why: `Claude was ended by a signal (${code}); its tmux session is still up. Turn it on to start claude again.` };
   if (st.startsWith("tmux up")) return { group: "attention", dot: "wait", label: "Claude ended",
@@ -603,19 +604,30 @@ function favSheet(e) {
   rcb.setAttribute("aria-label", on ? (RC_SAYS[rs] || "Remote control off") + (rcOn ? ": turn it off" : ": turn it on")
                                     : "Remote control: turn the session on first");
   rcb.title = on ? RC_SAYS[rs] || "Remote control off" : "Turn the session on first";
+  // its claude outside its tmux session: Off reaches only a background session (Claude Code's
+  // own stop), and only when idle; Restart in tmux moves any idle one in
+  const o = e.outside, bg = o && o.how === "background";
   const pwb = btn("", "pw " + (on ? "on" : "off"), async () => {
     if (on) {
-      if (!await ask({ title: `Turn ${e.tmux} off?`, text: `What runs in its tmux session ends.`, ok: "Turn off", danger: true })) return;
+      if (!await ask({ title: `Turn ${e.tmux} off?`, ok: "Turn off", danger: true,
+        text: bg ? "Its background session stops (claude stop). The conversation is kept." : "What runs in its tmux session ends." })) return;
       await act({ action: "off", ...ref });
     } else {
       await act({ action: "on", ...ref });
     }
-  }, wait);
+  }, wait || (o && !(bg && !o.busy)));
   pwb.append(powerIcon());
   pwb.setAttribute("aria-label", on ? "On: turn it off" : "Off: turn it on");
-  pwb.title = on ? "Turn off" : "Turn on";
+  pwb.title = o && !(bg && !o.busy) ? "Runs outside its tmux session: restart it in tmux, or end it there" : on ? "Turn off" : "Turn on";
   out.push(kids(el("div", null, "btns"), pwb, rcb));  // the power button tells on or off
   if (l.why) out.push(el("div", l.why, "warn " + (l.dot === "bad" ? "bad" : "")));
+  if (o && o.busy) out.push(el("div", "Restart in tmux once it is idle: " + o.busy.replace(/^its claude is /, "it is ") + ".", "warn"));
+  if (o && !o.busy) out.push(kids(el("div", null, "acts"), btn("Restart in tmux", "p", async () => {
+    if (!await ask({ title: `Restart ${e.tmux} in tmux?`, ok: "Restart in tmux",
+      text: `Its claude in ${o.text} ends, and starts again in tmux session ${e.tmux}, on the same conversation.`
+            + (bg ? "" : " Anything typed there and not sent is lost.") })) return;
+    await act({ action: "restart", ...ref });
+  }, wait)));
   if (on && e.busy) out.push(el("div", "Busy: " + e.busy + ". Off asks before forcing it.", "warn"));
 
   out.push(el("span", "SETTINGS", "lab"));

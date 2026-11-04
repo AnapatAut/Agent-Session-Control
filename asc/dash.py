@@ -364,6 +364,9 @@ def _snapshot():
             "pid": s["pid"] if s else None, "status": shown(s)[0] if s else None, "task": s["task"] if s else "",
             "waiting_for": s["waiting_for"] if s else "", "status_at": shown(s)[1] if s else None,
             "busy": live.busy_reason(e["tmux"], lv, kids, panes, e.get("session_id")) if e["tmux"] in up else "",
+            # its claude runs outside its tmux session: where (live.where), and why a restart
+            # into tmux would wait ("" once idle)
+            "outside": dict(live.where(s), busy=cli.outside_busy(s, kids)) if st.startswith("on (outside") else None,
             "claudes": sum(1 for x in lv if x["pane"] and x["pane"]["session"] == e["tmux"]),
             "mem_kb": sum(live.tree_mem_kb(p["pane_pid"], kids) for p in panes)
                       + (live.tree_mem_kb(s["pid"], kids) if s and s["host"] else 0),  # a job runs outside the pane
@@ -425,6 +428,8 @@ def action_argv(a):
         return ["off", ref] + (["--force"] if a.get("force") is True else [])
     if kind == "forget":
         return ["forget", ref]
+    if kind == "restart":  # from the page only a claude outside its tmux session, moved into it
+        return ["restart", ref, "--outside"]
     if kind == "rename":
         return ["rename", ref, registry.check_name(_text(a.get("name")))]
     if kind == "mode":

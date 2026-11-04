@@ -23,12 +23,20 @@
 # new session id it takes (a branch or a rewind); $HOME/fake-cd-<session id>: a folder it moves
 # to (/cd). $HOME/fake-hog: it takes 400 MB at once (the sandbox's real OOM kill; the flag is
 # removed first, so a claude started again does not do it too).
-# Every start is logged to $HOME/claude-args.log.
+# Every start is logged to $HOME/claude-args.log. `claude stop JOB` (a background session) sends
+# SIGTERM to the claude whose session file names that jobId, and fails for a job none names
+# ($HOME/fake-stop-fails: it fails anyway).
 if [ -n "${FAKE_BASH:-}" ] && [ "${FAKE_EXECED:-}" != 1 ]; then
 	FAKE_EXECED=1 exec -a claude "$FAKE_BASH" "$0" "$@"
 fi
 log="$HOME/claude-args.log"
 echo "pid=$$ cwd=$PWD args=$*" >> "$log"
+if [ "${1:-}" = stop ]; then
+	[ -e "$HOME/fake-stop-fails" ] && { echo "Could not reach the daemon" >&2; exit 1; }
+	f=$(grep -l "\"jobId\":\"$2\"" "$HOME"/.claude/sessions/*.json 2>/dev/null | head -1)
+	[ -n "$f" ] || { echo "No background session $2" >&2; exit 1; }
+	p=$(basename "$f" .json); kill -TERM "$p" && rm -f "$f"; echo "Stopped $2"; exit 0
+fi
 sid=""; name=""; prev=""; rc=""
 for a in "$@"; do
 	case $prev in --resume|--session-id) sid=$a ;; --name) name=$a ;; --remote-control) rc=session_start ;; esac

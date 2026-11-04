@@ -315,6 +315,55 @@ asctl live | grep cccccccc-0000-4000-8000-000000000003 | seen '(not in tmux)' &&
 tm kill-session -t =daemonhome; rm -f "$HOME/.claude/sessions/$dp.json"
 kill $(pgrep -P "$jp") $(pgrep -P "$op") "$jp" "$op"; wait "$jp" "$op" 2>/dev/null
 rm -f "$HOME/.claude/sessions/$jp.json" "$HOME/.claude/sessions/$op.json" "$HOME/fake-parked-$PS7"
+echo "== a claude outside its tmux session: where it runs, off of a background session, restart into tmux"
+OS=eeeeeeee-0000-4000-8000-000000000001
+tm new-session -d -s outer -c "$W" -- "$ASC_CLAUDE" --session-id "$OS"
+po=$(claude_in outer); asctl fav "$po" --name outer >/dev/null; ido=$(jq -r '.entries[] | select(.name == "outer") | .id4' "$REG")
+asctl off "$ido" >/dev/null
+# a claude that ends on SIGTERM, as the real one does; $1: anything: it ignores SIGTERM
+printf '%s\n' '[ -n "${1:-}" ] && trap "" TERM || trap '"'"'kill $! 2>/dev/null; exit 143'"'"' TERM' 'sleep 300 & wait; wait' > "$T/outside.sh"
+outer_tty() { script -qfc "exec -a claude '$FAKE_BASH' '$T/outside.sh' ${1:-}" /dev/null >/dev/null 2>&1 & sc=$!
+	for _ in $(seq 1 30); do tp=$(pgrep -P "$sc" | head -1); [ -n "$tp" ] && [ "$(cat /proc/"$tp"/comm 2>/dev/null)" = claude ] && break; sleep 0.1; done; }
+outer_tty; sfile "$tp" "$OS" "$(start_of "$tp")" ',"kind":"interactive","status":"busy"'
+asctl list | seen "outer-$ido *on (outside" && ok "outside: its favorite is on, outside its tmux session" || bad "outside list: $(asctl list | grep outer)"
+o=$(errof off "$ido")
+seen "runs outside its tmux session 'outer-$ido', in a terminal outside tmux (script, pts/[0-9]*);" <<<"$o" && seen "asctl restart $ido moves it" <<<"$o" && kill -0 "$tp" \
+	&& ok "off refused: where it runs named (the program and its terminal), and how to move it in" || bad "outside off: $o"
+o=$(errof restart "$ido")
+seen "busy: its claude is working (its claude runs in a terminal outside tmux" <<<"$o" && kill -0 "$tp" && ok "restart refused while it works" || bad "outside restart busy: $o"
+sfile "$tp" "$OS" "$(start_of "$tp")" ',"kind":"interactive","status":"idle"'
+tm new-session -d -s "outer-$ido" -- sleep 300
+o=$(errof restart "$ido"); tm kill-session -t "=outer-$ido"
+seen "is up without it: close that session first" <<<"$o" && kill -0 "$tp" && ok "restart refused: its tmux session is up without it (nothing ended)" || bad "outside restart, session up: $o"
+asctl restart "$ido" >/dev/null 2>&1; r=$?; pn=$(claude_in "outer-$ido")
+[ $r = 0 ] && ! kill -0 "$tp" 2>/dev/null && [ -n "$pn" ] && tail -1 "$HOME/claude-args.log" | seen "pid=$pn .*--resume $OS" \
+	&& ok "restart: the idle claude outside ended, and started in its tmux session on the same conversation" || bad "outside restart: rc $r tp $tp pn $pn"
+jq -s -c --arg i "$ido" '[.[] | select(.id4 == $i and .kind == "off")] | last | .text' "$EVF" | seen "in a terminal outside tmux (script, pts/[0-9]*) ended, to start again in its tmux session" \
+	&& ok "restart: its off event says where it ran" || bad "outside off event: $(tail -3 "$EVF")"
+o=$(errof restart "$ido" --outside); seen "runs in 'outer-$ido', not outside it: nothing to move in" <<<"$o" && [ "$(claude_in "outer-$ido")" = "$pn" ] \
+	&& ok "restart --outside (the page's): refused for a claude in its tmux session" || bad "restart --outside in tmux: $o"
+kill "$sc" 2>/dev/null; asctl off "$ido" >/dev/null
+outer_tty hold; sfile "$tp" "$OS" "$(start_of "$tp")" ',"kind":"interactive","status":"idle"'
+o=$(errof restart "$ido")
+seen "still runs 15 s later; nothing was started" <<<"$o" && ! tm has-session -t "=outer-$ido" 2>/dev/null && ok "restart: a claude that does not end on SIGTERM: nothing started" || bad "outside restart, no end: $o"
+kill -KILL "$tp" "$sc" 2>/dev/null; wait "$sc" 2>/dev/null; rm -f "$HOME/.claude/sessions/$tp.json"
+( exec -a claude "$T/versions/2.1.316" "$T/outside.sh" ) >/dev/null 2>&1 & bp=$!; sleep 0.3
+sfile "$bp" "$OS" "$(start_of "$bp")" ',"kind":"bg","jobId":"eeee0001","status":"busy"'
+o=$(errof off "$ido")
+seen "busy: its claude is working (its claude runs as a Claude Code background session (job eeee0001))" <<<"$o" && kill -0 "$bp" && ok "off of a background session refused while it works" || bad "bg off busy: $o"
+sfile "$bp" "$OS" "$(start_of "$bp")" ',"kind":"bg","jobId":"eeee0001","status":"idle"'; touch "$HOME/fake-stop-fails"
+o=$(errof off "$ido"); rm -f "$HOME/fake-stop-fails"
+seen "claude stop eeee0001: Could not reach the daemon" <<<"$o" && kill -0 "$bp" && ok "off: claude stop failing is said, and the session still runs" || bad "bg off, stop fails: $o"
+o=$(asctl off "$ido" 2>&1); r=$?
+[ $r = 0 ] && seen "its background session stopped; the conversation is kept" <<<"$o" && ! kill -0 "$bp" 2>/dev/null && seen "args=stop eeee0001" "$HOME/claude-args.log" \
+	&& [ "$(jq -r --arg i "$ido" '.entries[$i].want_on' "$REG")" = false ] && ok "off of an idle background session: claude stop ends it, it is marked off" || bad "bg off: rc $r $o"
+tail -1 "$EVF" | seen "its background session (job eeee0001) stopped with claude stop" && ok "off of a background session: logged" || bad "bg off event: $(tail -1 "$EVF")"
+( exec -a claude "$T/versions/2.1.316" "$T/outside.sh" ) >/dev/null 2>&1 & bp=$!; sleep 0.3
+sfile "$bp" "$OS" "$(start_of "$bp")" ',"kind":"bg","jobId":"eeee0001","status":"idle"'
+asctl restart "$ido" >/dev/null 2>&1; r=$?; pn=$(claude_in "outer-$ido")
+[ $r = 0 ] && ! kill -0 "$bp" 2>/dev/null && [ -n "$pn" ] && [ "$(grep -c "args=stop eeee0001" "$HOME/claude-args.log")" = 3 ] \
+	&& ok "restart of a background session: claude stop, then started in its tmux session" || bad "bg restart: rc $r pn $pn"
+asctl off "$ido" >/dev/null; asctl forget "$ido" >/dev/null
 echo "== busy: a claude asctl cannot read; trust text in a transcript"
 asctl on "$id6" >/dev/null && claude_in "duo-$id6" >/dev/null
 tm new-window -t "=duo-$id6:" -- "$FAKE_BASH" -c 'sleep 300; true'
@@ -1164,7 +1213,7 @@ asc/setup.py %%%     if os.path.lexists(manifest): %%%     if False:
 asc/setup.py %%%             if line.startswith(OLD_MARK): %%%             if False:
 asc/setup.py %%%             if m: %%%             if False:
 asc/setup.py %%% (?:-[A-Za-z]+\s+)*@continuum %%% (?:-g\s+)?@continuum
-asc/setup.py %%%             if r.returncode == 0 and r.stdout.strip() == "on": %%%             if False:
+asc/setup.py %%%         if r.returncode == 0 and r.stdout.strip() == "on": %%%         if False:
 asc/setup.py %%%     if cont: %%%     if False:
 asc/setup.py %%%     if not sys.stdin.isatty(): %%%     if False:
 asc/setup.py %%%         if old_units:  # recorded before any is disabled %%%         if False:  # recorded before any is disabled
@@ -1187,6 +1236,18 @@ asc/setup.py %%%         cli.out("asctl is set up already: nothing to do") %%%  
 asc/setup.py %%%     if server and not conf: %%%     if False:
 asc/setup.py %%%     if server and not conf: %%%     if server:
 asc/setup.py %%% for o in server)) %%% for o in ("restore", "boot")))
+asc/live.py %%%     if s["kind"] == "bg" and not s.get("pane"): %%%     if False:
+asc/live.py %%%     if 136 <= major <= 143: %%%     if False:
+asc/live.py %%%     for a in ancestors(s["pid"])[1:]: %%%     for a in []:
+asc/cli.py %%%     if away and live.where(away)["how"] == "background" and away["job"] and not up: %%%     if False:
+asc/cli.py %%%             raise RegistryError(f"busy: {why} (its claude runs as {live.where(away)['text']})") %%%             pass
+asc/cli.py %%%         return f"its claude is {'working' if s['status'] == 'busy' else s['status']}" %%%         return ""
+asc/cli.py %%%     if w["how"] == "background" and now["job"]: %%%     if False:
+asc/cli.py %%%         if not live.alive(now["pid"], now["proc_start"]): %%%         if True:
+asc/cli.py %%%         raise RegistryError(f"its claude runs in {w['text']}, and tmux session {e['tmux']!r} is up " %%%         print(f"its claude runs in {w['text']}, and tmux session {e['tmux']!r} is up "
+asc/cli.py %%%     if away and not away.get("host"): %%%     if False:
+asc/cli.py %%%     if outside: %%%     if False:
+asc/cli.py %%%         raise ActionFailed(f"claude stop {now['job']}: {(r.stderr or r.stdout).strip()[:200] or 'failed'}") %%%         pass
 asc/events.py %%% [i for r, i in mine if r < per] %%% [i for r, i in mine]
 asc/events.py %%%         elif t >= cut: %%%         else:
 asc/events.py %%%         if fav and kind == "forget": %%%         if False:

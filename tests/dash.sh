@@ -334,7 +334,26 @@ rm -f "$HOME/fake-busy"; sleep 0.6
 out=$(post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"db2"}')
 seen 'claude and its claude.ai title too' <<<"$out" && state | jq -e --arg t "$TM" '.favorites[0].claude_name == $t' >/dev/null \
 	&& ok "rename to the same name sends it to a claude that goes by another (renamed while busy)" || bad "same-name rename: $out"
-[ "$(post '{"action":"restart","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 400 ] && ok "no restart action from the page" || bad "the page can restart"
+out=$(post '{"action":"restart","id":"'"$id"'","tmux":"'"$TM"'"}')
+[ "$(tail -1 <<<"$out")" = 409 ] && seen 'not outside it: nothing to move in' <<<"$out" && [ "$(state | jq '.favorites[0].pid')" = "$pid0" ] \
+	&& ok "restart from the page only moves a claude outside its tmux session in (one in it: refused, left alone)" || bad "page restart in tmux: $out"
+post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'","force":true}' >/dev/null
+# its claude in a Claude Code background session, outside its tmux session
+fsid=$(state | jq -r '.favorites[0].session_id')
+( exec -a claude "$FAKE_BASH" -c 'trap "exit 143" TERM; sleep 300 & wait' ) >/dev/null 2>&1 & bgp=$!; sleep 0.3
+bgfile() { printf '{"pid":%s,"sessionId":"%s","cwd":"/","procStart":"%s","kind":"bg","jobId":"ffff0001","status":"%s"}\n' \
+	"$bgp" "$fsid" "$(awk '{ sub(/.*\) /, ""); print $20 }' "/proc/$bgp/stat")" "$1" > "$HOME/.claude/sessions/$bgp.json"; }
+bgfile busy
+state | jq -e '.favorites[0] | (.state | startswith("on (outside")) and .outside.how == "background"
+	and .outside.text == "a Claude Code background session (job ffff0001)" and .outside.busy == "its claude is working"' >/dev/null \
+	&& ok "state: a claude outside its tmux session says where it runs, and why a move in waits" || bad "state outside: $(state | jq -c '.favorites[0] | {state, outside}')"
+bgfile idle
+state | jq -e '.favorites[0].outside.busy == ""' >/dev/null && ok "state: outside and idle: nothing to wait for" || bad "state outside idle: $(state | jq -c '.favorites[0].outside')"
+out=$(post '{"action":"restart","id":"'"$id"'","tmux":"'"$TM"'"}')
+for _ in $(seq 1 20); do state | jq -e '.favorites[0].state == "on"' >/dev/null && break; sleep 0.2; done
+[ "$(tail -1 <<<"$out")" = 200 ] && ! kill -0 "$bgp" 2>/dev/null && state | jq -e '.favorites[0] | .state == "on" and .outside == null' >/dev/null \
+	&& ok "restart in tmux from the page: the background session stopped, its claude now in its tmux session" || bad "page restart outside: $out / $(state | jq -c '.favorites[0] | {state, outside}')"
+wait "$bgp" 2>/dev/null; rm -f "$HOME/.claude/sessions/$bgp.json"
 post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'","force":true}' >/dev/null
 ev=$(dc "http://x/api/events?id=$id")
 jq -e '.keep == 200 and (.events | length > 5) and ([.events[] | select(.kind != "mode") | .by] | all(. == "page"))
@@ -682,10 +701,13 @@ asc/web/app.js %%% return n + (n === 1 ? " day ago" : " days ago"); %%% return n
 asc/web/app.js %%%            why: e.resurrect ? "Off, so a reboot won't bring it back." : "", whyCls: "wait" }; %%%            why: "", whyCls: "wait" };
 asc/web/app.js %%%   if (why.startsWith("pause") || !why) return "Starts in a moment."; %%%   if (why.startsWith("pause") || !why) return "Starts in a moment."; return why;
 asc/web/app.js %%% month: "short", year: "numeric" %%% month: "short"
+asc/web/app.js %%%     why: e.outside ? `Its claude runs in ${e.outside.text}, not in tmux session ${e.tmux}.` %%%     why: e.outside ? `Its claude runs, but not in tmux session ${e.tmux}.`
 asc/dash.py %%%         if not isinstance(a.get("on"), bool): %%%         if False:
 asc/dash.py %%%             "conv_lines": lens.get(e.get("session_id"), {}).get("lines"), %%%             "conv_lines": None,
 asc/dash.py %%% max(0, mem["total_kb"] - mem["avail_kb"] - total) %%% mem["total_kb"] - mem["avail_kb"] - total
 asc/dash.py %%% mem["avail_kb"] - total)} %%% mem["avail_kb"])}
+asc/dash.py %%%             "outside": dict(live.where(s), busy=cli.outside_busy(s, kids)) if st.startswith("on (outside") else None, %%%             "outside": None,
+asc/dash.py %%%         return ["restart", ref, "--outside"] %%%         return ["restart", ref]
 asc/past.py %%%     ok = isinstance(x, dict) and all(type(x.get(k)) is int and x[k] >= 0 for k in ("ino", "size", "lines", "seen")) %%%     ok = isinstance(x, dict)
 MUTANTS
 fi

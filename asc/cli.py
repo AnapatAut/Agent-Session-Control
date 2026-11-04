@@ -11,8 +11,10 @@
   asctl rename ID NAME [--restart] a new name (the tmux session too, if it runs); a running
                                    claude, when idle, gets /rename NAME, also its claude.ai title
                                    (--restart: restart it instead)
-  asctl restart ID                 off and on again on the same conversation, only when its
-                                   claude is idle and runs no command or subagent
+  asctl restart ID [--outside]     off and on again on the same conversation, only when its
+                                   claude is idle and runs no command or subagent; one that runs
+                                   outside its tmux session (a terminal, a Claude Code background
+                                   session) is moved into it (--outside: only that, the page's)
   asctl mode ID auto|manual|skip   permission mode when its transcript names none; a start
                                    follows the mode the conversation last ran in, whichever it
                                    is (shift+tab carries over)
@@ -544,10 +546,23 @@ def _off(id4, force, loud=True):
     s = live_in(e, lv)
     up = tmuxctl.has_session(e["tmux"])
     away = None if s else live_for(e, lv)
+    if away and live.where(away)["how"] == "background" and away["job"] and not up:
+        # Claude Code's own stop: the background session ends, its conversation is kept
+        why = outside_busy(away)
+        if why:
+            raise RegistryError(f"busy: {why} (its claude runs as {live.where(away)['text']})")
+        with registry.changing() as data:
+            x = registry.find(data, e["id4"])
+            x["want_on"], x["last_off"] = False, registry.now()
+        events.log("off", e, end_outside(e, away))
+        if loud:
+            out(f"off: {e['tmux']} (its background session stopped; the conversation is kept)")
+        return 0
     if away:
-        where = away["pane"]["session"] if away["pane"] else "no tmux"
-        raise RegistryError(f"its claude ({away['pid']}) runs outside its tmux session {e['tmux']!r} "
-                            f"(in {where}); off ends only what runs in {e['tmux']!r}, so nothing was done")
+        raise RegistryError(f"its claude ({away['pid']}) runs outside its tmux session {e['tmux']!r}, in "
+                            f"{live.where(away)['text']}; off ends only what runs in {e['tmux']!r}, so nothing "
+                            f"was done (end it there, or asctl restart {e['id4']} moves it into "
+                            f"{e['tmux']!r} once it is idle)")
     if up and not force:
         why = live.busy_reason(e["tmux"], lv, own_sid=e.get("session_id"))
         if why:
@@ -581,15 +596,24 @@ def _off(id4, force, loud=True):
     return 0
 
 
-def _restart(id4):
+def _restart(id4, outside=False):
     """Off and on again, on the same conversation (--resume of its session id), so claude takes
     up a new name and rc title. Only when its claude is idle and runs nothing: no command, also
-    none in the background, and no subagent (live.busy_reason). The entry's lock held."""
+    none in the background, and no subagent (live.busy_reason). A claude of the entry that runs
+    outside its tmux session is moved into it (_move_in); outside: only that. The entry's lock
+    held."""
     e = registry.find(registry.load(), id4)
     lv = live.live()
     s = live_in(e, lv)
-    if not s:
+    away = None if s else live_for(e, lv)
+    if away and not away.get("host"):
+        return _move_in(e, away)
+    if outside:
+        raise RegistryError(f"its claude runs in {e['tmux']!r}, not outside it: nothing to move in" if s
+                            else f"no claude of it runs outside {e['tmux']!r}")
+    if not s and not away:
         raise RegistryError(f"no claude runs in {e['tmux']!r}")
+    s = s or away
     if s.get("host"):
         raise RegistryError(f"its pane shows a background job of claude's (session {s['session_id']}); "
                             f"a restart would not bring it back")
@@ -606,10 +630,74 @@ def _restart(id4):
         raise ActionFailed(f"it is off now, and turning it on again failed: {x}")
 
 
+def outside_busy(s, kids=None):
+    """Why a claude outside its tmux session is not idle, or "": working, waiting, or running a
+    command or a subagent (as busy_reason has it for a pane)."""
+    if s["status"] != "idle":
+        return f"its claude is {'working' if s['status'] == 'busy' else s['status']}"
+    t = live.claude_tasks(s, live.children_map() if kids is None else kids)
+    return f"claude {t}" if t else ""
+
+
+def end_outside(e, s, wait_s=15):
+    """End the entry's claude that runs outside its tmux session (s, checked idle): a background
+    session by Claude Code's own `claude stop JOB` (its conversation kept), anything else by
+    SIGTERM, as off does in a pane. It is checked again first (the same process, still holding
+    the entry's conversation, still idle, still outside), then waited for until it has ended.
+    What happened, in words; RegistryError when nothing was done, ActionFailed after."""
+    now = next((x for x in live.live() if x["pid"] == s["pid"]), None)
+    if (now is None or now["proc_start"] != s["proc_start"] or now["session_id"] != e.get("session_id")
+            or (now["pane"] and now["pane"]["session"] == e["tmux"]) or now.get("host")):
+        raise RegistryError(f"claude {s['pid']} changed while checking; nothing was done")
+    why = outside_busy(now)
+    if why:
+        raise RegistryError(f"busy: {why}")
+    w = live.where(now)
+    if w["how"] == "background" and now["job"]:
+        try:
+            r = subprocess.run([os.environ.get("ASC_CLAUDE", "claude"), "stop", now["job"]], capture_output=True,
+                               text=True, timeout=30, stdin=subprocess.DEVNULL)
+        except OSError as x:  # no claude to run: nothing done
+            raise RegistryError(f"claude stop {now['job']}: {x}")
+        except subprocess.TimeoutExpired as x:
+            raise ActionFailed(f"claude stop {now['job']}: {x}")
+        if r.returncode != 0:
+            raise ActionFailed(f"claude stop {now['job']}: {(r.stderr or r.stdout).strip()[:200] or 'failed'}")
+        how = f"its background session (job {now['job']}) stopped with claude stop"
+    else:
+        os.kill(now["pid"], signal.SIGTERM)
+        how = f"claude {now['pid']} in {w['text']} ended"
+    for _ in range(wait_s * 10):
+        if not live.alive(now["pid"], now["proc_start"]):
+            return how
+        time.sleep(0.1)
+    raise ActionFailed(f"claude {now['pid']} in {w['text']} still runs {wait_s} s later; nothing was started")
+
+
+def _move_in(e, s):
+    """Restart of a claude that runs outside the entry's tmux session: once it is idle, end it
+    there (end_outside) and start it again in its tmux session, on the same conversation. The
+    entry's lock held."""
+    w = live.where(s)
+    why = outside_busy(s)
+    if why:
+        raise RegistryError(f"busy: {why} (its claude runs in {w['text']})")
+    if tmuxctl.has_session(e["tmux"]):
+        raise RegistryError(f"its claude runs in {w['text']}, and tmux session {e['tmux']!r} is up "
+                            f"without it: close that session first")
+    how = end_outside(e, s)
+    events.log("off", e, how + ", to start again in its tmux session")
+    try:
+        # it was just running, so its memory is there: no memory gate
+        return _on(e["id4"], True, loud=False)
+    except RegistryError as x:
+        raise ActionFailed(f"{how}, and starting it in {e['tmux']!r} failed: {x}")
+
+
 def cmd_restart(args):
     e = registry.find(registry.load(), args.id)
     with registry.entry_lock(e["id4"], wait=True):
-        r = _restart(e["id4"])
+        r = _restart(e["id4"], args.outside)
     if r == 0:
         say("restart", e, f"restarted: {e['tmux']} (same conversation)")
     return r
@@ -822,6 +910,7 @@ def main(argv=None):
     a.set_defaults(f=cmd_rename)
     a = sub.add_parser("restart")
     a.add_argument("id")
+    a.add_argument("--outside", action="store_true", help="only a claude outside its tmux session, moved into it")
     a.set_defaults(f=cmd_restart)
     a = sub.add_parser("mode")
     a.add_argument("id")

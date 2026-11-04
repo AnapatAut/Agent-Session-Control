@@ -91,6 +91,42 @@ def _pid_domain():
         return None
 
 
+def tty_name(pid):
+    """The terminal a process runs on ("pts/27"), or "" for none."""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8", errors="replace") as f:
+            nr = int(f.read().rsplit(")", 1)[1].split()[4])
+    except (OSError, IndexError, ValueError):
+        return ""
+    major, minor = (nr >> 8) & 0xfff, (nr & 0xff) | ((nr >> 12) & 0xfff00)
+    if 136 <= major <= 143:
+        return f"pts/{(major - 136) * 256 + minor}"
+    return f"tty{minor}" if major == 4 and minor < 64 else ("" if nr == 0 else f"terminal {major}:{minor}")
+
+
+def where(s):
+    """Where a live claude runs, in words, when it is not in its favorite's tmux session:
+    {"how": "background" | "tmux" | "terminal", "text": ...}. background: a Claude Code
+    background session (claude --bg, claude agents) in no pane, which `claude stop JOB` ends
+    with its conversation kept; tmux: another tmux session's pane; terminal: anything else (a
+    terminal window, an IDE's terminal, ssh), named by the program it runs under."""
+    if s["kind"] == "bg" and not s.get("pane"):
+        return {"how": "background", "text": "a Claude Code background session"
+                + (f" (job {s['job']})" if s.get("job") else "")}
+    if s.get("pane"):
+        return {"how": "tmux", "text": f"tmux session {s['pane']['session']}"}
+    app = ""
+    for a in ancestors(s["pid"])[1:]:
+        name = (proc_stat(a) or ("",))[0]
+        if name not in WRAPPERS and not is_claude(a, name):
+            app = name
+            break
+    tty = tty_name(s["pid"])
+    if tty:
+        return {"how": "terminal", "text": f"a terminal outside tmux ({', '.join(x for x in (app, tty) if x)})"}
+    return {"how": "terminal", "text": "a process outside tmux, with no terminal" + (f" (under {app})" if app else "")}
+
+
 def ancestors(pid, limit=64):
     out = []
     while pid > 1 and len(out) < limit:
