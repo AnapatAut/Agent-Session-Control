@@ -13,8 +13,12 @@
 # while on opens the dialog (Disconnect this session / Show QR code / Continue, Continue
 # selected; status "waiting"; Up from the top wraps to the bottom), Up/Down and Enter, Esc
 # closes it. Lines entered are logged. A "/word" being typed shows a command menu under the box
-# (Enter takes its first entry). Up in an empty prompt brings back the last line entered.
-# $HOME/fake-menu-first: another command ranks first in the menu. $HOME/fake-menu-slow: the menu
+# (Enter takes its first entry, marked ❯ as 2.1.318 marks it). Up in an empty prompt brings back
+# the last line entered. $HOME/fake-menu-above: the menu shows above the box, the status line
+# stays under it (2.1.318). $HOME/fake-plugins: lines other plugins draw around the box: above
+# it a band that changes on its own and a rule; under it a status line, a band between two rules
+# and a line starting with a path. $HOME/fake-menu-unmarked: no entry marked;
+# $HOME/fake-menu-one: only one entry. $HOME/fake-menu-first: another command ranks first in the menu. $HOME/fake-menu-slow: the menu
 # shows 1 s after the last key (until then the status line), as a claude with many commands. $HOME/fake-menu-on: a menu
 # stays open under the box after a space too. $HOME/fake-slow-dialog: the dialog opens after
 # 1.5 s, and the transcript quotes its lines. $HOME/fake-mangle: an x shows before typed text.
@@ -100,6 +104,13 @@ write() {
 trap 'rm -f "$f"; [ -z "$task" ] || kill "$task" 2>/dev/null; exit 143' TERM
 trap 'rm -f "$f"; exit 0' INT
 rule() { printf '─%.0s' $(seq 1 30); printf '%s\n' "${1:+ $1 ─}"; }
+menu_lines() {
+	local m="  ❯ " o="    "
+	[ -e "$HOME/fake-menu-unmarked" ] && m=$o
+	[ -e "$HOME/fake-menu-first" ] && { echo "$m/remote-controller   a plugin's command"; m=$o; }
+	echo "$m/remote-control      Connect this session to claude.ai"
+	[ -e "$HOME/fake-menu-one" ] || echo "$o/resume              Resume a conversation"
+}
 draw() {
 	clear
 	echo "fake claude $sid name=$name in $PWD"
@@ -113,18 +124,21 @@ draw() {
 		done
 		echo " Enter to confirm · Esc to cancel"
 	else
+		local open=0 above=0
+		[[ $buf == /* && ( $buf != *" "* || -e $HOME/fake-menu-on ) ]] && [ "$menu_at" = 0 ] && open=1
+		[ -e "$HOME/fake-menu-above" ] && above=1
+		[ $open = 1 ] && [ $above = 1 ] && menu_lines
+		[ -e "$HOME/fake-plugins" ] && { echo "● band $(now_ms)"; rule plugin; echo "  ◆ goal: a plugin's line"; }
 		rule "${name:-fake}"
 		if [ -z "$buf" ] && [ -e "$HOME/fake-hint" ]; then printf '❯\xc2\xa0\e[2mTry "fix lint"\e[0m\n'
 		else printf '❯\xc2\xa0%s\n' "$buf"; fi
 		[ -e "$HOME/fake-two-lines" ] && echo "  a second line"
 		rule
-		if [[ $buf == /* && ( $buf != *" "* || -e $HOME/fake-menu-on ) ]] && [ "$menu_at" = 0 ]; then
-			[ -e "$HOME/fake-menu-first" ] && echo "  /remote-controller   a plugin's command"
-			echo "  /remote-control      Connect this session to claude.ai"
-			echo "  /resume              Resume a conversation"
+		if [ $open = 1 ] && [ $above = 0 ]; then menu_lines
 		else
 			if [ -z "$buf" ]; then echo "  fake status line · ← 1 agent"; else echo "  fake status line"; fi  # as claude: it drops "← 1 agent" while text is typed
 		fi
+		[ -e "$HOME/fake-plugins" ] && { echo "  [ Model ] [ Ctx 29% ]"; rule; echo "  a plugin's band"; rule; echo "  /srv/x/proj  main"; }
 	fi
 }
 now_ms() { local t=${EPOCHREALTIME/./}; echo $((t / 1000)); }

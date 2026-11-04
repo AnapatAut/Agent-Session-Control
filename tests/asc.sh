@@ -176,7 +176,7 @@ seen 'claude and its claude.ai title too' <<<"$out" && [ "$(claude_in "talk-$id2
 	&& ok "rename of an idle claude: /rename typed, the same claude takes the name" || bad "live rename: $out / $(sname "$c1")"
 touch "$HOME/fake-menu-on"
 out=$(asctl rename "$id2" talk3 2>&1)
-seen 'not changed now: a menu opened under its prompt; nothing was sent' <<<"$out" && [ "$(sname "$c1")" = "talk-$id2" ] && ok "rename: not when a menu would take Enter" || bad "rename with a menu: $out"
+seen 'not changed now: a command menu opened at its prompt; nothing was sent' <<<"$out" && [ "$(sname "$c1")" = "talk-$id2" ] && ok "rename: not when a menu would take Enter" || bad "rename with a menu: $out"
 rm -f "$HOME/fake-menu-on"
 touch "$HOME/fake-no-rename"
 out=$(asctl rename "$id2" talk4 2>&1)
@@ -440,13 +440,73 @@ screen | seen 'Try "fix lint"' && out=$(asctl rc "$id2" on) && seen 'live now' <
 rm -f "$HOME/fake-hint"
 empty() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import rclive; sys.exit(rclive.prompt_text(rclive.screen(sys.argv[2])) != "")' "$REPO" "$pane"; }
 touch "$HOME/fake-menu-first"
-out=$(asctl rc "$id2" off); seen "not changed now: its command menu did not offer /remote-control first (it showed: /remote-controller   a plugin's command); nothing was sent" <<<"$out" && [ -n "$(bridge)" ] && empty \
-	&& ! seen 'remote-controller' "$HOME/claude-args.log" && ok "off: another command first in the menu: Enter not pressed, the prompt cleared, what it showed named" || bad "menu first: $out"
+out=$(asctl rc "$id2" off); seen "not changed now: its command menu did not offer /remote-control for Enter (it offered: ❯ /remote-controller   a plugin's command); nothing was sent" <<<"$out" && [ -n "$(bridge)" ] && empty \
+	&& ! seen 'remote-controller' "$HOME/claude-args.log" && ok "off: another command marked first in the menu: Enter not pressed, the prompt cleared, what it offered named" || bad "menu first: $out"
 rm -f "$HOME/fake-menu-first"
 touch "$HOME/fake-menu-slow"
 out=$(asctl rc "$id2" off); rm -f "$HOME/fake-menu-slow"
 seen 'live now\|off now' <<<"$out" && [ -z "$(bridge)" ] && ok "off: a menu drawn a moment after the typed text is waited for" || bad "slow menu: $out"
 asctl rc "$id2" on >/dev/null
+# Claude 2.1.318 draws the menu above the box; a status line and plugins draw any number of lines
+# on both sides, one changing on its own, rules among them.
+touch "$HOME/fake-menu-above" "$HOME/fake-plugins"; tm send-keys -t "$pane" x BSpace; sleep 0.5
+out=$(asctl rc "$id2" off); seen 'off now' <<<"$out" && [ -z "$(bridge)" ] && empty \
+	&& ok "off: the menu above the box, plugin lines around it: the entry Enter takes found" || bad "menu above: $out / $(screen | tail -12)"
+out=$(asctl rc "$id2" on); seen 'live now' <<<"$out" && [ -n "$(bridge)" ] \
+	&& ok "on: plugin lines around the box (one changing, rules among them) are not a menu" || bad "on with plugins: $out"
+touch "$HOME/fake-menu-first"
+out=$(asctl rc "$id2" off); seen "not changed now: its command menu did not offer /remote-control for Enter (it offered: ❯ /remote-controller   a plugin's command); nothing was sent" <<<"$out" && [ -n "$(bridge)" ] && empty \
+	&& ok "off: the menu above the box, another command marked: Enter not pressed" || bad "menu above, another first: $out"
+rm -f "$HOME/fake-menu-first"; touch "$HOME/fake-menu-unmarked"
+out=$(asctl rc "$id2" off); seen "not changed now: its command menu did not offer /remote-control for Enter (asctl cannot tell which entry Enter takes); nothing was sent" <<<"$out" && [ -n "$(bridge)" ] && empty \
+	&& ok "off: several entries, none marked: Enter not pressed" || bad "unmarked: $out"
+touch "$HOME/fake-menu-one"
+out=$(asctl rc "$id2" off); seen 'off now' <<<"$out" && [ -z "$(bridge)" ] && ok "off: one entry, none marked: the one Enter takes" || bad "one unmarked: $out"
+rm -f "$HOME/fake-menu-unmarked" "$HOME/fake-menu-one"; touch "$HOME/fake-menu-on"
+out=$(asctl rc "$id2" on); seen 'not changed now: a command menu opened at its prompt; nothing was sent' <<<"$out" && [ -z "$(bridge)" ] && empty \
+	&& ok "on: a menu above the box: Enter not pressed" || bad "menu above, on: $out"
+nm=$(jqe ".entries[\"$id2\"].name")
+out=$(asctl rename "$id2" talkx 2>&1); seen 'a command menu opened at its prompt; nothing was sent' <<<"$out" && ! seen 'line: /rename talkx' "$HOME/claude-args.log" \
+	&& ok "rename: not when a menu above the box would take Enter" || bad "rename, menu above: $out"
+rm -f "$HOME/fake-menu-on" "$HOME/fake-menu-above" "$HOME/fake-plugins"; tm send-keys -t "$pane" x BSpace; sleep 0.5
+asctl rename "$id2" "$nm" >/dev/null 2>&1  # the favorite's name as before (a refused live rename still renames it)
+asctl rc "$id2" on >/dev/null
+# The menu by its shape and mark, on screens drawn by hand (each its own check).
+mt=$(python3 -I - "$REPO" <<'EOF'
+import sys; sys.path.insert(0, sys.argv[1]); from asc import rclive as r
+R = "─" * 40
+def scr(*rows): return "\n".join(rows) + "\n"
+box = [R, "❯\xa0/remote-control", R, "  [ status ]"]
+menu = "  \x1b[38;5;153m❯ /\x1b[1mremote-control\x1b[0m      Disconnect Remote Control"
+before = scr("hello", "  notice", R, "❯\xa0", R, "  [ status ]")
+print("found" if r.offers_cmd(scr("hello", menu, *box), before) else "-")
+print("history" if r.takes(scr("❯ /remote-control", "  notice", *box), before) is None else "-")
+print("two" if r.takes(scr(menu, menu.replace("Disconnect", "Quoted"), *box), before) == () else "-")
+print("indented" if r.takes(scr("hello", "  notice", R, "  ❯ /remote-control", R, "  [ status ]"), before) is None else "-")
+print("path" if r.entries(scr("hello", "  /srv/x/proj  main", *box), before) == [] else "-")
+print("link" if r.plain("at \x1b]8;id=a;https://x.example/\x1b\\https://x.example/\x1b]8;;\x1b\\ now") == "at https://x.example/ now" else "-")
+EOF
+)
+for w in found history two indented path link; do
+	case $w in found) d="the entry marked ❯ above the box is the one Enter takes" ;; history) d="a prompt in the transcript (not indented) is not a menu entry" ;;
+	two) d="two entries marked (one a quote in claude's answer): asctl cannot tell" ;; indented) d="claude's own input line, even indented, is not a menu entry" ;;
+	path) d="a plugin's line starting with a path is not a menu entry" ;; link) d="a link (OSC 8) is read as its text" ;; esac
+	grep -qx "$w" <<<"$mt" && ok "menu detection: $d" || bad "menu detection: $d"
+done
+# A real 2.1.318 screen (tests/asc/screens: a capture's last rows, names and links rewritten): the
+# menu above the box, a status line under it, a plugin's band, prompts in the transcript.
+rs=$(python3 -I - "$REPO" <<'EOF'
+import os, sys; sys.path.insert(0, sys.argv[1]); from asc import rclive as r
+d = os.path.join(sys.argv[1], "tests", "asc", "screens")
+b, m = (open(os.path.join(d, f"2.1.318-{n}.txt"), encoding="utf-8").read() for n in ("before", "menu"))
+print("box" if r.prompt_text(b) == "" and r.prompt_text(m) == "/remote-control" else "-")
+print("offers" if r.offers_cmd(m, b) else "-")
+print("seen" if r.no_menu(b, b) is None and r.no_menu(m, b) else "-")
+EOF
+)
+grep -qx box <<<"$rs" && ok "a real 2.1.318 screen: its input box found, empty before, the command after" || bad "2.1.318 screen: the input box"
+grep -qx offers <<<"$rs" && ok "a real 2.1.318 screen: the menu above the box takes /remote-control on Enter" || bad "2.1.318 screen: the menu above the box"
+grep -qx seen <<<"$rs" && ok "a real 2.1.318 screen: on and rename see that menu, and nothing on the screen before" || bad "2.1.318 screen: no_menu"
 touch "$HOME/fake-slow-dialog"
 out=$(asctl rc "$id2" off); seen 'off now' <<<"$out" && [ -z "$(bridge)" ] && empty \
 	&& ok "off: a slow dialog, its lines quoted in the transcript: waited for the dialog itself" || bad "slow dialog: $out / $(screen | tail -4)"
@@ -455,7 +515,7 @@ out=$(asctl rc "$id2" on --title "a@b"); seen 'not changed now: its title has ch
 asctl rc "$id2" on --title "x;" >/dev/null 2>&1 && bad "a title ending with ; accepted" || ok "a title ending with ; refused (tmux would drop it)"
 asctl rc "$id2" on --title "My chat" --next-start >/dev/null
 touch "$HOME/fake-menu-on"
-out=$(asctl rc "$id2" on); seen 'not changed now: a menu opened under its prompt; nothing was sent' <<<"$out" && [ -z "$(bridge)" ] && empty \
+out=$(asctl rc "$id2" on); seen 'not changed now: a command menu opened at its prompt; nothing was sent' <<<"$out" && [ -z "$(bridge)" ] && empty \
 	&& ok "on: a menu under the prompt: Enter not pressed, the prompt cleared" || bad "menu on: $out"
 rm -f "$HOME/fake-menu-on"
 touch "$HOME/fake-mangle"
@@ -468,7 +528,7 @@ touch "$HOME/fake-two-lines"; tm send-keys -t "$pane" x BSpace; sleep 0.5
 out=$(asctl rc "$id2" on); seen "not changed now: its screen does not show claude's prompt" <<<"$out" && [ -z "$(bridge)" ] \
 	&& ok "a prompt of two lines (the first empty) is not empty" || bad "two lines: $out"
 rm -f "$HOME/fake-two-lines"; tm send-keys -t "$pane" x BSpace; sleep 0.5
-[ "$(grep 'line: ' "$HOME/claude-args.log" | grep -vc 'line: /rename ')" = 6 ] && ok "nothing else ever reached its prompt (six rc lines, besides /rename)" || bad "lines entered: $(grep 'line: ' "$HOME/claude-args.log")"
+[ "$(grep 'line: ' "$HOME/claude-args.log" | grep -vc 'line: /rename ')" = 10 ] && ok "nothing else ever reached its prompt (ten rc lines, besides /rename)" || bad "lines entered: $(grep 'line: ' "$HOME/claude-args.log")"
 asctl rc "$id2" off --next-start >/dev/null  # the tests below start from rc off
 asctl off "$id2" --force >/dev/null
 asctl rc "$id2" on --title=-x >/dev/null 2>&1 && bad "a title starting with - accepted" || ok "a title starting with - refused (claude would read an option)"
@@ -1132,13 +1192,20 @@ asc/rclive.py %%%         return "its pane is in copy mode" %%%         pass
 asc/rclive.py %%%     if t: %%%     if False:
 asc/rclive.py %%% plain(DIM.sub("", lines[i])) %%% plain(lines[i])
 asc/rclive.py %%% why = enter(s, f"{CMD} {title}" if on else CMD, %%% why = enter(s, CMD,
-asc/rclive.py %%% rules[-1] - rules[-2] == 2 else None %%% rules[-1] - rules[-2] >= 2 else None
+asc/rclive.py %%%  and RULE.fullmatch(p[i + 1]): %%% :
 asc/cli.py %%%         s = None if args.next_start else live_in(e) %%%         s = live_in(e)
 asc/cli.py %%%         elif s["rc"] == on: %%%         elif False:
 asc/rclive.py %%%     if prompt_text(scr) != cmd: %%%     if False:
-asc/rclive.py %%% if menu(under(scr)) - menu(before) else None %%% if False else None
-asc/rclive.py %%% if menu(under(scr)) - menu(before) else None %%% if under(scr) != before else None
-asc/rclive.py %%%     if wait_for(lambda: offers_cmd(screen(pane)), timeout): %%%     if True:
+asc/rclive.py %%% if entries(scr, before) else None %%% if False else None
+asc/rclive.py %%% if entries(scr, before) else None %%% if changed(scr, before) else None
+asc/rclive.py %%%     if wait_for(lambda: offers_cmd(screen(pane), before), timeout): %%%     if True:
+asc/rclive.py %%% ENTRY = re.compile(r"\s+(?:(❯)\s*)? %%% ENTRY = re.compile(r"\s*(?:(❯)\s*)?
+asc/rclive.py %%% return marked[0] if len(marked) == 1 else %%% return marked[0] if marked else
+asc/rclive.py %%% else e[0] if not marked and len(e) == 1 else () %%% else e[0]
+asc/rclive.py %%%             if j != i and (j >= len(b) %%%             if (j >= len(b)
+asc/rclive.py %%%         if p[i].startswith("❯") and RULE.fullmatch(p[i - 1]) %%%         if RULE.fullmatch(p[i - 1])
+asc/rclive.py %%% |\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)") %%% ")
+asc/rclive.py %%%     return bool(t) and t[1] == CMD %%%     return bool(t)
 asc/rclive.py %%%     if not wait_for(lambda: seen() > n and (session(s["pid"]) or {}).get("name") == name, confirm): %%%     if False:
 asc/rclive.py %%%             n += f.read(tail).count(text) %%%             n = 1
 asc/cli.py %%%             why = rclive.rename(s, new) %%%             why = None
@@ -1268,7 +1335,7 @@ asc/cli.py %%%     if outside: %%%     if False:
 asc/cli.py %%%         raise ActionFailed(f"claude stop {now['job']}: {(r.stderr or r.stdout).strip()[:200] or 'failed'}") %%%         pass
 asc/cli.py %%%             x["rename_title"] = True if title else None %%%             x["rename_title"] = None
 asc/watch.py %%%     if pend != e["tmux"] or (s["name"] == pend and not e.get("rename_title")): %%%     if pend != e["tmux"] or s["name"] == pend:
-asc/rclive.py %%%     if wait_for(lambda: offers_cmd(screen(pane)), timeout): %%%     if offers_cmd(steady(pane)):
+asc/rclive.py %%%     if wait_for(lambda: offers_cmd(screen(pane), before), timeout): %%%     if offers_cmd(steady(pane), before):
 asc/events.py %%% [i for r, i in mine if r < per] %%% [i for r, i in mine]
 asc/events.py %%%         elif t >= cut: %%%         else:
 asc/events.py %%%         if fav and kind == "forget": %%%         if False:

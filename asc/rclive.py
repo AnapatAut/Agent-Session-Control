@@ -3,16 +3,19 @@
 The one command asctl types into a running claude, and only when it cannot land anywhere
 else: claude idle (its session file), its pane not in copy mode, its prompt empty (read from
 the screen, `capture-pane -e`). After typing, before Enter: the prompt shows exactly the
-command, claude is still idle, and nothing else opened under the prompt (for on, the screen
-under it is as before; for off, the command menu offers /remote-control first, waited for up to
-3 s: a claude with many commands draws it after the typed text). Otherwise what
-was typed is taken back, only when the prompt holds nothing but that.
+command, claude is still idle, and no command menu opened (for on), or the menu would take
+/remote-control on Enter (for off, waited for up to 3 s: a claude with many commands draws it
+after the typed text). Claude draws its menu under the input box (2.1.316) or above it
+(2.1.318), and a status line or plugins may draw any number of lines on either side, some
+changing on their own; so the menu is never looked for at a place: it is the lines that
+changed since before typing and are shaped like menu entries, and Enter takes the one marked ❯.
+Otherwise what was typed is taken back, only when the prompt holds nothing but that.
 On: `/remote-control <title>` (always the title: without one claude.ai shows a random name;
 only letters, digits, space, . _ -, as anything else could open a menu or be read by tmux).
 Off: `/remote-control` opens a dialog (Disconnect this session / Show QR code / Continue,
 Continue selected, the session status "waiting"): once that dialog is open at the bottom of
 the screen, Up until Disconnect is selected, checked, then Enter. Either way the change is
-confirmed from the session file (bridgeSessionId). Seen with Claude Code 2.1.316.
+confirmed from the session file (bridgeSessionId). Seen with Claude Code 2.1.316 and 2.1.318.
 """
 import glob
 import os
@@ -21,12 +24,15 @@ import time
 
 from . import live, tmuxctl
 
-ANSI = re.compile(r"\x1b\[[0-9;:?]*[A-Za-z]")
+ANSI = re.compile(r"\x1b\[[0-9;:?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")  # colours; links (OSC 8)
 DIM = re.compile(r"\x1b\[2m.*?(?=\x1b\[(?:0|22)?m|$)")  # a placeholder ("Try ...") is dim
 RULE = re.compile(r"─{10,}(?: [^─]+ ─*)?")  # the top rule may carry the session's name
 TITLE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]*")
 CMD = "/remote-control"
 DISCONNECT = "Disconnect this session"
+# A command menu's entry: indented (a prompt in the transcript is not), "/name", then nothing or
+# its description after two spaces or more; group 1 is the selection mark Enter goes by.
+ENTRY = re.compile(r"\s+(?:(❯)\s*)?(/[A-Za-z][\w:.-]*)(?:\s{2,}\S.*)?")
 
 
 def steady(pane, tries=10, gap=0.15):
@@ -51,9 +57,14 @@ def screen(pane):
 
 
 def box(lines):
-    """The index of the input line of claude's one-line input box at the bottom, or None."""
-    rules = [i for i, l in enumerate(lines) if RULE.fullmatch(plain(l).strip())]
-    return rules[-2] + 1 if len(rules) >= 2 and rules[-1] - rules[-2] == 2 else None
+    """The index of the input line of claude's one-line input box, or None: the lowest line that
+    starts with ❯ and has a rule right above and right below it. Whatever a status line or
+    plugins draw above or below the box (rules too, any number of lines) does not move it."""
+    p = [plain(l).strip() for l in lines]
+    for i in range(len(p) - 2, 0, -1):
+        if p[i].startswith("❯") and RULE.fullmatch(p[i - 1]) and RULE.fullmatch(p[i + 1]):
+            return i
+    return None
 
 
 def prompt_text(scr):
@@ -68,32 +79,51 @@ def prompt_text(scr):
     return text[1:].strip() if text.startswith("❯") else None
 
 
-def under(scr):
-    """The lines under the input box (status lines, or a menu while one is open)."""
-    lines = scr.rstrip("\n").split("\n")
-    i = box(lines)
-    return [] if i is None else [plain(l).rstrip() for l in lines[i + 2:]]
+def changed(scr, before):
+    """The lines of the capture scr (plain) that differ from the capture before of the same pane,
+    row by row from the top (a row the other lacks counts as changed), without claude's input
+    line: where a menu shows, wherever claude draws it, among what else changed."""
+    a, b = scr.rstrip("\n").split("\n"), before.rstrip("\n").split("\n")
+    i = box(a)
+    return [plain(l).rstrip() for j, l in enumerate(a)
+            if j != i and (j >= len(b) or plain(b[j]).rstrip() != plain(l).rstrip())]
 
 
-def menu(lines):
-    """The command menu's entries among lines under the box ("/name  what it does")."""
-    return {l.strip() for l in lines if re.match(r"(?:[❯›>]\s*)?/[A-Za-z]", l.strip())}
+def entries(scr, before):
+    """A command menu that showed since before: (marked, name, line) for each changed line shaped
+    like an entry. Status lines, plugin lines and the transcript are not shaped like one."""
+    return [(bool(m.group(1)), m.group(2), l.strip()) for l in changed(scr, before)
+            if (m := ENTRY.fullmatch(l))]
 
 
-def offers_cmd(scr):
-    """True when the command menu's first entry (the one Enter takes) is /remote-control itself."""
-    first = next((l.strip() for l in under(scr) if l.strip()), "")
-    return re.match(re.escape(CMD) + r"(\s|$)", first.lstrip("❯›> ")) is not None
-
-
-def offers(pane, timeout=3):
-    """None once the command menu offers /remote-control first, else why not, naming the line it
-    showed first. A claude with many commands (plugins, skills) draws its menu a moment after the
-    typed text, after the screen has looked steady: so it is waited for, up to timeout."""
-    if wait_for(lambda: offers_cmd(screen(pane)), timeout):
+def takes(scr, before):
+    """The entry Enter would take in a menu that showed since before: the one marked ❯, or the
+    only one; None when no menu showed; () when that cannot be told (two marked: one may be a
+    quote in claude's answer; several, none marked)."""
+    e = entries(scr, before)
+    if not e:
         return None
-    first = next((l.strip() for l in under(steady(pane)) if l.strip()), "")
-    return "its command menu did not offer /remote-control first" + (f" (it showed: {first[:60]})" if first else "")
+    marked = [x for x in e if x[0]]
+    return marked[0] if len(marked) == 1 else e[0] if not marked and len(e) == 1 else ()
+
+
+def offers_cmd(scr, before):
+    """True when the menu that showed since before takes /remote-control itself on Enter."""
+    t = takes(scr, before)
+    return bool(t) and t[1] == CMD
+
+
+def offers(pane, before, timeout=3):
+    """None once the command menu would take /remote-control on Enter, else why not. A claude with
+    many commands (plugins, skills) draws its menu a moment after the typed text, after the screen
+    has looked steady: so it is waited for, up to timeout."""
+    if wait_for(lambda: offers_cmd(screen(pane), before), timeout):
+        return None
+    t = takes(steady(pane), before)
+    why = "its command menu did not offer /remote-control for Enter"
+    if t is None:
+        return why + " (no menu showed)"
+    return why + (f" (it offered: {t[2][:60]})" if t else " (asctl cannot tell which entry Enter takes)")
 
 
 def bottom(scr, n=10):
@@ -168,7 +198,7 @@ def enter(s, cmd, check):
     if why:
         return why
     pid, pane = s["pid"], s["pane"]["pane_id"]
-    before = under(steady(pane))
+    before = steady(pane)
     tmuxctl.type_pane(pane, cmd)
     wait_for(lambda: prompt_text(screen(pane)) == cmd, 2)
     scr = steady(pane)
@@ -187,9 +217,9 @@ def enter(s, cmd, check):
 
 
 def no_menu(scr, before):
-    # a menu would take Enter for its own entry; other changes there are claude's own (its
-    # mode line drops "← 1 agent" once the prompt holds text)
-    return "a menu opened under its prompt" if menu(under(scr)) - menu(before) else None
+    # a menu would take Enter for its own entry; other changes are claude's own (its mode line
+    # drops "← 1 agent" once the prompt holds text) or a status line's or plugin's
+    return "a command menu opened at its prompt" if entries(scr, before) else None
 
 
 def rename(s, name, confirm=5):
@@ -229,7 +259,7 @@ def switch(s, on, title, confirm=10):
     if on and not TITLE.fullmatch(title):
         return "its title has characters asctl does not type (only letters, digits, space, . _ -)"
     pid, pane = s["pid"], s["pane"]["pane_id"]
-    why = enter(s, f"{CMD} {title}" if on else CMD, no_menu if on else lambda scr, before: offers(pane))
+    why = enter(s, f"{CMD} {title}" if on else CMD, no_menu if on else lambda scr, before: offers(pane, before))
     if why:
         return why
     if not on:
