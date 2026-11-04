@@ -8,7 +8,9 @@ Setup refuses, changing nothing, while:
 - an earlier tmux-claude-restore install is there (its own install.sh --uninstall removes it);
 - tmux-continuum's restore or boot is on, in a tmux config (or a file it sources) or the
   running server: a continuum restore brings every saved session back at once, past boot's
-  memory gates, and its boot turns its tmux.service on again at every server start.
+  memory gates, and its boot turns its tmux.service on again at every server start. When only
+  the running server has it on (it read the config before that said off), it names the tmux
+  set commands that turn it off there: they touch no session, and setup does not run them.
 Then it shows what it will do and asks (--yes: it does not ask; with no terminal and no --yes it
 changes nothing):
 - the drop-in tmux-spawn-.scope.d/asctl.conf in the user's unit folder: the kernel's OOM kill
@@ -31,6 +33,7 @@ import json
 import os
 import pwd
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -171,20 +174,27 @@ def old_install():
     return ""
 
 
-def continuum_on():
-    """Where tmux-continuum's restore or boot is on: ["~/.tmux.conf: @continuum-restore", ...]."""
+def continuum_configs():
+    """The tmux config lines that turn continuum's restore or boot on: ["~/.tmux.conf:4: …"]."""
     found = []
     for p in tmux_configs():
         for n, line in enumerate(_read(p).splitlines(), 1):
             m = CONTINUUM.match(line)
             if m:
                 found.append(f"{p}:{n}: @continuum-{m.group(1)} 'on'")
-    if tmuxctl.server_pid() is not None:
-        for o in ("restore", "boot"):
-            r = tmuxctl.run("show", "-gqv", f"@continuum-{o}")
-            if r.returncode == 0 and r.stdout.strip() == "on":
-                found.append(f"the running tmux server: @continuum-{o} on")
     return found
+
+
+def continuum_server():
+    """Which of continuum's restore and boot the running tmux server has on: ["restore", ...]."""
+    if tmuxctl.server_pid() is None:
+        return []
+    on = []
+    for o in ("restore", "boot"):
+        r = tmuxctl.run("show", "-gqv", f"@continuum-{o}")
+        if r.returncode == 0 and r.stdout.strip() == "on":
+            on.append(o)
+    return on
 
 
 def runs_tmux(execstart):
@@ -321,7 +331,15 @@ def setup(yes=False):
     if old:
         raise RegistryError(f"an earlier tmux-claude-restore install is here ({old}): remove it first with "
                             f"its own installer, install.sh --uninstall (this repo has it up to commit dd28b57)")
-    cont = continuum_on()
+    conf, server = continuum_configs(), continuum_server()
+    if server and not conf:
+        tm = " ".join(shlex.quote(a) for a in tmuxctl._base())
+        raise RegistryError("tmux-continuum's restore or boot is still on in the running tmux server ("
+                            + ", ".join(f"@continuum-{o} on" for o in server) + "): your tmux config no "
+                            "longer turns it on, but the server read it before. Turn it off there (this "
+                            "touches no session), then run asctl setup again:\n"
+                            + "\n".join(f"  {tm} set -g @continuum-{o} off" for o in server))
+    cont = conf + [f"the running tmux server: @continuum-{o} on" for o in server]
     if cont:
         raise RegistryError("tmux-continuum's restore or boot is on (" + "; ".join(cont) + "): set "
                             "@continuum-restore and @continuum-boot to 'off' in your tmux config first (a "

@@ -51,7 +51,9 @@ first with its own `install.sh --uninstall`; this repo has that installer up to 
 and `set -g @continuum-boot 'off'` in your tmux config: a continuum restore brings every saved
 session back at once, past boot's memory gates, and its boot turns its `tmux.service` on again).
 It reads `~/.tmux.conf`, the XDG one, the files they `source-file` by a literal path, and the
-running server's options. Then it:
+running server's options. When only the running server still has one on (it read your config
+before that said off), setup names the `tmux set -g @continuum-… off` commands that turn it off
+there: they touch no session. Then it:
 
 - writes `~/.config/systemd/user/tmux-spawn-.scope.d/asctl.conf` (in the folder your user
   manager reads), so that the kernel's OOM kill of one claude does not end its tmux session

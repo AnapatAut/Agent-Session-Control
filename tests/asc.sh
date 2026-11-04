@@ -953,9 +953,16 @@ out=$(su2 --yes); rc=$?
 	&& ok "setup, continuum's restore on in the XDG config (set-option -gq): refused" || bad "setup, XDG continuum: rc $rc $out"
 rm -r "$H2/.config/tmux"; tm set -g @continuum-restore on
 out=$(su2 --yes); rc=$?
-tm set -gu @continuum-restore
-[ "$rc" = 1 ] && seen "the running tmux server: @continuum-restore on" <<<"$out" \
-	&& ok "setup, continuum's restore on in the running server: refused" || bad "setup, server continuum: rc $rc $out"
+[ "$rc" = 1 ] && seen "still on in the running tmux server (@continuum-restore on): your tmux config no longer turns it on" <<<"$out" \
+	&& seen "  tmux -L $ASC_TMUX_SOCKET set -g @continuum-restore off" <<<"$out" && ! seen "@continuum-boot" <<<"$out" \
+	&& ok "setup, continuum's restore on only in the running server: refused, the tmux command that turns it off named" \
+	|| bad "setup, server continuum: rc $rc $out"
+printf '%s\n' "set -g @continuum-boot on" > "$H2/.tmux.conf"
+out=$(su2 --yes); rc=$?
+: > "$H2/.tmux.conf"; tm set -gu @continuum-restore
+[ "$rc" = 1 ] && seen "$H2/.tmux.conf:1: @continuum-boot 'on'; the running tmux server: @continuum-restore on): set" <<<"$out" \
+	&& ! seen "still on in the running" <<<"$out" \
+	&& ok "setup, continuum on in the config and the server: the config first" || bad "setup, config and server continuum: rc $rc $out"
 touch "$F2/fail-show-environment"; out=$(su2 --yes); rc=$?; rm "$F2/fail-show-environment"
 [ "$rc" = 1 ] && seen "cannot reach your systemd user manager (systemctl --user: Failed to connect to bus" <<<"$out" && en tmux.service \
 	&& ok "setup, the user manager not answering: refused as that (not as units missing)" || bad "setup, no manager: rc $rc $out"
@@ -1177,6 +1184,9 @@ asc/setup.py %%%     back = [u for u in _recorded() if %%%     back = [u for u i
 asc/setup.py %%%     return ("same" if _read(p) == _template() else "differs"), p %%%     return "same", p
 asc/setup.py %%%     to_start = [u for u in STARTED if _prop(u, "ActiveState") != "active"] %%%     to_start = []
 asc/setup.py %%%         cli.out("asctl is set up already: nothing to do") %%%         pass
+asc/setup.py %%%     if server and not conf: %%%     if False:
+asc/setup.py %%%     if server and not conf: %%%     if server:
+asc/setup.py %%% for o in server)) %%% for o in ("restore", "boot")))
 asc/events.py %%% [i for r, i in mine if r < per] %%% [i for r, i in mine]
 asc/events.py %%%         elif t >= cut: %%%         else:
 asc/events.py %%%         if fav and kind == "forget": %%%         if False:
