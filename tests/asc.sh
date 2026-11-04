@@ -96,7 +96,7 @@ pid=$(claude_in "das-$id") && ok "claude up in das-$id" || bad "no claude in das
 # be forked after that, in the wrapper's scope, not left in the server's cgroup.
 cg() { cut -d: -f3 "/proc/$1/cgroup" 2>/dev/null; }
 wp=$(ps -o ppid= -p "$pid" | tr -d ' '); sp=$(tm display -p '#{pid}')
-if [ "$(cg "$wp")" = "$(cg "$sp")" ]; then ok "no pane scopes here (no user bus for tmux): nothing to check"
+if [ "$(cg "$wp")" = "$(cg "$sp")" ]; then echo "  skip  claude in its pane's scope: no pane scopes here (no user bus for tmux)"
 else [ "$(cg "$pid")" = "$(cg "$wp")" ] && ok "claude is in its pane's scope, not the server's cgroup" || bad "claude in $(cg "$pid"), its pane in $(cg "$wp")"; fi
 lastargs | grep -q -- "--resume $SID --name das-$id --permission-mode auto" && ok "started with --resume, --name and the mode" || bad "wrong args: $(lastargs)"
 [ "$(jqe ".entries[\"$id\"].want_on")" = true ] && ok "want_on true after on" || bad "want_on not true after on"

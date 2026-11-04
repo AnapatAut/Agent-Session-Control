@@ -7,7 +7,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO" || exit 2
 files=(install.sh tests/*.sh tools/install-units.sh
 	tools/privacy-check.sh tools/install-hooks.sh .githooks/pre-commit .githooks/commit-msg .githooks/pre-push
-	bin/asctl bin/asctl-wrap tests/asc/bin/claude tests/asc/bin/systemctl)
+	bin/asctl bin/asctl-wrap tests/asc/bin/claude tests/asc/bin/systemctl tests/dash/bin/tailscale tests/dash/bin/ip)
 rc=0
 for f in "${files[@]}"; do bash -n "$f" || { echo "syntax error: $f"; rc=1; }; done
 [ $rc = 0 ] && echo "bash -n: ok (${#files[@]} files)"

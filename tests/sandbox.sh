@@ -147,11 +147,16 @@ chk "its runtime folder is 0700 and its own" '[ "$(x stat -c "%a %u" "$RUN_DIR")
 chk "systemctl --user answers" 'wait_for 20 "ux systemctl --user is-system-running 2>/dev/null | grep -qE \"running|degraded\""' 'ux systemctl --user --failed --no-legend'
 
 echo "== 2. the host suites on a clean Ubuntu"
+# As sbuser with its user manager's bus, as a user runs them (tmux then puts each pane in a scope
+# of its own, which asc.sh checks), and node there for the page's own checks: a suite that skips
+# anything here fails, so a check cannot quietly stop being run.
 for suite in asc dash; do
-	out=$(timeout 900 docker exec -u sbuser -w /opt/asc "$C" bash "tests/$suite.sh" 2>&1); rc=$?
+	out=$(timeout 900 docker exec -u sbuser -e XDG_RUNTIME_DIR="$RUN_DIR" -e DBUS_SESSION_BUS_ADDRESS="unix:path=$RUN_DIR/bus" \
+		-w /opt/asc "$C" bash "tests/$suite.sh" 2>&1); rc=$?  # ux's options: timeout runs commands, not functions
 	chk "tests/$suite.sh: $(printf '%s\n' "$out" | tail -1)" \
 		'[ "$rc" = 0 ] && printf "%s\n" "$out" | tail -1 | grep -qE "^$suite: [1-9][0-9]* passed, 0 failed$"' \
 		'echo "exit $rc"; printf "%s\n" "$out" | grep "  FAIL  "'
+	chk "tests/$suite.sh: nothing skipped" '! printf "%s\n" "$out" | grep -q "^  skip  "' 'printf "%s\n" "$out" | grep "^  skip  "'
 done
 
 echo "== 3. the dashboard as systemd user units"

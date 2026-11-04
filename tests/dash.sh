@@ -19,7 +19,7 @@ mem() { printf 'MemTotal: %s kB\nMemAvailable: %s kB\nSwapTotal: 0 kB\nSwapFree:
 export ASC_MEMINFO="$T/meminfo"
 export ASC_SYSTEMCTL="$REPO/tests/asc/bin/systemctl"  # never the real one (On with no server)
 mem 32000000 16000000
-export PATH="$REPO/tests/dash/bin:$PATH"  # a fake tailscale: the operator setting
+export PATH="$REPO/tests/dash/bin:$PATH"  # a fake tailscale (the operator setting) and ip (fixed addresses)
 tm() { tmux -L "$ASC_TMUX_SOCKET" -f /dev/null "$@"; }
 DPID=
 # kill-server has a time limit: it once hung for hours on a stuck test server (and with it this run)
@@ -102,7 +102,7 @@ if command -v node >/dev/null; then
 		case $line in "  ok    "*) ok "${line#  ok    }" ;; *) bad "${line#  FAIL  }" ;; esac
 	done < <(node "$REPO/tests/dash/page.js" "$REPO" 2>&1)
 else
-	echo "  (node not installed: skipped)"
+	echo "  skip  the page's own logic: node not installed"
 fi
 
 echo "== config"
@@ -397,7 +397,7 @@ myip=$(ip -j addr show | jq -r '[.[].addr_info[].local] | map(select(startswith(
 [ "$(nox)" = 403 ] && ok "no X-Forwarded-For: 403" || bad "no X-Forwarded-For let in"
 [ "$(nox -H 'X-Forwarded-For: 127.0.0.1')" = 403 ] && ok "from loopback: 403" || bad "loopback let in"
 [ "$(nox -H 'X-Forwarded-For: ::ffff:127.0.0.1')" = 403 ] && ok "from loopback as IPv4-mapped IPv6: 403" || bad "mapped loopback let in"
-[ -n "$myip" ] && [ "$(nox -H "X-Forwarded-For: $myip")" = 403 ] && ok "from one of this machine's own addresses: 403" || bad "this machine's own address let in ($myip)"
+[ "$myip" = 192.0.2.77 ] && [ "$(nox -H "X-Forwarded-For: $myip")" = 403 ] && ok "from one of this machine's own addresses: 403" || bad "this machine's own address let in ($myip)"
 [ "$(nox -H "X-Forwarded-For: 192.0.2.10, $myip")" = 403 ] && ok "a client's own entry first does not hide that the last is this machine" || bad "the first entry was trusted"
 [ "$(nox -H "X-Forwarded-For: 127.0.0.1, 192.0.2.10")" = 200 ] && ok "the last entry decides (another machine: 200)" || bad "the last entry not used"
 [ "$(nox -H "$XFF" -H "$XFF")" = 403 ] && ok "X-Forwarded-For twice: 403" || bad "a doubled X-Forwarded-For let in"
@@ -643,6 +643,7 @@ asc/dash.py %%%         if not remote_client(self.headers): %%%         if False
 asc/dash.py %%%     if ip.version == 6 and ip.ipv4_mapped: %%%     if False:
 asc/dash.py %%% xff[0].split(",")[-1] %%% xff[0].split(",")[0]
 asc/dash.py %%%     if len(xff) != 1: %%%     if not xff:
+asc/dash.py %%%  and ip not in ips %%% 
 asc/dash.py %%%     if a.get("tmux") != e["tmux"]: %%%     if False:
 asc/dash.py %%%         srv.wait_actions(100) %%%         pass
 asc/dash.py %%%         return t %%%         return secrets.token_urlsafe(32)

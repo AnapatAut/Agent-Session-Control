@@ -5,9 +5,9 @@ Five scripts. None touches your own tmux, tmux config or systemd user units.
 | Script | Time | Needs | Checks |
 |---|---|---|---|
 | `tests/lint.sh` | seconds | bash; `shellcheck` and `node` if installed | bash syntax and shellcheck for every script, Python compiles, app.js parses; the privacy check of every tracked file |
-| `tests/asc.sh` | about 1 min (`ASC_MUTANTS=1`: a few minutes) | bash, tmux, jq, python3 | `asctl`: live, fav, on, off, rename, restart, mode, rc, the event log, the watcher, boot, the tmux server unit and `asctl setup`, with a fake claude on a tmux server of its own and a fake systemctl (`tests/asc/bin`) |
-| `tests/dash.sh` | about 30 s (`DASH_MUTANTS=1`: minutes) | bash, tmux, jq, curl, python3; node for the page's logic (skipped without) | the dashboard server: socket and folder modes, the login, Host, Origin and token checks, one request per connection, the API and its actions, past conversations, idle and SIGTERM exit, systemd socket activation; the notices (boot, setup, the watcher), the auto-restart setting, conversation lengths; the page's own logic (`tests/dash/page.js`: row reasons, history wording and folding) |
-| `tests/sandbox.sh` | about 4 min | Docker, network for the build only | asctl under real systemd, in a container: the two suites above on a clean Ubuntu, the dashboard as user units, a real out-of-memory kill, the watcher, the units from a checkout, the machine install (`install.sh`) and `asctl setup` by a second user, a reboot, then `setup --remove` and `--uninstall` |
+| `tests/asc.sh` | about 4 min (`ASC_MUTANTS=1`: about 85 min at 6 at a time) | bash, tmux, jq, python3 | `asctl`: live, fav, on, off, rename, restart, mode, rc, the event log, the watcher, boot, the tmux server unit and `asctl setup`, with a fake claude on a tmux server of its own and a fake systemctl (`tests/asc/bin`) |
+| `tests/dash.sh` | about 1 min (`DASH_MUTANTS=1`: about 10 min) | bash, tmux, jq, curl, python3; node for the page's logic (skipped without) | the dashboard server: socket and folder modes, the login, Host, Origin and token checks, one request per connection, the API and its actions, past conversations, idle and SIGTERM exit, systemd socket activation; the notices (boot, setup, the watcher), the auto-restart setting, conversation lengths; the page's own logic (`tests/dash/page.js`: row reasons, history wording and folding) |
+| `tests/sandbox.sh` | about 8 min | Docker, network for the build only | asctl under real systemd, in a container: the two suites above on a clean Ubuntu, the dashboard as user units, a real out-of-memory kill, the watcher, the units from a checkout, the machine install (`install.sh`) and `asctl setup` by a second user, a reboot, then `setup --remove` and `--uninstall` |
 | `tests/privacy.sh` | seconds (`PRIVACY_MUTANTS=1`: about two minutes) | bash, git | the privacy check and its hooks catch each kind of leak and let the allowed cases through |
 
 ```bash
@@ -34,7 +34,8 @@ hold. Root inside is still root on the host with fewer capabilities (systemd nee
 except `install.sh`, which runs as root by design. Its sections:
 
 1. systemd and the users' managers;
-2. `asc.sh` and `dash.sh` on a clean Ubuntu;
+2. `asc.sh` and `dash.sh` on a clean Ubuntu, as a user with its user manager's bus (so tmux
+   makes pane scopes) and node: a suite that skips anything fails here;
 3. the dashboard as user units (socket activation, modes, idle exit, a stop that waits);
 4. a real out-of-memory kill kept inside a capped unit;
 5. the watcher: a favorite's claude killed by the kernel, told apart from other ends, and
@@ -95,5 +96,7 @@ are ever removed.
   as checked on the real one; if a later Claude Code changes them, check against the real one
   on a separate `tmux -L` server.
 - The sandbox is Ubuntu 24.04, tmux 3.4 and systemd 255 only.
+- `dash.sh` uses a fake `ip` (`tests/dash/bin/ip`: loopback and 192.0.2.77, the same on every
+  machine), so the dashboard's reading of a real `ip -j addr` is not tested.
 - `install.sh` is tested in the sandbox only (it needs root); the mutant runs cover `asctl`
   and the dashboard, not `install.sh`.

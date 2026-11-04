@@ -1,0 +1,6 @@
+#!/bin/bash
+# Fake ip for tests/dash.sh: `ip -j addr show` gives loopback and one fixed documentation address
+# (192.0.2.77), the same on every machine. In a container with no network the real one shows only
+# loopback, and the checks of "this machine's own address" would test nothing.
+[ "$*" = "-j addr show" ] || { echo "fake ip: not scripted: $*" >&2; exit 2; }
+printf '%s\n' '[{"ifname":"lo","addr_info":[{"family":"inet","local":"127.0.0.1","prefixlen":8},{"family":"inet6","local":"::1","prefixlen":128}]},{"ifname":"eth0","addr_info":[{"family":"inet","local":"192.0.2.77","prefixlen":24}]}]'
