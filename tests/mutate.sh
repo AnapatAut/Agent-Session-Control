@@ -12,6 +12,8 @@
 run_mutants() {
 	local suite=$1 off=$2 jobs=${MUTANT_JOBS:-8} i=0 n m line det ms=()
 	local -A had=()
+	# a mutant run is the whole suite: a selection would run in every copy, and miss checks
+	[ -z "${ASC_ONLY+x}" ] || { echo "mutants: ASC_ONLY is set; a mutant run is the whole suite" >&2; exit 2; }
 	mkdir -p "$T/mutants" || exit 2
 	while IFS= read -r m; do
 		[ -n "$m" ] || continue

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Static checks: bash syntax and shellcheck for every script in the repo, the suites' checks and
-# waits (tests/checklint.py), their mutant lists (tests/mutantlint.py), and the privacy check of
-# every tracked file. Fast, changes nothing.
+# waits (tests/checklint.py), their mutant lists (tests/mutantlint.py), the sandbox's HostConfig
+# check with a fake docker (tests/sandbox-lib-test.sh), the case runner (tests/cases-test.sh),
+# and the privacy check of every tracked file. Fast, changes nothing.
 #   tests/lint.sh
 set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -30,6 +31,16 @@ python3 -I tests/checklint.py --self-test && python3 -I tests/checklint.py tests
 	&& echo "checks and waits: ok (one fixed name per check, run once; every wait's status used; no token on a command line)" || rc=1
 python3 -I tests/mutantlint.py --self-test && python3 -I tests/mutantlint.py tests/asc.sh tests/dash.sh tests/privacy.sh \
 	&& echo "mutants: ok (each old text found once in its file, no line twice, each change parses)" || rc=1
+if out=$(bash tests/cases-test.sh 2>&1); then
+	echo "cases: ok (run_cases: order, ASC_ONLY, case done and counts, each refusal)"
+else
+	printf '%s\n' "$out" | grep -v '^  ok  '; rc=1
+fi
+if out=$(bash tests/sandbox-lib-test.sh 2>&1); then
+	echo "sandbox-lib: ok (the whole HostConfig checked; each dangerous change reported)"
+else
+	printf '%s\n' "$out" | grep -v '^  ok  '; rc=1
+fi
 find asc -name __pycache__ -prune -exec rm -r {} + 2>/dev/null
 if command -v node >/dev/null; then
 	for js in asc/web/app.js asc/web/splash.js tests/dash/page.js; do node --check "$js" && echo "js: ok ($js parses)" || rc=1; done

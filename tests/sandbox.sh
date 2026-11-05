@@ -13,7 +13,9 @@
 # services listening on every address answer), no published ports, no bind mounts, is not
 # privileged, gains no new privileges, has fewer capabilities, a 1 GiB memory cap with no swap,
 # a process limit, a small /tmp, and the highest OOM score, so the host's OOM killer picks it
-# first. The check before any test aborts the run if that does not hold.
+# first. The container is made with tests/sandbox-lib.sh's options, and its whole HostConfig is
+# compared with the one written there before it starts; the checks from inside follow the start.
+# Either aborts the run before any test if it does not hold.
 # Root inside is still root on the host with fewer capabilities: systemd needs SYS_ADMIN (and
 # a writable /sys/fs/cgroup), and SYS_ADMIN can remount things such as /proc/sys. So this is a
 # box for the repo's own code, which runs as an ordinary user (sbuser), never for code from
@@ -26,11 +28,13 @@
 # No pipefail on purpose: checks pipe into grep -q, whose early exit would fail the writer.
 set -u
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/sandbox-lib.sh
+. "$REPO/tests/sandbox-lib.sh"
 IMAGE=asc-sandbox:latest NET=asc-sandbox-net C=asc-sandbox BUILDER=asc-sandbox-builder
 # The builder's daemon image, pinned by tag and digest (a re-pointed tag cannot swap it).
 # Bump: docker buildx imagetools inspect moby/buildkit:<version>, its top-level Digest.
 BK=moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f
-SB_UID=2001 RUN_DIR=/run/user/2001
+RUN_DIR=$SB_RUN_DIR
 pass=0 fail=0 FAILED=() LOCKED=0
 ok()  { echo "  ok    $1"; pass=$((pass + 1)); }
 # $2: what was seen, on the lines after the FAIL, each indented (at most 60 of them)
@@ -45,10 +49,11 @@ bad() {
 # (after any waiting in the test, so it shows the state the test ended on).
 chk() { if eval "$2"; then ok "$1"; else bad "$1" "$([ -z "${3:-}" ] || eval "$3" 2>&1)"; fi; }
 die() { echo "ABORT: $*" >&2; exit 2; }
+# A container that failed the safety check never stays, KEEP=1 or not.
+unsafe() { docker rm -f "$C" >/dev/null 2>&1; die "the safety check failed (the container is removed)"; }
 wait_for() { local n=$1; shift; for _ in $(seq "$n"); do eval "$*" && return 0; sleep 1; done; return 1; }
-x()  { docker exec "$C" "$@"; }
-# As sbuser, with its user manager's environment (systemctl --user works).
-ux() { docker exec -u sbuser -e XDG_RUNTIME_DIR="$RUN_DIR" -e DBUS_SESSION_BUS_ADDRESS="unix:path=$RUN_DIR/bus" -w /opt/asc "$C" "$@"; }
+x()  { sb_x "$C" "$@"; }
+ux() { sb_ux "$C" "$@"; }  # as sbuser, with its user manager's environment
 # Put together at run time, so the privacy check does not read them as real ones.
 E=@ N=.ts
 LOGIN="someone${E}example.com" HOST="machine.example${N}.net"
@@ -120,38 +125,21 @@ docker buildx rm -f "$BUILDER" >/dev/null 2>&1
 [ "$PULLED_BK" = 1 ] && docker rmi "$BK" >/dev/null 2>&1
 rm -rf "$CTX"; CTX=""
 
-echo "== start the systemd container"
-# --memory-swap = --memory: no swap, so a memory test ends in a kill, not in swapping.
-docker run -d --name "$C" --hostname asc-sandbox --network none \
-	--cap-add SYS_ADMIN --cap-drop NET_RAW --cap-drop NET_BIND_SERVICE --cap-drop MKNOD \
-	--security-opt apparmor=unconfined --security-opt no-new-privileges --cgroupns=private \
-	--tmpfs /run --tmpfs /run/lock --tmpfs /tmp:size=256m,exec --memory 1g --memory-swap 1g --pids-limit 1024 \
-	--oom-score-adj 1000 -e container=docker --stop-signal SIGRTMIN+3 \
-	"$IMAGE" sh -c 'mount -o remount,rw /sys/fs/cgroup 2>/dev/null; exec /sbin/init' >/dev/null || die "docker run"
-
 echo "== 0. safety (abort when the container could reach the host)"
-chk "no host mounts, no published ports, not privileged" \
-	'[ "$(docker inspect "$C" --format "{{len .Mounts}} {{len .HostConfig.PortBindings}} {{.HostConfig.Privileged}}")" = "0 0 false" ]'
-chk "memory capped at 1 GiB, no swap, process limit, first for the OOM killer" \
-	'[ "$(docker inspect "$C" --format "{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.HostConfig.PidsLimit}}")" = "1073741824 1073741824 1024" ] && [ "$(x cat /proc/1/oom_score_adj)" = 1000 ]'
-chk "/proc/sys and /sys read-only inside" \
-	'[ "$(x awk "\$5 == \"/sys\" || \$5 == \"/proc/sys\" {print \$5, substr(\$6, 1, 3)}" /proc/self/mountinfo | sort)" = "$(printf "/proc/sys ro,\n/sys ro,")" ]' \
-	'x awk "\$5 == \"/sys\" || \$5 == \"/proc/sys\"" /proc/self/mountinfo'
-chk "no network but loopback" '[ "$(docker inspect "$C" --format "{{.HostConfig.NetworkMode}}")" = none ] && [ "$(x ls /sys/class/net)" = lo ]' 'x ls /sys/class/net'
-# The host's address on Docker's default bridge (read here, never written down), its ssh port.
-GW=$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null)
-chk "the host cannot be reached (its Docker bridge, ssh)" '[ -n "$GW" ] && x sh -c "! timeout 3 bash -c \"echo > /dev/tcp/$GW/22\" 2>/dev/null"' 'echo "bridge gateway: ${GW:-none}"'
-chk "no new privileges, no raw sockets or device nodes" \
-	'[ "$(x sed -n "s/^NoNewPrivs:\t//p" /proc/1/status)" = 1 ] && docker inspect "$C" --format "{{.HostConfig.CapDrop}}" | grep -q NET_RAW && docker inspect "$C" --format "{{.HostConfig.CapDrop}}" | grep -q MKNOD' \
-	'x grep NoNewPrivs /proc/1/status; docker inspect "$C" --format "{{.HostConfig.CapDrop}}"'
-[ "$fail" = 0 ] || die "the safety check failed"
+docker create --name "$C" "${SB_OPTS[@]}" "$IMAGE" "${SB_INIT[@]}" >/dev/null || die "docker create"
+# Before it starts: a container made wrong never boots.
+chk "its whole HostConfig is the expected one, no mounts, no network (before it starts)" '[ "$(sb_hostconfig_diff "$C")" = same ]' 'sb_hostconfig_diff "$C"'
+[ "$fail" = 0 ] || unsafe
+docker start "$C" >/dev/null || die "docker start"
+chk "inside: its capabilities, first for the OOM killer, /proc/sys and /sys read-only, loopback only, the host out of reach, no new privileges" \
+	'[ "$(sb_inside_diff "$C")" = same ]' 'sb_inside_diff "$C"'
+[ "$fail" = 0 ] || unsafe
 
 echo "== 1. systemd and the user's manager"
-chk "systemd is PID 1 and running (or degraded)" \
-	'wait_for 60 "x systemctl is-system-running 2>/dev/null | grep -qE \"running|degraded\""' 'x systemctl --failed --no-legend'
-chk "linger starts sbuser's user manager at boot" 'wait_for 30 "x systemctl is-active --quiet user@$SB_UID.service"' 'x systemctl status "user@$SB_UID.service" | tail -5'
+chk "systemd is PID 1 and running (or degraded)" 'sb_wait 60 sb_system_up "$C"' 'x systemctl --failed --no-legend'
+chk "linger starts sbuser's user manager at boot" 'sb_wait 30 sb_user_manager "$C"' 'x systemctl status "user@$SB_UID.service" | tail -5'
 chk "its runtime folder is 0700 and its own" '[ "$(x stat -c "%a %u" "$RUN_DIR")" = "700 $SB_UID" ]'
-chk "systemctl --user answers" 'wait_for 20 "ux systemctl --user is-system-running 2>/dev/null | grep -qE \"running|degraded\""' 'ux systemctl --user --failed --no-legend'
+chk "systemctl --user answers" 'sb_wait 20 sb_user_bus "$C"' 'ux systemctl --user --failed --no-legend'
 
 echo "== 2. the host suites on a clean Ubuntu"
 # As sbuser with its user manager's bus, as a user runs them (tmux then puts each pane in a scope

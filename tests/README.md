@@ -26,6 +26,13 @@ a loop or a function (it would print more than once), so a name means the same c
 every run. It reads the suites with a small bash parser (`tests/bashtree.py`), and a script it
 cannot read fails the lint. A mutant's name holds its file, old text and new text.
 
+A suite is split into cases, functions `case_NAME` that `tests/cases.sh`'s `run_cases` runs
+once each, in order; each must pass on its own, after only the suite's setup. `ASC_ONLY=a,b`
+runs only those cases (an unknown name exits 2; a mutant run refuses it). After each case the
+runner prints `case done NAME` and `== counts NAME <pass> <fail>`: a case that never got there
+(a `stop`, a fail-fast exit) is unfinished. The lint allows a check in a case function only, and
+refuses a call of one other than through `run_cases`.
+
 A wait (`poll`, `poll_gone`, `claude_in`, `start_dash`, and any helper that returns a wait's
 failure) must have its status used: it fails a check, or `|| stop` ends the suite with one FAIL,
 `setup: NAME`, where what did not come is something the test itself started (a claude in a
@@ -54,8 +61,13 @@ breaks.
 two lingering users, the repo's tracked files in `/opt/asc`) with a throwaway buildx builder,
 and runs one container with no network but loopback, no mounts, no published ports, not
 privileged, no new privileges, fewer capabilities, 1 GiB of memory and no swap, a process
-limit and the highest OOM score. A check before any test aborts the run when that does not
-hold. Root inside is still root on the host with fewer capabilities (systemd needs
+limit and the highest OOM score. The options, and the whole `HostConfig` docker must give a
+container made with them, are written out in `tests/sandbox-lib.sh`: the container is
+created, compared field by field before it starts (any difference, a field more or less,
+aborts the run), then checked from inside after the start (`tests/sandbox-lib-test.sh`, run by
+the lint, shows each dangerous change reported). The Dockerfile's `base` stage has no repo
+files, for a run that copies its own into each container. Root inside is still root on the
+host with fewer capabilities (systemd needs
 `SYS_ADMIN`), so the box is for this repo's own code only; the tests run as the two users,
 except `install.sh`, which runs as root by design. Its sections:
 

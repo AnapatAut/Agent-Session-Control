@@ -3,7 +3,9 @@ tests/lint.sh).
 
 A check has one fixed name: `cond && ok NAME || bad NAME [DETAILS]` (or an if or case with an ok
 and a bad), the same NAME both ways, a quoted literal with no value in it ($ or a backquote in
-double quotes), used at one place only in its suite, and run once: never in a loop or a function.
+double quotes), used at one place only in its suite, and run once: never in a loop or a function,
+but a case's (case_NAME, which tests/cases.sh's run_cases runs once; nothing else may call one).
+In a suite with cases every check is in one.
 `skip NAME WHY` names a check that cannot run here (it may share that check's name). page.js's
 `check(NAME, ...)` names are plain string literals, each used once; a suite that relays page.js
 (dash.sh) prints them as "page: NAME", so its own names must not clash with those. No suite prints
@@ -181,18 +183,26 @@ def check_suite(path, text, page=()):
         if PRINT.search(bare):
             faults.append(f'{path}:{n}: prints a check line itself; use ok, bad or skip')
     units = {}
+    has_cases = any(f.t == 'func' and f.name.startswith('case_') for f in tree.walk())
     for cmd in tree.walk():
         if cmd.t != 'simple' or not cmd.words:
             continue
         kind, args = command_name(cmd)
+        if kind and kind.startswith('case_'):
+            faults.append(f'{path}:{tree.line(cmd.pos)}: {kind} called: a case is run by run_cases only, once')
+            continue
         if kind not in CHECKS + ('stop',):
             continue
         n = tree.line(cmd.pos)
         word = args[0] if args else ''
         if word in RELAY:
             continue
-        if kind != 'stop' and any(a.t in LOOPS or a.t == 'func' for a in cmd.ancestors()):
+        funcs = [a for a in cmd.ancestors() if a.t == 'func']
+        in_case = len(funcs) == 1 and funcs[0].name.startswith('case_')
+        if kind != 'stop' and (any(a.t in LOOPS for a in cmd.ancestors()) or (funcs and not in_case)):
             faults.append(f'{path}:{n}: {kind} in a loop or a function: its name would print more than once')
+        elif kind != 'stop' and has_cases and not in_case:
+            faults.append(f'{path}:{n}: {kind} outside a case: in a suite with cases each check is in one')
         if not word or word[0] not in '"\'':
             faults.append(f'{path}:{n}: {kind} with no quoted name: {word or "(none)"}')
             continue
@@ -526,6 +536,13 @@ REFUSED = [
     ('x && ok "a"\'b\' || bad "a"\'b\'\n', 'the name is not one quoted string'),
     ('# relays tests/dash/page.js\nx && ok "page: n" || bad "page: n"\n', 'name used before'),
     ('for k in a b; do x "$k" && ok "a" || bad "a"; done\n', 'in a loop or a function'),
+    ('case_a() { x && ok "a" || bad "a"; }\ncase_a\n', 'a case is run by run_cases only'),
+    ('case_a() { x && ok "a" || bad "a"; }\nx && ok "b" || bad "b"\n', 'outside a case'),
+    ('case_a() { x && ok "a" || bad "a"; }\nskip "b" "why"\n', 'outside a case'),
+    ('case_a() { for k in a; do x && ok "a" || bad "a"; done; }\n', 'in a loop or a function'),
+    ('case_a() { f() { x && ok "a" || bad "a"; }; }\n', 'in a loop or a function'),
+    ('f() { case_a() { x && ok "a" || bad "a"; }; }\n', 'in a loop or a function'),
+    ('case_a() { x && ok "a" || bad "a"; }\ncase_b() { x && ok "a" || bad "a"; }\n', 'name used before'),
     ('while x; do\n\ty && ok "a" || bad "a"\ndone\n', 'in a loop or a function'),
     ('f() { x && ok "a" || bad "a"; }\nf\nf\n', 'in a loop or a function'),
     ('if x; then\n\tok "a"\nelse\n\tbad "b" "d"\nfi\n', 'ok and bad with different names'),
@@ -567,6 +584,7 @@ REFUSED = [
     ('w() { for i in 1 2; do x && return 0; sleep 1; done; }\nw || stop "a"\n', 'must end with return 1'),
 ]
 PASSED = [
+    'case_a() {\n\tx && ok "a" || bad "a"\n\tstop "s"\n}\ncase_b() { y && ok "b" || bad "b"; }\nstop "t"\nrun_cases t a b\n',
     'TOK=$(token)\n',
     '[ "$(token)" = "$TOK1" ] && ok "a" || bad "a"\n',
     'dc -H @<(printf \'X-Asctl-Token: %s\\n\' "$TOK") x\n',
