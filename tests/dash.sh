@@ -24,16 +24,20 @@ tm() { tmux -L "$ASC_TMUX_SOCKET" -f /dev/null "$@"; }
 DPID=
 . "$REPO/tests/reap.sh"
 # What the run started ends before its folder goes (else a dashboard's action still running
-# writes into it again after the rm): its jobs and their children (the dashboard and its actions
-# among them), then the test tmux server and what its panes run. Each call to that server has a
-# time limit: kill-server once hung for hours on a stuck test server (and with it this run).
-cleanup() {
+# writes into it again after the rm), and before each case (fresh): its jobs and their children
+# (the dashboard and its actions among them), then the test tmux server and what its panes run.
+# Each call to that server has a time limit: kill-server once hung for hours on a stuck test
+# server (and with it this run).
+end_started() {
 	local srv panes=
 	reap $$
 	srv=$(timeout -k 1 5 tmux -L "$ASC_TMUX_SOCKET" -f /dev/null display -p '#{pid}' 2>/dev/null) && tree_of "$srv" && panes=${kids[*]}
 	timeout -k 2 10 tmux -L "$ASC_TMUX_SOCKET" -f /dev/null kill-server 2>/dev/null
 	# shellcheck disable=SC2086  # pids
 	end_pids $panes
+}
+cleanup() {
+	end_started
 	rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$ASC_TMUX_SOCKET"; rm -rf "$T"
 }
 trap cleanup EXIT
@@ -59,6 +63,7 @@ poll_gone() { local _poll_i; for ((_poll_i = 0; _poll_i < $1 * 10; _poll_i++)); 
 asctl() { "$REPO/bin/asctl" "$@"; }
 seen() { grep "$@" >/dev/null; }
 . "$REPO/tests/mutate.sh"
+. "$REPO/tests/cases.sh"
 # Put together at run time, so the privacy check does not read them as real ones.
 E=@ N=.ts
 LOGIN="someone${E}example.com" HOST="machine.example${N}.net"
@@ -127,7 +132,67 @@ W="$T/work"; mkdir -p "$W"
 printf '%s\n' "$W" > "$HOME/fake-trusted"
 SID=11111111-2222-4333-8444-555555555555
 PREFIX=
+# A refusal is exit 1 at once; a server that starts anyway is cut off by timeout (124).
+refuses() { timeout 5 "$REPO/bin/asctl" dash --idle 0 2>"$T/err"; [ $? = 1 ]; }
+# No login: as an install check fetches the manifest, worker and icons, outside the page.
+anon() { curl -s --unix-socket "$SOCK" -H "Host: localhost" "$@"; }
+acode() { anon -o /dev/null -w '%{http_code}' "$@"; }
+REG="$HOME/.local/state/agent-session-control/registry.json"
+# Each case's setup: no checks (a case's own checks, the starts of its dashboard among them,
+# stay in it). Every case but page starts with fresh, from what the preamble leaves, so that it
+# tests the same run alone (ASC_ONLY) as after the cases before it: nothing the run started
+# still running, no tmux server, a new HOME and runtime folder, plenty of memory, no prefix, no
+# token.
+fresh() {
+	end_started
+	DPID='' PREFIX='' TOK=''
+	find "$T" -mindepth 1 -maxdepth 1 ! -name fakebash ! -name work -exec rm -rf {} +
+	mkdir -p "$HOME" "$T/run"; chmod 700 "$T/run"
+	printf '%s\n' "$W" > "$HOME/fake-trusted"
+	mem 32000000 16000000
+}
+# The config and the socket folder as the config case leaves them, with the prefix $1 if given.
+dash_conf() {
+	mkdir -p "$(dirname "$CONF")" "$T/run/asctl"
+	if [ -n "${1-}" ]; then
+		printf '{"login": "%s", "host": "%s", "prefix": "%s"}\n' "$LOGIN" "$HOST" "$1" > "$CONF"
+	else
+		printf '{"login": "%s", "host": "%s"}\n' "$LOGIN" "$HOST" > "$CONF"
+	fi
+	chmod 755 "$(dirname "$CONF")" "$T/run"; chmod 644 "$CONF"; chmod 700 "$T/run/asctl"
+	PREFIX=${1-}
+}
+tmux_up() { tm start-server \; set -g exit-empty off || stop "the tmux server for the case"; }
+# fresh, configured, the tmux server and a dashboard up, its token in TOK.
+dash_up() {
+	fresh; dash_conf; tmux_up
+	start_dash || stop "a dashboard for the case"
+	TOK=$(token)
+}
+# A claude in tmux session dev, not a favorite; its pid in pid.
+dev_up() {
+	tm new-session -d -s dev -c "$W" -- "$ASC_CLAUDE" --session-id "$SID" --name dev
+	pid=$(claude_in dev) || stop "a claude in dev for the case"
+}
+# The favorite trio, on (its claude in tmux session trio-ID); its id in id3.
+trio_fav() {
+	tm new-session -d -s trio -c "$W" -- "$ASC_CLAUDE" --session-id 44444444-5555-4666-8777-888888888888
+	p3=$(claude_in trio) || stop "a claude in trio for the case"
+	asctl fav "$p3" --name trio >/dev/null || stop "trio a favorite for the case"
+	id3=$(jq -r '.entries[] | select(.name == "trio") | .id4' "$REG")
+}
+trio_off() { asctl off "$id3" --force >/dev/null || stop "trio off for the case"; }
+# The page as a browser gets it, in $T/page.
+page_get() { dc -f -o "$T/page" "http://x$PREFIX/" || stop "the page for the case"; }
+# The maskable icon drawn and cached as the dashboard does it (with no dashboard: the case starts
+# its own), its cache file in ic.
+icon_cached() {
+	ic=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import icons
+icons.icon("icon-maskable-512.png"); print(icons.cache_path("icon-maskable-512.png"))' "$REPO") && [ -s "$ic" ] \
+		|| stop "the icon cache for the case"
+}
 
+case_page() {
 echo "== the page's own logic (tests/dash/page.js, in node)"
 if command -v node >/dev/null; then
 	# Its checks relayed as they come (their names are page.js's own, fixed there), a FAIL's details
@@ -149,10 +214,11 @@ if command -v node >/dev/null; then
 else
 	skip "page: the page's own logic" "node not installed"
 fi
+}
 
+case_config() {
 echo "== config"
-# A refusal is exit 1 at once; a server that starts anyway is cut off by timeout (124).
-refuses() { timeout 5 "$REPO/bin/asctl" dash --idle 0 2>"$T/err"; [ $? = 1 ]; }
+fresh
 refuses && ok "dash refuses to start without a config" || bad "dash refuses to start without a config" "dash started without a config"
 seen 'login and host allowed' "$T/err" && ok "it says what the config needs" || bad "it says what the config needs" "no hint: $(cat "$T/err")"
 mkdir -p "$(dirname "$CONF")"
@@ -170,9 +236,11 @@ rm "$CONF"; mv "$T/open/dash.json" "$CONF"
 chmod 755 "$T/run"; mkdir -p "$T/run/asctl"; chmod 755 "$T/run/asctl"
 refuses && ok "dash refuses a socket folder that is not 0700" || bad "dash refuses a socket folder that is not 0700" "dash used a socket folder others can open"
 chmod 700 "$T/run/asctl"
+}
 
+case_socket() {
 echo "== the socket and the checks on every request"
-tm start-server \; set -g exit-empty off
+fresh; dash_conf; tmux_up
 start_dash && [ "$(code http://x/app.css)" = 200 ] && ok "dash listens on its socket" || bad "dash listens on its socket" "no socket, or app.css not served: $(cat "$T/dash.err")"
 [ "$(stat -c %a "$SOCK")" = 600 ] && ok "socket mode 0600" || bad "socket mode 0600" "socket mode $(stat -c %a "$SOCK")"
 [ "$(stat -c %a "$T/run/asctl")" = 700 ] && ok "socket folder 0700" || bad "socket folder 0700" "socket folder $(stat -c %a "$T/run/asctl")"
@@ -220,11 +288,11 @@ grep -E '<script>|<script [^>]*>[^<]' "$T/page" >/dev/null && bad "the page has 
 # Reading outerHTML (to compare two rows) is fine; any way of turning a string into HTML is not.
 grep -nE '(inner|outer)HTML[[:space:]]*\+?=|insertAdjacentHTML|document\.write|createContextualFragment|DOMParser|srcdoc' "$REPO/asc/web/app.js" "$REPO/asc/web/splash.js" >/dev/null && bad "app.js sets text only (no innerHTML)" "app.js writes HTML from strings" || ok "app.js sets text only (no innerHTML)"
 grep -nE '\b(window\.)?(confirm|prompt|alert)\(' "$REPO/asc/web/app.js" >/dev/null && bad "app.js asks with its own dialog (no confirm, prompt or alert)" "app.js uses the browser's own dialogs" || ok "app.js asks with its own dialog (no confirm, prompt or alert)"
+}
 
+case_pwa() {
 echo "== the installable app (PWA)"
-# No login: as an install check fetches the manifest, worker and icons, outside the page.
-anon() { curl -s --unix-socket "$SOCK" -H "Host: localhost" "$@"; }
-acode() { anon -o /dev/null -w '%{http_code}' "$@"; }
+dash_up; page_get
 m=$(anon "http://x$PREFIX/manifest.json?v=1")
 jq -e '.display == "standalone" and .short_name == "Sessions" and .x_title == "Agent Session Control" and (.start_url | startswith("./?v="))
 	and .scope == "./" and (.id | test("v=")) and (.icons | length == 4)' <<<"$m" >/dev/null \
@@ -281,8 +349,11 @@ seen -E 'transition: transform' "$REPO/asc/web/app.css" && ! seen -E 'transition
 seen -F 'rel="preload" href="splash.js"' "$T/page" && seen -F 'rel="preload" href="splash-512.png?v=' "$T/page" \
 	&& ok "the splash script and image are preloaded" || bad "the splash script and image are preloaded" "splash not preloaded"
 seen -F 'serviceWorker.register("sw.js")' "$REPO/asc/web/app.js" && ok "the page registers the worker (relative, works under a prefix)" || bad "the page registers the worker (relative, works under a prefix)" "no worker registration"
+}
 
+case_state() {
 echo "== state"
+dash_up
 tm new-session -d -s dev -c "$W" -- "$ASC_CLAUDE" --session-id "$SID" --name dev
 pid=$(claude_in dev) || stop "a claude in dev"
 s=$(state)
@@ -297,8 +368,11 @@ mem 100000000 99999990
 jq -e '.top.others_kb == 0' <<<"$(state)" >/dev/null && ok "state: less in use than this user's own: the rest is 0, not below" || bad "state: less in use than this user's own: the rest is 0, not below" "state: others below 0: $(state | jq -c .top)"
 mem 32000000 16000000
 jq -e '.server == true' <<<"$s" >/dev/null && ok "state: the tmux server is up" || bad "state: the tmux server is up" "state: server not seen"
+}
 
+case_actions_token() {
 echo "== actions: token, origin, body"
+dash_up; dev_up
 r=$(dc -w '%{http_code}' -o /dev/null -X POST -H "Origin: https://$HOST" -H 'Content-Type: application/json' --data '{"action":"fav","ref":"'"$pid"'"}' http://x/api/action)
 [ "$r" = 403 ] && ok "a POST without the token: 403" || bad "a POST without the token: 403" "a POST without the token: $r"
 r=$(dc -w '%{http_code}' -o /dev/null -X POST -H "Origin: https://evil.example" -H @<(printf 'X-Asctl-Token: %s\n' "$TOK") -H 'Content-Type: application/json' --data '{"action":"fav","ref":"'"$pid"'"}' http://x/api/action)
@@ -315,8 +389,11 @@ r=$(dc -w '%{http_code}' -o /dev/null -X POST -H "Origin: https://$HOST" -H @<(p
 r=$(dc -w '%{http_code}' -o /dev/null -X POST -H "Origin: https://$HOST" -H "X-Asctl-Token: tökén" -H 'Content-Type: application/json' --data '{}' http://x/api/action)
 [ "$r" = 403 ] && ok "a token with non-ASCII bytes: 403 (no crash)" || bad "a token with non-ASCII bytes: 403 (no crash)" "a non-ASCII token: $r"
 [ "$(post '[1]' | tail -1)" = 400 ] && ok "a body that is not an object: 400" || bad "a body that is not an object: 400" "a non-object body accepted"
+}
 
+case_actions_fav() {
 echo "== actions: favorite, off, on, mode, rename, forget"
+dash_up; dev_up
 out=$(post '{"action":"fav","ref":"'"$pid"'","name":"das"}')
 [ "$(tail -1 <<<"$out")" = 200 ] && ok "fav by pid" || bad "fav by pid" "fav failed: $out"
 id=$(state | jq -r '.favorites[0].id4'); TM="das-$id"
@@ -394,6 +471,7 @@ state | jq -e '.favorites[0] | (.state | startswith("on (outside")) and .outside
 bgfile idle
 state | jq -e '.favorites[0].outside.busy == ""' >/dev/null && ok "state: outside and idle: nothing to wait for" || bad "state: outside and idle: nothing to wait for" "state outside idle: $(state | jq -c '.favorites[0].outside')"
 out=$(post '{"action":"restart","id":"'"$id"'","tmux":"'"$TM"'"}')
+# shellcheck disable=SC2329  # called by poll
 fav_on() { state | jq -e '.favorites[0].state == "on"' >/dev/null; }
 [ "$(tail -1 <<<"$out")" = 200 ] && poll 4 fav_on && ! kill -0 "$bgp" 2>/dev/null && state | jq -e '.favorites[0] | .state == "on" and .outside == null' >/dev/null \
 	&& ok "restart in tmux from the page: the background session stopped, its claude now in its tmux session" || bad "restart in tmux from the page: the background session stopped, its claude now in its tmux session" "page restart outside: $out / $(state | jq -c '.favorites[0] | {state, outside}')"
@@ -408,8 +486,11 @@ jq -e '.keep == 200 and (.events | length > 5) and ([.events[] | select(.kind !=
 dc "http://x/api/events?id=$id" | jq -e '.events == []' >/dev/null && ok "events of an id: none from before its forget (an earlier favorite's)" || bad "events of an id: none from before its forget (an earlier favorite's)" "events after forget: $(dc "http://x/api/events?id=$id" | jq -c '[.events[].kind]')"
 dc "http://x/api/events" | jq -e '(.events | length > 5) and .events[0].kind == "forget"' >/dev/null && ok "events: all of them without an id" || bad "events: all of them without an id" "events: all"
 [ "$(dc -o /dev/null -w '%{http_code}' "http://x/api/events?id=12")" = 400 ] && ok "events: a bad id is 400" || bad "events: a bad id is 400" "events: bad id accepted"
+}
 
+case_past() {
 echo "== past conversations"
+dash_up
 mkdir -p "$HOME/.claude/projects/-x"
 P1=22222222-3333-4444-8555-666666666666 P2=33333333-4444-4555-8666-777777777777
 printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n{"type":"custom-title","customTitle":"first name"}\n{"type":"custom-title","customTitle":"<b>Old</b> & talk"}\n{"type":"ai-title","aiTitle":"not this"}\n' "$W" "$P1" > "$HOME/.claude/projects/-x/$P1.jsonl"
@@ -435,8 +516,11 @@ tm new-session -d -s dev4 -c "$W" -- "$ASC_CLAUDE" --session-id "$P4" --name giv
 claude_in dev4 >/dev/null || stop "a claude in dev4"
 state | jq -e --arg d "$P4" '.active[] | select(.session_id == $d) | .name == "given"' >/dev/null && ok "a name given to claude stays, over its title" || bad "a name given to claude stays, over its title" "active: a given name replaced: $(state | jq -c .active)"
 tm kill-session -t =dev4
+}
 
+case_client() {
 echo "== the client must be another machine"
+dash_up
 nox() { curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Tailscale-User-Login: $LOGIN" -H "Host: localhost" -H "$XFH" "$@" http://x/api/state; }
 myip=$(ip -j addr show | jq -r '[.[].addr_info[].local] | map(select(startswith("127.") or . == "::1" | not)) | .[0]')
 [ "$(nox)" = 403 ] && ok "no X-Forwarded-For: 403" || bad "no X-Forwarded-For: 403" "no X-Forwarded-For let in"
@@ -447,8 +531,11 @@ myip=$(ip -j addr show | jq -r '[.[].addr_info[].local] | map(select(startswith(
 [ "$(nox -H "X-Forwarded-For: 127.0.0.1, 192.0.2.10")" = 200 ] && ok "the last entry decides (another machine: 200)" || bad "the last entry decides (another machine: 200)" "the last entry not used"
 [ "$(nox -H "$XFF" -H "$XFF")" = 403 ] && ok "X-Forwarded-For twice: 403" || bad "X-Forwarded-For twice: 403" "a doubled X-Forwarded-For let in"
 [ "$(nox -H 'X-Forwarded-For: nonsense')" = 403 ] && ok "a bad address: 403" || bad "a bad address: 403" "a bad address let in"
+}
 
+case_operator() {
 echo "== the Tailscale operator"
+fresh; dash_conf; tmux_up
 # Restart (the setting is cached 30 s), then the status of a request. Not in $(...): a server
 # started in a subshell would hold its pipe open.
 op_code() { stop_dash; start_dash || return 1; code http://x/api/state > "$T/opc"; }
@@ -462,8 +549,11 @@ op_code && [ "$(cat "$T/opc")" = 403 ] && ok "the setting cannot be read: refuse
 rm -f "$HOME/fake-tailscale-broken"
 op_code && [ "$(cat "$T/opc")" = 200 ] && ok "no operator: served" || bad "no operator: served" "no operator refused"
 TOK=$(token)
+}
 
+case_stale() {
 echo "== stale pages, odd bodies, a second claude"
+dash_up
 tm new-session -d -s trio -c "$W" -- "$ASC_CLAUDE" --session-id 44444444-5555-4666-8777-888888888888
 p3=$(claude_in trio) || stop "a claude in trio"
 asctl fav "$p3" --name trio >/dev/null; id3=$(jq -r '.entries[] | select(.name == "trio") | .id4' "$HOME/.local/state/agent-session-control/registry.json")
@@ -472,6 +562,7 @@ out=$(post '{"action":"off","id":"'"$id3"'","tmux":"old-'"$id3"'"}')
 [ "$(post '{"action":"off","id":"'"$id3"'"}' | tail -1)" = 400 ] && ok "an action without the tmux name: refused" || bad "an action without the tmux name: refused" "an action without the tmux name accepted"
 [ "$(post '{"action":"fav","ref":"123","name":[1]}' | tail -1)" = 400 ] && ok "a name that is not a string: 400 (no crash)" || bad "a name that is not a string: 400 (no crash)" "a list as name"
 tm new-window -t "=trio-$id3:" -c "$W" -- "$ASC_CLAUDE" --session-id 55555555-6666-4777-8888-999999999999
+# shellcheck disable=SC2329  # called by poll
 two_claudes() { state | jq -e '.favorites[] | select(.id4 == "'"$id3"'") | .claudes == 2' >/dev/null; }
 poll 5 two_claudes && ok "state: two claudes in the favorite's session" || bad "state: two claudes in the favorite's session" "state: claude count wrong"
 out=$(post '{"action":"off","id":"'"$id3"'","tmux":"trio-'"$id3"'"}')
@@ -482,16 +573,22 @@ tm new-session -d -s quad -c "$W" -- "$ASC_CLAUDE" --session-id 99999999-aaaa-4b
 p4=$(claude_in quad) || stop "a claude in quad"
 out=$(post '{"action":"fav","ref":"99999999-aaaa-4bbb-8ccc-dddddddddddd","name":"quad"}')
 [ "$(tail -1 <<<"$out")" = 200 ] && ok "fav by session id (what the page sends)" || bad "fav by session id (what the page sends)" "fav by session id: $out"
+}
 
+case_tmux_hang() {
 echo "== a tmux server that does not answer"
+dash_up
 srv=$(tm display-message -p '#{pid}')
 kill -STOP "$srv"
 t0=$(date +%s); r=$(dc -m 90 -o /dev/null -w '%{http_code}' http://x/api/state); t1=$(date +%s)
 kill -CONT "$srv"
 [ "$r" = 200 ] && [ $((t1 - t0)) -lt 80 ] && ok "state still answers while tmux hangs" || bad "state still answers while tmux hangs" "state with a hung tmux: $r after $((t1 - t0)) s"
 pgrep -P "$DPID" -x tmux >/dev/null && bad "no tmux client left waiting" "tmux clients left behind" || ok "no tmux client left waiting"
+}
 
+case_transcripts() {
 echo "== transcripts and session files that could hang or crash a read"
+dash_up; dev_up
 mkdir -p "$HOME/.claude/projects/-y"
 python3 -c 'import sys; open(sys.argv[1], "w").write("[" * 50000 + "\n")' "$HOME/.claude/projects/-y/66666666-7777-4888-8999-aaaaaaaaaaaa.jsonl"
 python3 -c 'import sys; open(sys.argv[1], "w").write("[" * 100000)' "$HOME/.claude/sessions/4000001.json"
@@ -505,8 +602,11 @@ seen 'no conversation' "$T/err" && ! seen Traceback "$T/err" && ok "fav of a dee
 state | jq -e '.unknown_files >= 2' >/dev/null && ok "state: they count as session files in an unknown format" || bad "state: they count as session files in an unknown format" "odd session files not counted"
 timeout 10 "$REPO/bin/asctl" live >/dev/null && ok "asctl live too" || bad "asctl live too" "asctl live hangs or crashes on them"
 rm -f "$HOME/.claude/projects/-y/"* "$HOME/.claude/sessions/4000001.json" "$HOME/.claude/sessions/4000002.json"
+}
 
+case_token() {
 echo "== the token, a running action at SIGTERM, a socket path too long"
+dash_up; trio_fav; trio_off
 TOK1=$(token)
 [ "$(stat -c %a "$T/run/asctl/token")" = 600 ] && ok "the token file is 0600" || bad "the token file is 0600" "token file mode $(stat -c %a "$T/run/asctl/token")"
 stop_dash; start_dash && ok "dash up again, the same token to keep" || bad "dash up again, the same token to keep" "no dash: $(cat "$T/dash.err")"
@@ -515,6 +615,7 @@ stop_dash; start_dash && ok "dash up again, the same token to keep" || bad "dash
 inf=$!
 # SIGTERM once the action runs (its tmux session is there; it then waits for claude): a request
 # not yet read when the signal comes is refused, rightly, and says nothing about this
+# shellcheck disable=SC2329  # called by poll
 trio_up() { tm has-session -t "=trio-$id3" 2>/dev/null; }
 poll 5 trio_up && ok "the action runs (its tmux session is up) before the SIGTERM" || bad "the action runs (its tmux session is up) before the SIGTERM" "no trio-$id3: $(cat "$T/inflight" 2>&1)"
 kill -TERM "$DPID"; wait "$inf"; wait "$DPID" 2>/dev/null; DPID=
@@ -529,9 +630,11 @@ refuses && seen 'is in use' "$T/err" && ok "a socket another process listens on 
 [ -S "$SOCK" ] && ok "that socket is still there" || bad "that socket is still there" "that socket was removed"
 kill "$holder"; wait "$holder" 2>/dev/null
 start_dash && [ "$(code http://x/app.css)" = 200 ] && ok "a socket nothing listens on (stale) is replaced" || bad "a socket nothing listens on (stale) is replaced" "a stale socket blocked the start"
+}
 
+case_rc() {
 echo "== rc, resurrect and the memory gate from the page"
-REG="$HOME/.local/state/agent-session-control/registry.json"
+dash_up; trio_fav
 R3='"id":"'"$id3"'","tmux":"trio-'"$id3"'"'
 [ "$(post '{"action":"rc","on":true,"title":"Trio work",'"$R3"'}' | tail -1)" = 200 ] && [ "$(jq -r ".entries[\"$id3\"].rc_title" "$REG")" = "Trio work" ] && ok "rc on with a title" || bad "rc on with a title" "rc on from the page failed"
 [ "$(post '{"action":"rc","on":"yes",'"$R3"'}' | tail -1)" = 400 ] && ok "rc on must be a boolean" || bad "rc on must be a boolean" "rc took a non-boolean"
@@ -548,8 +651,11 @@ state | jq -e '.memory.warn' >/dev/null && ok "state: the memory warning is on b
 [ "$(post '{"action":"on","force_memory":true,'"$R3"'}' | tail -1)" = 200 ] && ok "on with force_memory (after the page's confirm)" || bad "on with force_memory (after the page's confirm)" "forced on failed"
 post '{"action":"off","force":true,'"$R3"'}' >/dev/null
 mem 32000000 16000000
+}
 
+case_notices() {
 echo "== the page's notices (boot, the watcher, setup), settings, a conversation's length"
+dash_up; trio_fav; trio_off
 SD="$HOME/.local/state/agent-session-control"
 BID=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import memory; print(memory.boot_id())' "$REPO")
 bootjs() { printf '{"boot": "%s", "at": 1, "todo": ["%s"], "why": "memory: watched for under 5 min", "done": %s}\n' "$1" "$id3" "$2" > "$SD/boot.json"; }
@@ -611,8 +717,11 @@ oddlen '"size": 2048, "lines": "12", "seen": 2048' && ok "odd lengths: lines as 
 oddlen '"size": 2048, "lines": -12, "seen": 2048' && ok "odd lengths: lines below 0, none shown" || bad "odd lengths: lines below 0, none shown"
 oddlen '"size": "2048", "lines": 12, "seen": "2048"' && ok "odd lengths: size and seen as strings, none shown" || bad "odd lengths: size and seen as strings, none shown"
 rm -f "$SD/lengths.json"
+}
 
+case_prefix() {
 echo "== prefix and idle exit"
+fresh; dash_conf; tmux_up; icon_cached
 stop_dash
 printf '{"login": "%s", "host": "%s", "prefix": "/u"}\n' "$LOGIN" "$HOST" > "$CONF"
 PREFIX=/u
@@ -636,8 +745,11 @@ sleep 3.5
 kill -0 "$DPID" 2>/dev/null && bad "dash exits when idle" "dash still runs after 2 s idle" || ok "dash exits when idle"
 [ -e "$SOCK" ] && bad "it removes its socket on exit" "the socket file was left behind" || ok "it removes its socket on exit"
 DPID=
+}
 
+case_systemd() {
 echo "== systemd socket activation"
+fresh; dash_conf /u; tmux_up
 if command -v systemd-socket-activate >/dev/null; then
 	mkdir -p "$T/sa"; chmod 700 "$T/sa"
 	systemd-socket-activate -E HOME -E PATH -E ASC_TMUX_SOCKET -l "$T/sa/s.sock" "$REPO/bin/asctl" dash --idle 0 2>"$T/err" & DPID=$!
@@ -655,6 +767,9 @@ else
 	skip "a passed socket open to other users is refused" "systemd-socket-activate not installed"
 	skip "serves on the socket systemd passes" "systemd-socket-activate not installed"
 fi
+}
+
+run_cases dash page config socket pwa state actions_token actions_fav past client operator stale tmux_hang transcripts token rc notices prefix systemd
 
 # DASH_MUTANTS=1: break the server one way at a time, in a copy; each must make this test fail.
 if [ "${DASH_MUTANTS:-}" = 1 ]; then
