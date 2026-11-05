@@ -23,6 +23,14 @@ status is lost (so is a while or until loop with a sleep: its condition is the w
 that is a wait by its poll loop must end with `return 1`; poll and poll_gone take a whole number
 of seconds.
 
+The dashboard's token never goes on a command line (any user on the machine can read a
+process's arguments with ps): a variable TOK… ($TOK, ${TOK}, $TOK1) or an X-Asctl-Token header
+with a $ in it is refused in every word of every command, assignments too (a copy of the token
+in another variable would reach a command line unseen), but the builtins printf (not -v), echo,
+[ and test; a function's words count too (dc and post hand theirs to curl), and so does the text
+of a $( ) or backquotes in a word (its output becomes the word). Only <( ) and >( ) are left to
+their own commands. Send it as `-H @<(printf 'X-Asctl-Token: %s\n' "$TOK")`.
+
 The suites are read with tests/bashtree.py: a script it cannot read is a fault.
   python3 -I tests/checklint.py <file>...     prints each fault; exit 1 if any
   python3 -I tests/checklint.py --self-test   each form it must refuse, refused
@@ -46,6 +54,8 @@ WAITS = ('poll', 'poll_gone')  # the other waits are found from these and poll l
 DECLARE = ('local', 'declare', 'typeset', 'export', 'readonly')
 APART = ('subshell', 'subst', 'procsub')  # where an exit ends only that process
 PRINT = re.compile(r'  (ok    |FAIL  |skip  )')
+SECRET = re.compile(r'\$\{?TOK[A-Za-z0-9_]*|(?i:X-Asctl-Token):[^"]*\$')
+SECRET_OK = ('printf', 'echo', '[', 'test')  # builtins: their words are in no process's arguments
 HELPER = re.compile(r'^(ok|bad|skip|stop)\(\)')
 HEREDOC = re.compile(r"<<(?!<)-?[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 
@@ -216,7 +226,63 @@ def check_suite(path, text, page=()):
                 faults.append(f'{path}:{n}: name used before, at line {sites[name]}: {name}')
             else:
                 sites[name] = n
-    return faults + check_waits(path, tree)
+    return faults + check_waits(path, tree) + check_secrets(path, tree)
+
+
+def outer(word):
+    """word as it expands, roughly: the text of its <( ) and >( ) left out (their commands are
+    walked on their own; only a file name takes their place) and single-quoted text left out (it
+    expands nothing, nor does $'...', escapes and all); a ' inside double quotes is a plain
+    character. The text of $( ) and backquotes stays: their output becomes the word."""
+    out, i, n, dq = [], 0, len(word), False
+    while i < n:
+        c = word[i]
+        if c == '\\':
+            out.append(word[i:i + 2])
+            i += 2
+        elif c == '"':
+            dq = not dq
+            out.append(c)
+            i += 1
+        elif c == '$' and word[i + 1:i + 2] == "'" and not dq:
+            i += 2
+            while i < n and word[i] != "'":
+                i += 2 if word[i] == '\\' else 1
+            i += 1
+        elif c == "'" and not dq:
+            j = word.find("'", i + 1)
+            i = n if j < 0 else j + 1
+        elif c in '<>' and word[i + 1:i + 2] == '(':
+            depth, i, q = 1, i + 2, None
+            while i < n and depth:
+                if q:
+                    q = None if word[i] == q else q
+                elif word[i] in '"\'':
+                    q = word[i]
+                else:
+                    depth += {'(': 1, ')': -1}.get(word[i], 0)
+                i += 1
+        else:
+            out.append(c)
+            i += 1
+    return ''.join(out)
+
+
+def check_secrets(path, tree):
+    faults, lines = [], set()
+    for cmd in tree.walk():
+        if cmd.t != 'simple' or not cmd.words:
+            continue
+        name, args = command_name(cmd)
+        if name in SECRET_OK and not (name == 'printf' and args[:1] == ['-v']):
+            continue
+        for w, _ in cmd.words:
+            if SECRET.search(outer(w)) and tree.line(cmd.pos) not in lines:
+                lines.add(tree.line(cmd.pos))
+                faults.append(f'{path}:{tree.line(cmd.pos)}: the token on a command line or in a copy ({w}): '
+                              "send it with -H @<(printf 'X-Asctl-Token: %s\\n' \"$TOK\")")
+                break
+    return faults
 
 
 def own(node):
@@ -410,6 +476,27 @@ def check_page(path, text):
 
 # Each must be refused (suite text, then the start of the fault it must give).
 REFUSED = [
+    ('curl -H "X-Asctl-Token: $TOK" x\n', 'the token on a command line'),
+    ('dc -H "X-Asctl-Token: ${TOK}" x\n', 'the token on a command line'),
+    ('post "$TOK1"\n', 'the token on a command line'),
+    ('curl -d "${TOK}" x\n', 'the token on a command line'),
+    ('r=$(curl -H "Authorization: $TOK" x)\n', 'the token on a command line'),
+    ('curl -H "X-Asctl-Token: $t" x\n', 'the token on a command line'),
+    ('command curl --data "a $TOK" x\n', 'the token on a command line'),
+    ('X=1 curl "$TOK"\n', 'the token on a command line'),
+    ('curl -d "it\'s $TOK" x\n', 'the token on a command line'),
+    ('curl -d \'a\'"$TOK" x\n', 'the token on a command line'),
+    ('curl -d "$(printf x)$TOK" x\n', 'the token on a command line'),
+    ('curl -H "$(printf \'X-Asctl-Token: %s\' "$TOK")" x\n', 'the token on a command line'),
+    ('curl -d "$(printf %s "$TOK" | sha256sum)" x\n', 'the token on a command line'),
+    ('curl -d "`printf %s $TOK`" x\n', 'the token on a command line'),
+    ('h="X-Asctl-Token: $TOK"\n', 'the token on a command line'),
+    ('a=(-H "$TOK")\n', 'the token on a command line'),
+    ('X="$TOK" curl x\n', 'the token on a command line'),
+    ('printf -v h %s "$TOK"\n', 'the token on a command line'),
+    ('local t="$TOK"\n', 'the token on a command line'),
+    ('curl -H "x-asctl-token: $t" x\n', 'the token on a command line'),
+    ("curl -d $'a\\'b'\"$TOK\" x\n", 'the token on a command line'),
     ('x && ok "a $v" || bad "a $v"\n', 'a value in the name'),
     ('x && ok "a $(date)" || bad "a"\n', 'a value in the name'),
     ('x && ok "a `date`" || bad "a"\n', 'a value in the name'),
@@ -480,6 +567,15 @@ REFUSED = [
     ('w() { for i in 1 2; do x && return 0; sleep 1; done; }\nw || stop "a"\n', 'must end with return 1'),
 ]
 PASSED = [
+    'TOK=$(token)\n',
+    '[ "$(token)" = "$TOK1" ] && ok "a" || bad "a"\n',
+    'dc -H @<(printf \'X-Asctl-Token: %s\\n\' "$TOK") x\n',
+    'curl -H "X-Asctl-Token: t\u00f6k\u00e9n" x\n',
+    'curl -H "$XFH" x\n',
+    'echo "${#TOK}"\n',
+    'r=$(dc -H @<(printf \'X-Asctl-Token: %s\\n\' "$TOK") -d "(" x)\n',
+    'curl -H @<(printf "%s)" "$TOK") x\n',
+    "curl -d 'a $TOK' x\n",
     'x && ok "a" || bad "a" "got: $v"\n',
     'x && bad "a" "$(date)" || ok "a"\n',
     'x && ok "a" \\\n\t|| bad "a" "d $v"\n',

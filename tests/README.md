@@ -35,6 +35,11 @@ lint refuses one, and a poll loop written out by hand. On exit each suite ends w
 (`tests/reap.sh`: its jobs and their children, then what the test tmux server's panes run)
 before removing its folder.
 
+The dashboard's token never goes on a command line, where any user on the machine can read it
+with `ps`: `dash.sh` sends it as `-H @<(printf 'X-Asctl-Token: %s\n' "$TOK")` (printf is a
+builtin), and the lint refuses `$TOK` (or an `X-Asctl-Token` header with a `$`) in any word of
+any command, assignments and `$( )` text too, but in `printf` (not `-v`), `echo`, `[` and `test`.
+
 Mutant runs (`tests/mutate.sh`) run 8 copies at a time, each stopping at its first FAIL, and
 print the check that caught each mutant. A mutant's old text must be found exactly once in its
 file (a `⏎` in old or new stands for a newline, so it can take in the line after or before it),

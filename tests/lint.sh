@@ -27,7 +27,7 @@ else
 fi
 python3 -I -m py_compile asc/*.py && echo "python: ok (asc/*.py compile)" || rc=1
 python3 -I tests/checklint.py --self-test && python3 -I tests/checklint.py tests/asc.sh tests/dash.sh tests/dash/page.js \
-	&& echo "checks and waits: ok (one fixed name per check, run once; every wait's status used)" || rc=1
+	&& echo "checks and waits: ok (one fixed name per check, run once; every wait's status used; no token on a command line)" || rc=1
 python3 -I tests/mutantlint.py --self-test && python3 -I tests/mutantlint.py tests/asc.sh tests/dash.sh tests/privacy.sh \
 	&& echo "mutants: ok (each old text found once in its file, no line twice, each change parses)" || rc=1
 find asc -name __pycache__ -prune -exec rm -r {} + 2>/dev/null

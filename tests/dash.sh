@@ -96,8 +96,10 @@ except socket.timeout:
 print(" ".join(m.decode() for m in re.findall(rb"HTTP/1\.[01] ([0-9]{3})", data)) + (" open" if data.endswith(b" TIMEOUT") else ""))' "$SOCK"
 }
 token() { dc "http://x$PREFIX/" | sed -n 's/.*name="asctl-token" content="\([^"]*\)".*/\1/p'; }
+# The token goes to curl as a header file from printf (a builtin: in no process's arguments,
+# which any user on the machine can read with ps); tests/checklint.py refuses it on a command line.
 # POST an action; prints the HTTP code, then the body.
-post() { dc -w '\n%{http_code}' -X POST -H "Origin: https://$HOST" -H "X-Asctl-Token: $TOK" \
+post() { dc -w '\n%{http_code}' -X POST -H "Origin: https://$HOST" -H @<(printf 'X-Asctl-Token: %s\n' "$TOK") \
 	-H 'Content-Type: application/json' --data "$1" "http://x$PREFIX/api/action"; }
 state() { dc "http://x$PREFIX/api/state"; }
 # The arguments of the last claude started (a /rename typed after a start comes later in the log).
@@ -299,13 +301,13 @@ jq -e '.server == true' <<<"$s" >/dev/null && ok "state: the tmux server is up" 
 echo "== actions: token, origin, body"
 r=$(dc -w '%{http_code}' -o /dev/null -X POST -H "Origin: https://$HOST" -H 'Content-Type: application/json' --data '{"action":"fav","ref":"'"$pid"'"}' http://x/api/action)
 [ "$r" = 403 ] && ok "a POST without the token: 403" || bad "a POST without the token: 403" "a POST without the token: $r"
-r=$(dc -w '%{http_code}' -o /dev/null -X POST -H "Origin: https://evil.example" -H "X-Asctl-Token: $TOK" -H 'Content-Type: application/json' --data '{"action":"fav","ref":"'"$pid"'"}' http://x/api/action)
+r=$(dc -w '%{http_code}' -o /dev/null -X POST -H "Origin: https://evil.example" -H @<(printf 'X-Asctl-Token: %s\n' "$TOK") -H 'Content-Type: application/json' --data '{"action":"fav","ref":"'"$pid"'"}' http://x/api/action)
 [ "$r" = 403 ] && ok "a POST from another origin: 403" || bad "a POST from another origin: 403" "a POST from another origin: $r"
-r=$(dc -w '%{http_code}' -o /dev/null -X POST -H "X-Asctl-Token: $TOK" -H 'Content-Type: application/json' --data '{"action":"fav","ref":"'"$pid"'"}' http://x/api/action)
+r=$(dc -w '%{http_code}' -o /dev/null -X POST -H @<(printf 'X-Asctl-Token: %s\n' "$TOK") -H 'Content-Type: application/json' --data '{"action":"fav","ref":"'"$pid"'"}' http://x/api/action)
 [ "$r" = 403 ] && ok "a POST with no origin: 403" || bad "a POST with no origin: 403" "a POST with no origin: $r"
-r=$(dc -w '%{http_code}' -o /dev/null -X POST -H "Origin: https://$HOST" -H "X-Asctl-Token: $TOK" --data '{"action":"fav"}' http://x/api/action)
+r=$(dc -w '%{http_code}' -o /dev/null -X POST -H "Origin: https://$HOST" -H @<(printf 'X-Asctl-Token: %s\n' "$TOK") --data '{"action":"fav"}' http://x/api/action)
 [ "$r" = 415 ] && ok "a form POST (not JSON): 415" || bad "a form POST (not JSON): 415" "a form POST: $r"
-r=$(dc -w '%{http_code}' -o /dev/null -X POST -H "Origin: https://$HOST" -H "X-Asctl-Token: $TOK" -H 'Content-Type: application/json' --data "$(head -c 5000 /dev/zero | tr '\0' x)" http://x/api/action)
+r=$(dc -w '%{http_code}' -o /dev/null -X POST -H "Origin: https://$HOST" -H @<(printf 'X-Asctl-Token: %s\n' "$TOK") -H 'Content-Type: application/json' --data "$(head -c 5000 /dev/zero | tr '\0' x)" http://x/api/action)
 [ "$r" = 413 ] && ok "a body over 4 KB: 413" || bad "a body over 4 KB: 413" "a big body: $r"
 [ "$(post '{"action":"fav","ref":"--help"}' | tail -1)" = 400 ] && ok "a ref that is no pid or id: 400" || bad "a ref that is no pid or id: 400" "a bad ref accepted"
 [ "$(post '{"action":"on","id":"12; rm"}' | tail -1)" = 400 ] && ok "an id that is not 4 digits: 400" || bad "an id that is not 4 digits: 400" "a bad id accepted"
