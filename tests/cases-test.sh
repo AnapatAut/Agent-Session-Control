@@ -31,6 +31,9 @@ want "== t: only the cases b (ASC_ONLY)" "  ok    b1" "case done b" "== counts b
 got=$(ASC_ONLY=b,a suite 'run_cases t a b')
 want "== t: only the cases b,a (ASC_ONLY)" "  ok    a1" "  FAIL  a2" "case done a" "== counts a 1 1" "  ok    b1" "case done b" "== counts b 1 0" "exit 0" \
 	&& ok "ASC_ONLY keeps the list's order" || bad "ASC_ONLY keeps the list's order" "$got"
+got=$(suite 'case_c() { c=x p0=9 f0=9 suite=x sel=x; ok c1; }; run_cases t c a b')
+want "  ok    c1" "case done c" "== counts c 1 0" "  ok    a1" "  FAIL  a2" "case done a" "== counts a 1 1" "  ok    b1" "case done b" "== counts b 1 0" "exit 0" \
+	&& ok "a case's variables do not change the runner's" || bad "a case's variables do not change the runner's" "$got"
 got=$(suite 'case_c() { ok c1; exit 1; }; run_cases t c a b')
 want "  ok    c1" "exit 1" && ok "a case that does not return: no case done, nothing after" || bad "a case that does not return: no case done, nothing after" "$got"
 # each refused before any case runs: exit 2, no check printed
