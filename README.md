@@ -133,8 +133,9 @@ and started when Claude Code's session file says. Tests: `tests/asc.sh`.
 
 `asctl rc` on a running favorite types `/remote-control <title>` (or `/remote-control` and
 Disconnect in the dialog it opens) into that claude's own pane, only when claude is idle, the
-pane not in copy mode and the prompt empty, and checks the screen and the session file before
-and after. Otherwise it changes only the setting and says why. See `asc/rclive.py`.
+pane not in copy mode, the prompt empty and nobody typing at its tmux session (no key from an
+attached client in the last 5 s, nor while it types), and checks the screen and the session
+file before and after. Otherwise it changes only the setting and says why. See `asc/rclive.py`.
 
 A rename does not restart: `--resume` reconnects to the conversation's claude.ai session, which
 keeps its title, so only `/rename` changes it. A start with remote control (also a restart,

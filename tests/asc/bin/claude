@@ -23,6 +23,9 @@
 # stays open under the box after a space too. $HOME/fake-slow-dialog: the dialog opens after
 # 1.5 s, and the transcript quotes its lines. $HOME/fake-mangle: an x shows before typed text.
 # $HOME/fake-two-lines: the prompt has a second line (text after an empty first line).
+# $HOME/fake-echo-stall, its text "AT SECONDS" or "AT hold": once AT characters are typed, the
+# last of them and any after are not drawn for that long (the flag is removed as it starts), or
+# while the flag is there (at most 30 s): a busy host. AT 1: nothing drawn yet.
 # $HOME/fake-parked-<session id>: a background job id; the session file names it as parkedJobId
 # (claude handed its conversation to that job and shows it). $HOME/fake-branch-<session id>: a
 # new session id it takes (a branch or a rewind); $HOME/fake-cd-<session id>: a folder it moves
@@ -42,6 +45,10 @@ if [ "${1:-}" = stop ]; then
 	[ -n "$f" ] || { echo "No background session $2" >&2; exit 1; }
 	p=$(basename "$f" .json); kill -TERM "$p" && rm -f "$f"; echo "Stopped $2"; exit 0
 fi
+# Its terminal raw while it runs, as Claude Code's: a key reaches it as sent, never echoed or
+# edited by the terminal (bash's read sets that only while it reads: a BSpace that came between
+# two reads was taken by the terminal's line editing, and lost).
+if [ -t 0 ]; then tty_was=$(stty -g); trap 'stty "$tty_was" 2>/dev/null' EXIT; stty -echo -icanon min 1 time 0; fi
 sid=""; name=""; prev=""; rc=""
 for a in "$@"; do
 	case $prev in --resume|--session-id) sid=$a ;; --name) name=$a ;; --remote-control) rc=session_start ;; esac
@@ -141,6 +148,12 @@ draw() {
 		[ -e "$HOME/fake-plugins" ] && { echo "  [ Model ] [ Ctx 29% ]"; rule; echo "  a plugin's band"; rule; echo "  /srv/x/proj  main"; }
 	fi
 }
+stall() {
+	local at n i
+	read -r at n < "$HOME/fake-echo-stall" && [ "${#buf}" = "$at" ] || return 0
+	if [ "$n" = hold ]; then for ((i = 0; i < 300; i++)); do [ -e "$HOME/fake-echo-stall" ] || break; sleep 0.1; done
+	else rm -f "$HOME/fake-echo-stall"; sleep "$n"; fi
+}
 now_ms() { local t=${EPOCHREALTIME/./}; echo $((t / 1000)); }
 menu_at=0
 said=""
@@ -186,6 +199,7 @@ while :; do
 	elif [ $dialog = 0 ]; then
 		[ -z "$buf" ] && [ -e "$HOME/fake-mangle" ] && buf=x
 		buf+=$k
+		[ -e "$HOME/fake-echo-stall" ] && stall
 	fi
 	[ -e "$HOME/fake-menu-slow" ] && [ $dialog = 0 ] && [ -n "$k" ] && menu_at=$(($(now_ms) + 1000))
 	draw

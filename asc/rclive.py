@@ -9,7 +9,11 @@ after the typed text). Claude draws its menu under the input box (2.1.316) or ab
 (2.1.318), and a status line or plugins may draw any number of lines on either side, some
 changing on their own; so the menu is never looked for at a place: it is the lines that
 changed since before typing and are shaped like menu entries, and Enter takes the one marked ❯.
-Otherwise what was typed is taken back, only when the prompt holds nothing but that.
+Otherwise what was typed is taken back, only when the prompt holds nothing but that. Nobody at
+its tmux session may have typed in the last TYPED_S seconds, nor while asctl types (its clients'
+last key; asctl's own keys are not a client's): else nothing is typed, or Enter not pressed and
+nothing taken back. A slow claude (a busy host) draws the typed keys late: its prompt is read
+once it stopped changing.
 On: `/remote-control <title>` (always the title: without one claude.ai shows a random name;
 only letters, digits, space, . _ -, as anything else could open a menu or be read by tmux).
 Off: `/remote-control` opens a dialog (Disconnect this session / Show QR code / Continue,
@@ -23,6 +27,8 @@ import re
 import time
 
 from . import live, tmuxctl
+
+TYPED_S = 5  # a key at its tmux session this recently: someone is at it, asctl does not type there
 
 ANSI = re.compile(r"\x1b\[[0-9;:?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")  # colours; links (OSC 8)
 DIM = re.compile(r"\x1b\[2m.*?(?=\x1b\[(?:0|22)?m|$)")  # a placeholder ("Try ...") is dim
@@ -169,22 +175,53 @@ def guard(s):
 
 
 def wait_for(cond, timeout, step=0.25):
-    end = time.time() + timeout
+    end = time.monotonic() + timeout
     while True:
         v = cond()
-        if v or time.time() >= end:
+        if v or time.monotonic() >= end:
             return v
         time.sleep(step)
 
 
-def take_back(pane, cmd):
-    """Remove what asctl typed, only when the prompt holds nothing but (a start of) it."""
+def settled(pane, quiet=1.5, timeout=5, step=0.15):
+    """What is typed in the prompt once it has not changed for quiet seconds, or as it is at
+    timeout: a slow claude (a busy host) draws keys one by one well after tmux took them, so a
+    read in the middle sees a part of them, none yet, or a half-drawn screen (None)."""
+    t, since, end = prompt_text(screen(pane)), time.monotonic(), time.monotonic() + timeout
+    while time.monotonic() - since < quiet and time.monotonic() < end:
+        time.sleep(step)
+        nxt = prompt_text(screen(pane))
+        if nxt != t:
+            t, since = nxt, time.monotonic()
+    return t
+
+
+def typed_in(s, since):
+    """Why asctl must not type or press a key in the pane of claude s: a client attached to its
+    tmux session had a key at or after second since (epoch), or tmux did not list them; else None."""
+    acts = tmuxctl.client_activity(s["pane"]["session"])
+    if acts is None:
+        return "tmux did not list the clients of its tmux session"
+    if any(a >= since for a in acts):
+        return "someone typed in its tmux session just now"
+    return None
+
+
+def take_back(pane, cmd, meanwhile):
+    """Remove what asctl typed, only when the prompt holds nothing but (a start of) it, read once
+    it stopped changing, and meanwhile() (why not: someone else typed) says None. Keys reach
+    claude in order, so every key of cmd comes before the BSpaces: len(cmd) of them leave the
+    prompt empty however much of cmd a slow claude had drawn, none of it too."""
     if tmuxctl.pane_in_mode(pane):
         tmuxctl.send_pane(pane, "-X", "cancel")
     t = prompt_text(steady(pane))
-    if t and cmd.startswith(t):
-        tmuxctl.send_pane(pane, *["BSpace"] * len(t))
-        t = wait_for(lambda: prompt_text(screen(pane)) == "", 2) and ""
+    if t != cmd:
+        t = settled(pane)
+    if t is not None and cmd.startswith(t):
+        if meanwhile():
+            return "nothing was sent, but what asctl typed is left in its prompt (someone typed there too); check it"
+        tmuxctl.send_pane(pane, *["BSpace"] * len(cmd))
+        t = "" if wait_for(lambda: prompt_text(screen(pane)) == "", 2) else settled(pane)
     if t == "":
         return "nothing was sent"
     return "nothing was sent, but its prompt now holds " + (repr(t) if t else "something asctl cannot read") + "; check it"
@@ -198,9 +235,14 @@ def enter(s, cmd, check):
     if why:
         return why
     pid, pane = s["pid"], s["pane"]["pane_id"]
+    since = int(time.time()) - TYPED_S
+    why = typed_in(s, since)
+    if why:
+        return why
     before = steady(pane)
     tmuxctl.type_pane(pane, cmd)
-    wait_for(lambda: prompt_text(screen(pane)) == cmd, 2)
+    if not wait_for(lambda: prompt_text(screen(pane)) == cmd, 2):
+        settled(pane)  # a slow claude still drawing it: until its prompt stops changing
     scr = steady(pane)
     if prompt_text(scr) != cmd:
         why = "its prompt did not show the command as typed"
@@ -209,9 +251,9 @@ def enter(s, cmd, check):
     elif status(pid) != "idle":
         why = "claude did not stay idle"
     else:
-        why = check(scr, before)
+        why = check(scr, before) or typed_in(s, since)
     if why:
-        return why + "; " + take_back(pane, cmd)
+        return why + "; " + take_back(pane, cmd, lambda: typed_in(s, since))
     tmuxctl.send_pane(pane, "Enter")
     return None
 

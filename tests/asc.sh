@@ -655,6 +655,77 @@ assert past.lengths(d)[a]["lines"] == 1
 PY
 }
 
+# shellcheck disable=SC2329  # helpers run only through poll
+case_rc_slow() {
+# Setup: a favorite of a past conversation, on, its claude idle with an empty prompt, rc off; the
+# claude log from here on.
+server_up
+: > "$HOME/claude-args.log"
+SL=22222222-3333-4444-8555-000000000031
+mkdir -p "$HOME/.claude/projects/-x"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SL" > "$HOME/.claude/projects/-x/$SL.jsonl"
+asctl fav "$SL" --name slow >/dev/null || stop "a favorite for a slow claude"
+ids=$(jq -r --arg s "$SL" '.entries[] | select(.session_id == $s) | .id4' "$REG")
+asctl on "$ids" >/dev/null && cs=$(claude_in "slow-$ids") || stop "a claude for a slow prompt"
+spane=$(tm list-panes -t "=slow-$ids:" -F '#{pane_id}')
+slow_bridge() { jq -r 'select(.name == "slow-'"$ids"'") | .bridgeSessionId // ""' "$HOME"/.claude/sessions/*.json; }
+slow_prompt() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import rclive; print(rclive.prompt_text(rclive.screen(sys.argv[2])))' "$REPO" "$spane"; }
+slow_empty() { [ -z "$(slow_prompt)" ]; }
+slow_clear() { tm send-keys -t "$spane" -N 40 BSpace; poll 10 slow_empty || stop "the slow claude's prompt emptied"; }
+lines() { grep -c 'line: ' "$HOME/claude-args.log"; }
+# take_back of the command, called at once; the stall flag removed 4.5 s after it starts (when
+# take_back has waited for the prompt to stop changing, sent its BSpaces and waited 2 s for them)
+take_back_held() {
+	python3 -I -c 'import sys, os, threading; sys.path.insert(0, sys.argv[1]); from asc import rclive
+threading.Timer(4.5, os.remove, [sys.argv[4]]).start()
+print(rclive.take_back(sys.argv[2], sys.argv[3], lambda: None))' "$REPO" "$spane" "/remote-control Slow chat" "$HOME/fake-echo-stall"
+}
+poll 5 slow_empty || stop "an empty prompt in the slow claude"
+echo "== rc now, a slow claude: what is typed drawn late (a busy host), or someone at its session"
+# drawing stops after 4 characters for longer than asctl waits for the command to show (2 s)
+echo "5 2.7" > "$HOME/fake-echo-stall"
+out=$(asctl rc "$ids" on --title "Slow chat"); seen 'live now' <<<"$out" && [ -n "$(slow_bridge)" ] && seen -x "pid=[0-9]* line: /remote-control Slow chat" "$HOME/claude-args.log" && slow_empty \
+	&& ok "rc on, a slow claude: waited until its prompt stopped changing, then live" || bad "rc on, a slow claude: waited until its prompt stopped changing, then live" "slow on: $out / $(tm capture-pane -p -t "$spane" | tail -4 | tr "\n" "|")"
+rm -f "$HOME/fake-echo-stall"; asctl rc "$ids" off --next-start >/dev/null; slow_clear
+# taken back while 4 characters are drawn, the rest held: the whole command is removed
+n0=$(lines); echo "5 hold" > "$HOME/fake-echo-stall"; tm send-keys -t "$spane" -l "/remote-control Slow chat"
+out=$(take_back_held); sleep 0.5
+[ "$out" = "nothing was sent" ] && slow_empty && [ "$(lines)" = "$n0" ] \
+	&& ok "take back, a slow claude: the whole command removed once its prompt stopped changing" || bad "take back, a slow claude: the whole command removed once its prompt stopped changing" "slow take back: $out / $(slow_prompt)"
+rm -f "$HOME/fake-echo-stall"; slow_clear
+# taken back while nothing of it is drawn yet: removed too, once it shows
+echo "1 hold" > "$HOME/fake-echo-stall"; tm send-keys -t "$spane" -l "/remote-control Slow chat"
+out=$(take_back_held); sleep 2  # it shows once the flag is gone, then its BSpaces
+[ "$out" = "nothing was sent" ] && slow_empty && [ "$(lines)" = "$n0" ] \
+	&& ok "take back, nothing drawn yet: removed as it shows" || bad "take back, nothing drawn yet: removed as it shows" "none drawn: $out / $(slow_prompt)"
+rm -f "$HOME/fake-echo-stall"; slow_clear
+# someone at its tmux session (a client attached, a key from it just now): nothing typed
+asctl rc "$ids" off | seen 'off now\|not live already' || stop "rc off in the slow claude"
+n0=$(lines)  # that off typed one
+mkfifo "$T/slow-keys"
+TERM=xterm script -qfc "tmux -L $ASC_TMUX_SOCKET -f /dev/null attach -t =slow-$ids" /dev/null < "$T/slow-keys" >/dev/null 2>&1 & ks=$!
+exec {kfd}>"$T/slow-keys"  # the client's keyboard, held by the suite itself (no process to leave behind)
+attached() { [ "$(tm list-clients -t "=slow-$ids" -F x | wc -l)" = 1 ]; }
+poll 5 attached || stop "a client attached to the slow claude's session"
+printf 'x\177' >&"$kfd"; poll 5 slow_empty || stop "the client's keys reached the slow claude"
+out=$(asctl rc "$ids" on --title "Slow chat"); seen 'not changed now: someone typed in its tmux session just now' <<<"$out" && [ "$(lines)" = "$n0" ] && slow_empty \
+	&& ok "rc on: not when someone at its tmux session typed just now" || bad "rc on: not when someone at its tmux session typed just now" "client typed: $out / $(slow_prompt)"
+exec {kfd}>&-; kill "$ks" 2>/dev/null; wait "$ks" 2>/dev/null; poll_gone 5 attached || stop "the client gone"; rm -f "$T/slow-keys"
+# someone typed while asctl typed (tmux reports a client key after the first look): no Enter,
+# and what is in its prompt left alone (their keys may be among it)
+out=$(python3 -I -c 'import sys, time; sys.path.insert(0, sys.argv[1]); from asc import rclive, tmuxctl
+n = []
+tmuxctl.client_activity = lambda session: [int(time.time())] if n.append(1) or len(n) > 1 else []
+s = {"pid": int(sys.argv[3]), "pane": {"pane_id": sys.argv[2], "session": sys.argv[4]}}
+print(rclive.enter(s, "/remote-control Slow chat", rclive.no_menu))' "$REPO" "$spane" "$cs" "slow-$ids")
+sleep 0.5
+[ "$out" = "someone typed in its tmux session just now; nothing was sent, but what asctl typed is left in its prompt (someone typed there too); check it" ] \
+	&& [ "$(slow_prompt)" = "/remote-control Slow chat" ] && [ "$(lines)" = "$n0" ] \
+	&& ok "someone typed while asctl typed: no Enter, its prompt left as it is" || bad "someone typed while asctl typed: no Enter, its prompt left as it is" "typed meanwhile: $out / $(slow_prompt)"
+slow_clear
+asctl off "$ids" --force >/dev/null; asctl forget "$ids" >/dev/null
+}
+
 case_new_name() {
 # Setup, as "exact names, trust prompt, rename, mode" left it: a favorite of a past conversation
 # (SID2, id2), off, named chat, in a trusted folder. The claude log from here on: main's rc start
@@ -1292,7 +1363,7 @@ ud() { HOME="$H2" XDG_CONFIG_HOME="$1" python3 -I -c 'import sys; sys.path.inser
 rm "$F2/environment"
 }
 
-run_cases asc no_tmux_server main new_name outside watcher_memory watcher_ended boot asctl_setup
+run_cases asc no_tmux_server main rc_slow new_name outside watcher_memory watcher_ended boot asctl_setup
 # ASC_MUTANTS=1: break asctl one way at a time, in a copy; each must make this test fail.
 if [ "${ASC_MUTANTS:-}" = 1 ]; then
 	echo "== mutants"
@@ -1350,7 +1421,7 @@ asc/rclive.py %%%     if not wait_for(lambda: seen() > n and (session(s["pid"]) 
 asc/rclive.py %%%             n += f.read(tail).count(text) %%%             n = 1
 asc/cli.py %%%             why = rclive.rename(s, new) %%%             why = None
 asc/cli.py %%%     if "--remote-control" in argv and %%%     if False and
-asc/rclive.py %%%     if t and cmd.startswith(t): %%%     if t:
+asc/rclive.py %%%     if t is not None and cmd.startswith(t): %%%     if t is not None:
 asc/rclive.py %%%             if not dialog_open(pid, scr) or selected(scr, DISCONNECT): %%%             if not dialog_open(pid, scr):
 asc/rclive.py %%%     l = next((l for l in reversed(bottom(scr)) if label in l), "") %%%     l = next((l for l in bottom(scr) if "❯" in l and label in l), "")
 asc/rclive.py %%%     return status(pid) == "waiting" and prompt_text(scr) is None and %%%     return
@@ -1476,6 +1547,14 @@ asc/cli.py %%%         raise ActionFailed(f"claude stop {now['job']}: {(r.stderr
 asc/cli.py %%%             x["rename_title"] = True if title else None %%%             x["rename_title"] = None
 asc/watch.py %%%     if pend != e["tmux"] or (s["name"] == pend and not e.get("rename_title")): %%%     if pend != e["tmux"] or s["name"] == pend:
 asc/rclive.py %%%     if wait_for(lambda: offers_cmd(screen(pane), before), timeout): %%%     if offers_cmd(steady(pane), before):
+asc/rclive.py %%%         settled(pane)  # a slow claude still drawing it: until its prompt stops changing %%%         pass
+asc/rclive.py %%% *["BSpace"] * len(cmd)) %%% *["BSpace"] * len(t))
+asc/rclive.py %%% else settled(pane) %%% else prompt_text(screen(pane))
+asc/rclive.py %%% if t is not None and cmd.startswith(t): %%% if t and cmd.startswith(t):
+asc/rclive.py %%%     why = typed_in(s, since)⏎    if why:⏎        return why⏎ %%%     why = None⏎
+asc/rclive.py %%%     if any(a >= since for a in acts): %%%     if False:
+asc/rclive.py %%% why = check(scr, before) or typed_in(s, since) %%% why = check(scr, before)
+asc/rclive.py %%%         if meanwhile(): %%%         if False:
 asc/events.py %%% [i for r, i in mine if r < per] %%% [i for r, i in mine]
 asc/events.py %%%         elif t >= cut: %%%         elif True:
 asc/events.py %%%         if fav and kind == "forget": %%%         if False:
