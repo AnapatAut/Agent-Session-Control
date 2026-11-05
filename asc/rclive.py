@@ -13,7 +13,8 @@ Otherwise what was typed is taken back, only when the prompt holds nothing but t
 its tmux session may have typed in the last TYPED_S seconds, nor while asctl types (its clients'
 last key; asctl's own keys are not a client's): else nothing is typed, or Enter not pressed and
 nothing taken back. A slow claude (a busy host) draws the typed keys late: its prompt is read
-once it stopped changing.
+once it stopped changing, and while it shows only a start of what asctl typed (the rest on its
+way), up to a limit.
 On: `/remote-control <title>` (always the title: without one claude.ai shows a random name;
 only letters, digits, space, . _ -, as anything else could open a menu or be read by tmux).
 Off: `/remote-control` opens a dialog (Disconnect this session / Show QR code / Continue,
@@ -183,12 +184,15 @@ def wait_for(cond, timeout, step=0.25):
         time.sleep(step)
 
 
-def settled(pane, quiet=1.5, timeout=5, step=0.15):
+def settled(pane, quiet=1.5, timeout=5, step=0.15, typed=None):
     """What is typed in the prompt once it has not changed for quiet seconds, or as it is at
     timeout: a slow claude (a busy host) draws keys one by one well after tmux took them, so a
-    read in the middle sees a part of them, none yet, or a half-drawn screen (None)."""
+    read in the middle sees a part of them, none yet, or a half-drawn screen (None). typed: what
+    asctl just typed there; a prompt that shows a start of it, not all, is not taken as stopped
+    (the rest is on its way, however long claude pauses), only timeout ends that wait."""
+    part = lambda t: typed is not None and t is not None and t != typed and typed.startswith(t)
     t, since, end = prompt_text(screen(pane)), time.monotonic(), time.monotonic() + timeout
-    while time.monotonic() - since < quiet and time.monotonic() < end:
+    while (time.monotonic() - since < quiet or part(t)) and time.monotonic() < end:
         time.sleep(step)
         nxt = prompt_text(screen(pane))
         if nxt != t:
@@ -242,7 +246,7 @@ def enter(s, cmd, check):
     before = steady(pane)
     tmuxctl.type_pane(pane, cmd)
     if not wait_for(lambda: prompt_text(screen(pane)) == cmd, 2):
-        settled(pane)  # a slow claude still drawing it: until its prompt stops changing
+        settled(pane, typed=cmd)  # a slow claude still drawing it: until all of it shows or stops
     scr = steady(pane)
     if prompt_text(scr) != cmd:
         why = "its prompt did not show the command as typed"

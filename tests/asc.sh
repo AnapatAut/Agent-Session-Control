@@ -682,8 +682,10 @@ print(rclive.take_back(sys.argv[2], sys.argv[3], lambda: None))' "$REPO" "$spane
 }
 poll 5 slow_empty || stop "an empty prompt in the slow claude"
 echo "== rc now, a slow claude: what is typed drawn late (a busy host), or someone at its session"
-# drawing stops after 4 characters for longer than asctl waits for the command to show (2 s)
-echo "5 2.7" > "$HOME/fake-echo-stall"
+# drawing stops after 4 characters for 4.5 s: longer than asctl waits for the command to show
+# (2 s) and then for its prompt to stop changing (1.5 s); a start of it shown, the rest is on its
+# way, and asctl waits on (up to 5 s more)
+echo "5 4.5" > "$HOME/fake-echo-stall"
 out=$(asctl rc "$ids" on --title "Slow chat"); seen 'live now' <<<"$out" && [ -n "$(slow_bridge)" ] && seen -x "pid=[0-9]* line: /remote-control Slow chat" "$HOME/claude-args.log" && slow_empty \
 	&& ok "rc on, a slow claude: waited until its prompt stopped changing, then live" || bad "rc on, a slow claude: waited until its prompt stopped changing, then live" "slow on: $out / $(tm capture-pane -p -t "$spane" | tail -4 | tr "\n" "|")"
 rm -f "$HOME/fake-echo-stall"; asctl rc "$ids" off --next-start >/dev/null; slow_clear
