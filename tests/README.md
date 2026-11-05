@@ -1,20 +1,22 @@
 # Tests
 
-Five scripts. None touches your own tmux, tmux config or systemd user units.
+Six scripts. None touches your own tmux, tmux config or systemd user units.
 
 | Script | Time | Needs | Checks |
 |---|---|---|---|
-| `tests/lint.sh` | seconds | bash; `shellcheck` and `node` if installed | bash syntax and shellcheck for every script, Python compiles, app.js parses, the suites' checks and waits (`tests/checklint.py`, with `tests/bashtree.py`); the privacy check of every tracked file |
-| `tests/asc.sh` | about 4 min (`ASC_MUTANTS=1`: about 85 min at 6 at a time) | bash, tmux, jq, python3 | `asctl`: live, fav, on, off, rename, restart, mode, rc, the event log, the watcher, boot, the tmux server unit and `asctl setup`, with a fake claude on a tmux server of its own and a fake systemctl (`tests/asc/bin`) |
-| `tests/dash.sh` | about 1 min (`DASH_MUTANTS=1`: about 10 min) | bash, tmux, jq, curl, python3; node for the page's logic (skipped without) | the dashboard server: socket and folder modes, the login, Host, Origin and token checks, one request per connection, the API and its actions, past conversations, idle and SIGTERM exit, systemd socket activation; the notices (boot, setup, the watcher), the auto-restart setting, conversation lengths; the page's own logic (`tests/dash/page.js`: row reasons, history wording and folding) |
+| `tests/lint.sh` | about 40 s | bash; `shellcheck` and `node` if installed | bash syntax and shellcheck for every script, Python compiles, app.js parses, the suites' checks and waits (`tests/checklint.py`, with `tests/bashtree.py`), the mutant lists, the case runner, the mutant runner on toy repos (`tests/mutate-test.sh`); the privacy check of every tracked file |
+| `tests/asc.sh` | about 5 min | bash, tmux, jq, python3 | `asctl`: live, fav, on, off, rename, restart, mode, rc, the event log, the watcher, boot, the tmux server unit and `asctl setup`, with a fake claude on a tmux server of its own and a fake systemctl (`tests/asc/bin`) |
+| `tests/dash.sh` | about 1 min | bash, tmux, jq, curl, python3; node for the page's logic (skipped without) | the dashboard server: socket and folder modes, the login, Host, Origin and token checks, one request per connection, the API and its actions, past conversations, idle and SIGTERM exit, systemd socket activation; the notices (boot, setup, the watcher), the auto-restart setting, conversation lengths; the page's own logic (`tests/dash/page.js`: row reasons, history wording and folding) |
 | `tests/sandbox.sh` | about 8 min | Docker, network for the build only | asctl under real systemd, in a container: the two suites above on a clean Ubuntu, the dashboard as user units, a real out-of-memory kill, the watcher, the units from a checkout, the machine install (`install.sh`) and `asctl setup` by a second user, a reboot, then `setup --remove` and `--uninstall` |
 | `tests/privacy.sh` | seconds (`PRIVACY_MUTANTS=1`: about two minutes) | bash, git | the privacy check and its hooks catch each kind of leak and let the allowed cases through |
+| `tests/mutate.sh` | about 1 h 50 min (`MUTANT_JOBS=3`; its baseline about 2 min) | as `asc.sh` and `dash.sh` | each mutant of `tests/mutants-asc.txt` and `tests/mutants-dash.txt`: one safeguard of asctl broken in a copy must make its named check fail |
 
 ```bash
 tests/lint.sh
 tests/asc.sh                 # prints ok/FAIL per check and a summary; exit 0 = all passed
-ASC_MUTANTS=1 tests/asc.sh   # also each mutant: one safeguard broken in a copy must make it fail
+ASC_ONLY=main tests/asc.sh   # only that case (tests/cases.sh)
 tests/dash.sh
+tests/mutate.sh              # every mutant; exit 0 only if each is caught by its own check
 tests/sandbox.sh             # KEEP=1: leave the container up; --down removes what a run left
 ```
 
@@ -30,7 +32,7 @@ A suite is split into cases, functions `case_NAME` that `tests/cases.sh`'s `run_
 once each, in order; each must pass on its own, after only the suite's setup. `ASC_ONLY=a,b`
 runs only those cases (an unknown name exits 2; a mutant run refuses it). After each case the
 runner prints `case done NAME` and `== counts NAME <pass> <fail>`: a case that never got there
-(a `stop`, a fail-fast exit) is unfinished. The lint allows a check in a case function only, and
+(a `stop`, an exit at `TEST_STOP_AT`) is unfinished. The lint allows a check in a case function only, and
 refuses a call of one other than through `run_cases`.
 
 A wait (`poll`, `poll_gone`, `claude_in`, `start_dash`, and any helper that returns a wait's
@@ -47,13 +49,25 @@ with `ps`: `dash.sh` sends it as `-H @<(printf 'X-Asctl-Token: %s\n' "$TOK")` (p
 builtin), and the lint refuses `$TOK` (or an `X-Asctl-Token` header with a `$`) in any word of
 any command, assignments and `$( )` text too, but in `printf` (not `-v`), `echo`, `[` and `test`.
 
-Mutant runs (`tests/mutate.sh`) run 8 copies at a time, each stopping at its first FAIL, and
-print the check that caught each mutant. A mutant's old text must be found exactly once in its
-file (a `⏎` in old or new stands for a newline, so it can take in the line after or before it),
-and the lint (`tests/mutantlint.py`) refuses one that is not, a line given twice, and a change
-that no longer parses: a mutant that breaks the syntax fails every check, a catch that tests
-nothing. Do not edit a test script while it runs: bash reads a script as it goes, and the run
-breaks.
+A mutant is a line `file %%% old %%% new %%% check %%% case` of `tests/mutants-asc.txt` or
+`tests/mutants-dash.txt`: a change to asctl, and the check, in its case, that must fail with it.
+Its old text must be found exactly once in its file (a `⏎` in old or new stands for a newline, so
+it can take in the line after or before it); the lint (`tests/mutantlint.py`) refuses one that is
+not, a line given twice, a change that no longer parses (a mutant that breaks the syntax fails
+every check, a catch that tests nothing), and a check or case that is not the suite's.
+`tests/mutate.sh` copies the tracked files to `/tmp/asc-mut.<run id>` and first runs every case
+alone as the baseline: all `ok`, no `skip`, each case done, exactly the source's checks (else
+exit 2, no verdicts). Then each mutant, `MUTANT_JOBS` (default 3) at a time, in a copy of its
+own: its case alone, stopped at its check (`TEST_STOP_AT`); that check failing twice is CAUGHT.
+Else the whole suite (`(full)`): failing twice, CAUGHT; the check `ok`, every case done and the
+baseline's checks, SURVIVED; anything else (a FAIL elsewhere only, flaky, its case failing it
+once, a case cut short) UNCLEAR. A run over its time limit, or with memory pressure from a second
+before it to a second after (available memory under 15%, tasks stalled on memory 0.1 s or more
+(PSI "full"), a kernel OOM kill, a line in earlyoom's kill file if it can be read, the sampler
+stalled), never gives a verdict: UNCLEAR; and once there
+is pressure no more mutants start (the rest UNCLEAR). It holds a lock (one mutant run at a time), and on any exit ends every process
+it started and removes its folder. Do not edit a test script while it runs: bash reads a script
+as it goes, and the run breaks.
 
 ## The sandbox
 

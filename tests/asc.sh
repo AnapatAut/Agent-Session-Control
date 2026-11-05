@@ -3,12 +3,13 @@
 # tests/asc/bin, a throwaway HOME and a tmux server of their own (tmux -L). Touches neither
 # your tmux nor your ~/.claude. Seconds, no network.
 #   tests/asc.sh                  prints ok/FAIL per check; exit 0 = all passed
-#   ASC_MUTANTS=1 tests/asc.sh    also the mutants of asctl below, each must make it fail (minutes)
+#   ASC_ONLY=<case,...> tests/asc.sh   only those cases (tests/cases.sh)
+# Its mutants (changes to asctl each check must catch) are in tests/mutants-asc.txt, run by
+# tests/mutate.sh. TEST_STOP_AT=<check>: exit right after that check's FAIL (the mutant run).
 set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 T=$(mktemp -d) || exit 2
 export ASC_TMUX_SOCKET="asc-test-$$" ASC_CLAUDE="$REPO/tests/asc/bin/claude"
-export REPO_HOME="${REPO_HOME:-$HOME}"
 export HOME="$T/home" XDG_STATE_HOME="" XDG_CONFIG_HOME="" SHELL=/bin/bash
 unset TMUX
 mkdir -p "$HOME" "$T/fakebash"
@@ -48,7 +49,7 @@ pass=0 fail=0
 # tests/lint.sh). DETAILS, what was seen, go on the lines after the FAIL, each indented.
 # `skip NAME WHY` for a check that cannot run here.
 ok()   { echo "  ok    $1"; pass=$((pass + 1)); }
-bad()  { echo "  FAIL  $1"; [ -z "${2-}" ] || printf '        %s\n' "${2//$'\n'/$'\n'        }"; fail=$((fail + 1)); [ -z "${TEST_FAILFAST:-}" ] || exit 1; }
+bad()  { echo "  FAIL  $1"; [ -z "${2-}" ] || printf '        %s\n' "${2//$'\n'/$'\n'        }"; fail=$((fail + 1)); [ "${TEST_STOP_AT-}" != "$1" ] || exit 1; }
 skip() { echo "  skip  $1"; [ -z "${2-}" ] || printf '        %s\n' "${2//$'\n'/$'\n'        }"; }
 # A setup step that did not come (what the test itself started: a claude in a session it made, a
 # process of its own): one FAIL, "setup: NAME" (NAME fixed, as a check's), and the suite ends there,
@@ -71,7 +72,6 @@ lastargs() { grep ' args=' "$HOME/claude-args.log" | tail -1; }
 # grep that reads all its input: grep -q stops at the first match, and the writer's broken
 # pipe would then fail the pipeline (pipefail), taking the wrong branch of a check.
 seen() { grep "$@" >/dev/null; }
-. "$REPO/tests/mutate.sh"
 . "$REPO/tests/cases.sh"
 # The pid of the live fake claude in a tmux session, waiting up to 10 s.
 claude_in() {
@@ -1312,11 +1312,11 @@ dropin_ok() { cmp -s "$SUD/tmux-spawn-.scope.d/asctl.conf" "$REPO/systemd/tmux-s
 	&& [ -e "$F2/active/asctl-watch.timer" ] && [ -e "$F2/active/asctl-dash.socket" ] && ! [ -e "$F2/active/asctl-tmux.service" ] \
 	&& ok "setup --yes: the drop-in, the units that run tmux disabled (through env, sh -c, a template's instance; others left), asctl's units on, timer and socket started" || bad "setup --yes: the drop-in, the units that run tmux disabled (through env, sh -c, a template's instance; others left), asctl's units on, timer and socket started" "setup --yes: rc $rc $out"
 [ "$(jq -c .disabled "$SJ")" = "$ALL" ] && [ "$(stat -c %a "$SJ")" = 600 ] \
-	&& ok "  what it disabled is recorded (setup.json, 0600)" || bad "  what it disabled is recorded (setup.json, 0600)" "  setup.json: $(cat "$SJ" 2>&1)"
+	&& ok "what it disabled is recorded (setup.json, 0600)" || bad "what it disabled is recorded (setup.json, 0600)" "  setup.json: $(cat "$SJ" 2>&1)"
 seen "note: linger is off" <<<"$out" && seen "note: the dashboard has no config yet: $H2/.config/agent-session-control/dash.json" <<<"$out" \
-	&& ok "  notes: linger off, no dashboard config" || bad "  notes: linger off, no dashboard config" "  notes: $out"
+	&& ok "notes: linger off, no dashboard config" || bad "notes: linger off, no dashboard config" "  notes: $out"
 jq -s -e 'last | .kind == "setup" and .by == "cli" and (.text | test("disabled tmux.service"))' "$H2/.local/state/agent-session-control/events.jsonl" >/dev/null \
-	&& ok "  logged (kind setup)" || bad "  logged (kind setup)" "  setup event: $(tail -1 "$H2/.local/state/agent-session-control/events.jsonl")"
+	&& ok "logged (kind setup)" || bad "logged (kind setup)" "  setup event: $(tail -1 "$H2/.local/state/agent-session-control/events.jsonl")"
 n=$(calls 'enable|disable|start'); : > "$T/linger/$(id -un)"
 out=$(su2 --yes); rc=$?
 [ "$rc" = 0 ] && seen "asctl is set up already: nothing to do" <<<"$out" && [ "$(calls 'enable|disable|start')" = "$n" ] && ! seen "linger" <<<"$out" \
@@ -1329,7 +1329,7 @@ out=$(su2 --remove --yes); rc=$?
 [ "$rc" = 0 ] && ! en asctl-tmux.service && ! en asctl-boot.service && ! en asctl-watch.timer && ! en asctl-dash.socket && ! [ -e "$F2/active/asctl-watch.timer" ] \
 	&& en tmux.service && en envtmux.service && en $IM && [ -e "$SUD/tmux-spawn-.scope.d/asctl.conf" ] && ! [ -e "$SJ" ] && seen "is not the one asctl ships: left as it is" <<<"$out" \
 	&& ok "setup --remove: asctl's units off, tmux.service enabled again, a changed drop-in left" || bad "setup --remove: asctl's units off, tmux.service enabled again, a changed drop-in left" "setup --remove: rc $rc $out"
-! seen "^--user stop.*asctl-tmux.service" "$H2/systemctl.log" && ok "  the tmux server unit never stopped" || bad "  the tmux server unit never stopped" "  asctl-tmux.service was stopped"
+! seen "^--user stop.*asctl-tmux.service" "$H2/systemctl.log" && ok "the tmux server unit never stopped" || bad "the tmux server unit never stopped" "  asctl-tmux.service was stopped"
 out=$(su2 --remove --yes); rc=$?
 [ "$rc" = 0 ] && seen "asctl is not set up: nothing to do" <<<"$out" && ok "setup --remove again: nothing to do" || bad "setup --remove again: nothing to do" "remove again: rc $rc $out"
 rm "$SUD/tmux-spawn-.scope.d/asctl.conf"; : > "$F2/fail-enable-asctl-tmux.service"
@@ -1339,10 +1339,10 @@ out=$(su2 --yes); rc=$?
 	&& ok "setup failing part way: says what it did, logged failed, the disabled unit recorded" || bad "setup failing part way: says what it did, logged failed, the disabled unit recorded" "setup part way: rc $rc $out"
 rm "$F2/fail-enable-asctl-tmux.service"
 out=$(su2 --yes); rc=$?
-[ "$rc" = 0 ] && en asctl-tmux.service && ! seen "disable tmux.service" <<<"$out" && ok "  setup again finishes it" || bad "  setup again finishes it" "  setup again: rc $rc $out"
+[ "$rc" = 0 ] && en asctl-tmux.service && ! seen "disable tmux.service" <<<"$out" && ok "setup again finishes it" || bad "setup again finishes it" "  setup again: rc $rc $out"
 out=$(su2 --remove --yes); rc=$?
 [ "$rc" = 0 ] && en tmux.service && ! [ -e "$SUD/tmux-spawn-.scope.d/asctl.conf" ] && ! [ -e "$SJ" ] \
-	&& ok "  then --remove: tmux.service enabled again, the unchanged drop-in removed" || bad "  then --remove: tmux.service enabled again, the unchanged drop-in removed" "  remove after: rc $rc $out"
+	&& ok "then --remove: tmux.service enabled again, the unchanged drop-in removed" || bad "then --remove: tmux.service enabled again, the unchanged drop-in removed" "  remove after: rc $rc $out"
 : > "$F2/fail-disable-tmux.service"
 out=$(su2 --yes); rc=$?; rm "$F2/fail-disable-tmux.service"
 [ "$rc" = 1 ] && seen "disabled envtmux.service; disabled shtmux.service): systemctl --user disable tmux.service" <<<"$out" && ! en envtmux.service && en tmux.service \
@@ -1350,7 +1350,7 @@ out=$(su2 --yes); rc=$?; rm "$F2/fail-disable-tmux.service"
 	&& ok "setup, a disable failing part way: the ones before it recorded as disabled" || bad "setup, a disable failing part way: the ones before it recorded as disabled" "setup, disable part way: rc $rc $out"
 out=$(su2 --remove --yes); rc=$?
 [ "$rc" = 0 ] && en envtmux.service && en shtmux.service && en tmux.service && ! [ -e "$SJ" ] \
-	&& ok "  --remove after it: those enabled again" || bad "  --remove after it: those enabled again" "  remove after part way: rc $rc $out"
+	&& ok "--remove after it: those enabled again" || bad "--remove after it: those enabled again" "  remove after part way: rc $rc $out"
 : > "$F2/global-tmux.service"
 out=$(su2 --yes); rc=$?
 [ "$rc" = 1 ] && seen "tmux.service is still enabled (enabled for every user?" <<<"$out" && ! en asctl-tmux.service \
@@ -1364,220 +1364,6 @@ rm "$F2/environment"
 }
 
 run_cases asc no_tmux_server main rc_slow new_name outside watcher_memory watcher_ended boot asctl_setup
-# ASC_MUTANTS=1: break asctl one way at a time, in a copy; each must make this test fail.
-if [ "${ASC_MUTANTS:-}" = 1 ]; then
-	echo "== mutants"
-	run_mutants asc.sh ASC_MUTANTS <<'MUTANTS'
-asc/live.py %%% and proc_start is not None and st[2] == str(proc_start) %%% 
-asc/live.py %%% st is not None and is_claude(pid, st[0]) and %%% st is not None and
-asc/live.py %%%                 if s["status"] == "busy": %%%                 if False:
-asc/live.py %%%                     return f"it runs a claude asctl cannot read (pid {pid})" %%%                     continue
-asc/live.py %%%             if name in WRAPPERS: %%%             if True:
-asc/live.py %%%             if name == "claude": %%%             if False:
-asc/live.py %%% base == str(pid) and %%% 
-asc/live.py %%% (raw.get("pidDomain") is None or raw.get("pidDomain") == domain) %%% True
-asc/live.py %%%         if (st and is_claude(pid, st[0])) or %%%         if False and
-asc/cli.py %%%     if away: %%%     if False:
-asc/cli.py %%%     return live_in(e, lv) or next( %%%     return live_in(e, lv) or None and next(
-asc/cli.py %%%     return (any(l.endswith("No, exit") %%%     return True or (any(l.endswith("No, exit")
-asc/tmuxctl.py %%%     return run("has-session", "-t", "=" + name) %%%     return run("has-session", "-t", name)
-asc/tmuxctl.py %%% "-s", name, "-c", cwd.replace("#", "##") %%% "-s", name, "-c", cwd
-asc/live.py %%%         if s["live"]: %%%         if s["ok"]:
-asc/cli.py %%%             if owner: %%%             if False:
-asc/cli.py %%%             if others and not whole: %%%             if False:
-asc/cli.py %%%     if live_for(e): %%%     if False:
-asc/cli.py %%%             if "❯ Yes, I trust this folder" not in screen: %%%             if False:
-asc/cli.py %%% ["--resume", e["session_id"]] if e.get("started") else %%% ["--session-id", e["session_id"]] if e.get("started") else
-asc/registry.py %%% fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB) %%% fcntl.LOCK_EX
-asc/registry.py %%% MODES = {"auto": "auto", "manual": "manual", "skip": "bypassPermissions"} %%% MODES = {"auto": "auto", "manual": "manual", "skip": "auto"}
-asc/registry.py %%%     except ValueError as e: %%%     except ZeroDivisionError as e:
-bin/asctl-wrap %%% > "$f.tmp") && mv -f "$f.tmp" "$f" %%% > /dev/null)
-asc/memory.py %%%     if 100 * avail / total < START_PCT: %%%     if False:
-asc/memory.py %%%     if left < LEAVE_PCT: %%%     if False:
-asc/cli.py %%%     if not force_memory: %%%     if False:
-asc/cli.py %%%             e["rc"] = True %%%             pass
-asc/cli.py %%%  or (resurrect and e.get("resurrect")) %%%  or False
-asc/registry.py %%%     if not t or t.startswith("-"): %%%     if not t:
-asc/rclive.py %%%     if now["status"] != "idle": %%%     if now["status"] == "busy" and False:
-asc/rclive.py %%%         return "its pane is in copy mode" %%%         pass
-asc/rclive.py %%%     if t: %%%     if False:
-asc/rclive.py %%% plain(DIM.sub("", lines[i])) %%% plain(lines[i])
-asc/rclive.py %%% why = enter(s, f"{CMD} {title}" if on else CMD, %%% why = enter(s, CMD,
-asc/rclive.py %%%  and RULE.fullmatch(p[i + 1]): %%% :
-asc/cli.py %%%         s = None if args.next_start else live_in(e) %%%         s = live_in(e)
-asc/cli.py %%%         elif s["rc"] == on: %%%         elif False:
-asc/rclive.py %%%     if prompt_text(scr) != cmd: %%%     if False:
-asc/rclive.py %%% if entries(scr, before) else None %%% if False else None
-asc/rclive.py %%% if entries(scr, before) else None %%% if changed(scr, before) else None
-asc/rclive.py %%%     if wait_for(lambda: offers_cmd(screen(pane), before), timeout): %%%     if True:
-asc/rclive.py %%% ENTRY = re.compile(r"\s+(?:(❯)\s*)? %%% ENTRY = re.compile(r"\s*(?:(❯)\s*)?
-asc/rclive.py %%% return marked[0] if len(marked) == 1 else %%% return marked[0] if marked else
-asc/rclive.py %%% else e[0] if not marked and len(e) == 1 else () %%% else e[0]
-asc/rclive.py %%%             if j != i and (j >= len(b) %%%             if (j >= len(b)
-asc/rclive.py %%%         if p[i].startswith("❯") and RULE.fullmatch(p[i - 1]) %%%         if RULE.fullmatch(p[i - 1])
-asc/rclive.py %%% |\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)") %%% ")
-asc/rclive.py %%%     return bool(t) and t[1] == CMD %%%     return bool(t)
-asc/rclive.py %%%     if not wait_for(lambda: seen() > n and (session(s["pid"]) or {}).get("name") == name, confirm): %%%     if False:
-asc/rclive.py %%%             n += f.read(tail).count(text) %%%             n = 1
-asc/cli.py %%%             why = rclive.rename(s, new) %%%             why = None
-asc/cli.py %%%     if "--remote-control" in argv and %%%     if False and
-asc/rclive.py %%%     if t is not None and cmd.startswith(t): %%%     if t is not None:
-asc/rclive.py %%%             if not dialog_open(pid, scr) or selected(scr, DISCONNECT): %%%             if not dialog_open(pid, scr):
-asc/rclive.py %%%     l = next((l for l in reversed(bottom(scr)) if label in l), "") %%%     l = next((l for l in bottom(scr) if "❯" in l and label in l), "")
-asc/rclive.py %%%     return status(pid) == "waiting" and prompt_text(scr) is None and %%%     return
-asc/cli.py %%%     return FOLLOW.get(m) or own %%%     return m or own
-asc/cli.py %%%         for line in reversed(lines[1:] if st.st_size > tail else lines): %%%         for line in lines:
-asc/live.py %%%         if name in SHELLS and snap in _cmdline(pid): %%%         if False:
-asc/live.py %%%         if isinstance(meta, dict) and meta.get("finished") is True: %%%         if False:
-asc/live.py %%%  and m.get("stop_reason") == "end_turn": %%%  and False:
-asc/live.py %%%             if now - os.lstat(path).st_mtime > AGENT_FRESH: %%%             if False:
-asc/live.py %%%                 t = claude_tasks(s, kids) %%%                 t = ""
-asc/cli.py %%%     if s["status"] != "idle":⏎        raise RegistryError(f"its claude is %%%     if False:⏎        raise RegistryError(f"its claude is
-asc/live.py %%%         j["pane"], j["host"] = h["pane"], h %%%         pass
-asc/live.py %%% s["pane"] = None if s["kind"] == "bg" else next( %%% s["pane"] = next(
-asc/live.py %%%     known.update({s["host"]["pid"]: s for s in lv if s.get("host")}) %%%     pass
-asc/live.py %%%                                 and _cmdline(pid).split(" ", 1)[0].rsplit("/", 1)[-1] == "claude") %%%                                 )
-asc/cli.py %%%         job, s = (s, s["host"]) if s.get("host") else (None, s) %%%         job = None
-asc/cli.py %%%     if s.get("host"): %%%     if False:
-asc/cli.py %%%     if m is None or (at is not None and s.get("started_at") and at < s["started_at"]): %%%     if m is None:
-asc/cli.py %%%         if not s or s["name"] == new: %%%         if True:
-asc/events.py %%%     ok = isinstance(t, (int, float)) and not isinstance(t, bool) and math.isfinite(t) %%%     ok = isinstance(t, (int, float))
-asc/events.py %%%             drop = True  # too old %%%             pass
-asc/events.py %%%         while n_other and total() > MAX_BYTES // 2: %%%         while False:
-asc/events.py %%%     fd = os.open(p, flags | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, 0o600) %%%     fd = os.open(p, flags | os.O_CLOEXEC, 0o600)
-asc/events.py %%%     if not stat.S_ISREG(os.fstat(fd).st_mode): %%%     if False:
-asc/events.py %%%     return ok and 0 < t <= time.time() + 86400 %%%     return ok
-asc/cli.py %%%         events.log("failed", e, f"{what}: {x}") %%%         events.log("refused", e, f"{what}: {x}")
-asc/cli.py %%%             out(ended) %%%             say("off", e, ended)
-asc/cli.py %%%                 pending(id4, new) %%%                 pass
-asc/watch.py %%%             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB) %%%             pass
-asc/watch.py %%%     if pct < memory.WARN_PCT and not st["warned"]: %%%     if pct < memory.WARN_PCT:
-asc/watch.py %%%     elif pct >= memory.WARN_PCT + 1 and st["warned"]: %%%     elif pct >= memory.WARN_PCT and st["warned"]:
-asc/watch.py %%%     for sid in sorted(set(dups) - set(st["dups"])): %%%     for sid in dups:
-asc/watch.py %%%     if sum(1 for x in lv if x["pane"] and x["pane"]["session"] == e["tmux"]) != 1: %%%     if False:
-asc/watch.py %%%         if not held and _set( %%%         if _set(
-asc/watch.py %%%     if s["cwd"] != e.get("cwd") and os.path.isdir(s["cwd"]): %%%     if s["cwd"] != e.get("cwd"):
-asc/watch.py %%%     if ex and s.get("started_at") and s["started_at"] >= ex[1]: %%%     if False:
-asc/watch.py %%%     if rclive.guard(s) is not None:  # busy, waiting, typing: the next run %%%     if False:
-asc/watch.py %%%     if not same: %%%     if True:
-asc/watch.py %%%  if same and prev.get("has") is not None %%%  if same and "has" in prev
-asc/watch.py %%%     reason = re.sub(r"[0-9][0-9.]*", "N", why)  # the same reason with other numbers is not news %%%     reason = why
-asc/watch.py %%%     if not isinstance(settings, dict) or settings.get("auto_restart") is not True: %%%     if False:
-asc/watch.py %%%     if code not in (137, 143): %%%     if False:
-asc/watch.py %%%     if has is not True: %%%     if has is None:
-asc/watch.py %%%     if abs(time.time() - last) < RESTART_EVERY: %%%     if False:
-asc/watch.py %%%     if len(panes) != 1: %%%     if False:
-asc/watch.py %%%     why = cli.pane_free(e, panes[0]["pane_id"], pid) %%%     why = ""
-asc/watch.py %%%     return memory.steady(samples)  # the gate (room for its size) is On's own %%%     return ""
-asc/watch.py %%%     if time.time() - t > RESTART_WITHIN: %%%     if False:
-asc/watch.py %%%     if not boot or boot != memory.boot_id(): %%%     if boot != memory.boot_id():
-asc/cli.py %%%     if p["pane_pid"] != pane_pid: %%%     if False:
-asc/cli.py %%%     if p["in_mode"]: %%%     if False:
-asc/cli.py %%%     if any(time.time() - a < TYPING_S for a in acts): %%%     if False:
-asc/cli.py %%%     if live.children_map().get(pane_pid): %%%     if False:
-asc/watch.py %%%             if st["failed"].get(e["id4"]) != msg: %%%             if True:
-asc/watch.py %%%             with registry.entry_lock(e["id4"]): %%%             if True:
-asc/watch.py %%%         return str(x) %%%         _set(e, {}, {"auto_restarted": int(time.time())}); return str(x)
-asc/cli.py %%%         r = tmuxctl.respawn(pane, e["cwd"], [wrap, exit_file(e["id4"])] + argv) %%%         tmuxctl.kill_session(e["tmux"]); r = tmuxctl.new_session(e["tmux"], e["cwd"], [wrap, exit_file(e["id4"])] + argv)
-asc/memory.py %%%     if any(b["t"] - a["t"] > GAP_S for a, b in zip(chain, chain[1:])): %%%     if False:
-asc/memory.py %%%     if low < pct: %%%     if False:
-asc/memory.py %%%     if (grew("oom_kill") or 0) > 0: %%%     if False:
-asc/memory.py %%%     b = next((s for s in xs if s["t"] > t_end), None) %%%     b = next((s for s in xs if s["t"] >= t_end), None)
-asc/memory.py %%%             if x["boot"] == s["boot"] and s["t"] - KEEP_S <= x["t"] <= s["t"]][-(MAX_SAMPLES - 1):] + [s] %%%             if True][-(MAX_SAMPLES - 1):] + [s]
-asc/memory.py %%%             and all(s.get(k) is None or type(s.get(k)) is int %%%             and all(True
-asc/live.py %%%         return "tmux did not list its panes" %%%         pane_list = []
-asc/events.py %%%     return b if b in BY else "cli" %%%     return b or "cli"
-asc/events.py %%%     return "".join(" " if unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp", "Cs") else c %%%     return "".join(" " if unicodedata.category(c) in ("Cc",) else c
-asc/cli.py %%%         events.log("refused", e, f"{what}: {x}") %%%         pass
-asc/cli.py %%%         elif not args.restart: %%%         elif False:
-asc/cli.py %%%     if pid is not None: %%%     if False:
-asc/cli.py %%%     if pid is None:⏎        raise RegistryError("no tmux server is running %%%     if False:⏎        raise RegistryError("no tmux server is running
-asc/cli.py %%%         server = ensure_server() %%%         server = tmuxctl.server_pid()
-asc/cli.py %%%         argv = claude_argv(e, resurrect) %%%         argv = claude_argv(e)
-asc/cli.py %%%     if running is not None: %%%     if False:
-asc/boot.py %%%     if not e or e.get("resurrect") is not True or e.get("want_on") is not True: %%%     if not e:
-asc/boot.py %%%     if tmuxctl.has_session(e["tmux"]): %%%     if False:
-asc/boot.py %%%         if not locked:  # an action holds it: the next look %%%         if False:
-asc/boot.py %%%         why = memory.steady(samples) or memory.gate(e.get("rss_kb")) or _start(e, started) %%%         why = _start(e, started)
-asc/boot.py %%%             raise RegistryError("another asctl boot is running") %%%             return 0
-asc/boot.py %%%             socket.create_connection((host, int(port)), timeout=NET_TRY_S).close() %%%             raise OSError
-asc/boot.py %%%         cli.ensure_server() %%%         pass
-asc/boot.py %%%         if said.get(e["id4"]) != reason: %%%         if False:
-bin/asctl-wrap %%% for ((i = 0; i < 30; i++)); do %%% for ((i = 0; i < 0; i++)); do
-asc/setup.py %%%     if missing: %%%     if False:
-asc/setup.py %%%     if os.path.lexists(manifest): %%%     if False:
-asc/setup.py %%%             if line.startswith(OLD_MARK): %%%             if False:
-asc/setup.py %%%             if m: %%%             if False:
-asc/setup.py %%% (?:-[A-Za-z]+\s+)*@continuum %%% (?:-g\s+)?@continuum
-asc/setup.py %%%         if r.returncode == 0 and r.stdout.strip() == "on": %%%         if False:
-asc/setup.py %%%     if cont: %%%     if False:
-asc/setup.py %%%     if not sys.stdin.isatty(): %%%     if False:
-asc/setup.py %%%         if old_units:  # recorded before any is disabled %%%         if False:  # recorded before any is disabled
-asc/setup.py %%%  or u.startswith("asctl-"): %%% :
-asc/setup.py %%%  and runs_tmux(_prop(u, "ExecStart")): %%% :
-asc/setup.py %%%  and _enabled(u) and runs_tmux %%%  and runs_tmux
-asc/setup.py %%%         if prog == "env" and %%%         if False and
-asc/setup.py %%%                 if os.path.isabs(q): %%%                 if False:
-asc/setup.py %%%         if prog in ("sh", "bash", "dash", "zsh") and %%%         if False and
-asc/setup.py %%%         if u.endswith("@.service"):  # a template %%%         if False:  # a template
-asc/setup.py %%%         if r.returncode != 0:  # the manager did not answer %%%         if False:
-asc/setup.py %%%     base = manager_env().get("XDG_CONFIG_HOME") or %%%     base = os.environ.get("XDG_CONFIG_HOME") or
-asc/setup.py %%%                 registry.write_private(_record_path(), {"disabled": [x for x in _recorded() if x != u], %%%                 registry.write_private(_record_path(), {"disabled": [x for x in _recorded()],
-asc/setup.py %%%             if _enabled(u): %%%             if False:
-asc/setup.py %%%             os.unlink(dropin) %%%             pass
-asc/setup.py %%%     back = [u for u in _recorded() if %%%     back = [u for u in [] if
-asc/setup.py %%%     return ("same" if _read(p) == _template() else "differs"), p %%%     return "same", p
-asc/setup.py %%%     to_start = [u for u in STARTED if _prop(u, "ActiveState") != "active"] %%%     to_start = []
-asc/setup.py %%%         cli.out("asctl is set up already: nothing to do") %%%         pass
-asc/setup.py %%%     if server and not conf: %%%     if False:
-asc/setup.py %%%     if server and not conf: %%%     if server:
-asc/setup.py %%% for o in server)) %%% for o in ("restore", "boot")))
-asc/live.py %%%     if s["kind"] == "bg" and not s.get("pane"): %%%     if False:
-asc/live.py %%%     if 136 <= major <= 143: %%%     if False:
-asc/live.py %%%     for a in ancestors(s["pid"])[1:]: %%%     for a in []:
-asc/cli.py %%%     if away and live.where(away)["how"] == "background" and away["job"] and not up: %%%     if False:
-asc/cli.py %%%             raise RegistryError(f"busy: {why} (its claude runs as {live.where(away)['text']})") %%%             pass
-asc/cli.py %%%         return f"its claude is {'working' if s['status'] == 'busy' else s['status']}" %%%         return ""
-asc/cli.py %%%     if w["how"] == "background" and now["job"]: %%%     if False:
-asc/cli.py %%%         if not live.alive(now["pid"], now["proc_start"]): %%%         if True:
-asc/cli.py %%%         raise RegistryError(f"its claude runs in {w['text']}, and tmux session {e['tmux']!r} is up " %%%         print(f"its claude runs in {w['text']}, and tmux session {e['tmux']!r} is up "
-asc/cli.py %%%     if away and not away.get("host"): %%%     if False:
-asc/cli.py %%%     if outside: %%%     if False:
-asc/cli.py %%%         raise ActionFailed(f"claude stop {now['job']}: {(r.stderr or r.stdout).strip()[:200] or 'failed'}") %%%         pass
-asc/cli.py %%%             x["rename_title"] = True if title else None %%%             x["rename_title"] = None
-asc/watch.py %%%     if pend != e["tmux"] or (s["name"] == pend and not e.get("rename_title")): %%%     if pend != e["tmux"] or s["name"] == pend:
-asc/rclive.py %%%     if wait_for(lambda: offers_cmd(screen(pane), before), timeout): %%%     if offers_cmd(steady(pane), before):
-asc/rclive.py %%%         settled(pane)  # a slow claude still drawing it: until its prompt stops changing %%%         pass
-asc/rclive.py %%% *["BSpace"] * len(cmd)) %%% *["BSpace"] * len(t))
-asc/rclive.py %%% else settled(pane) %%% else prompt_text(screen(pane))
-asc/rclive.py %%% if t is not None and cmd.startswith(t): %%% if t and cmd.startswith(t):
-asc/rclive.py %%%     why = typed_in(s, since)⏎    if why:⏎        return why⏎ %%%     why = None⏎
-asc/rclive.py %%%     if any(a >= since for a in acts): %%%     if False:
-asc/rclive.py %%% why = check(scr, before) or typed_in(s, since) %%% why = check(scr, before)
-asc/rclive.py %%%         if meanwhile(): %%%         if False:
-asc/events.py %%% [i for r, i in mine if r < per] %%% [i for r, i in mine]
-asc/events.py %%%         elif t >= cut: %%%         elif True:
-asc/events.py %%%         if fav and kind == "forget": %%%         if False:
-asc/events.py %%%     if size <= CHECK_BYTES and _time(first) >= cut: %%%     if _time(first) >= cut:
-asc/events.py %%%         return set(registry.load(d)["entries"]) %%%         return None
-asc/events.py %%%     if not drop: %%%     if False:
-asc/events.py %%%         if id4 is not None and r["kind"] == "forget": %%%         if False:
-asc/past.py %%%             if c is None or c["ino"] != st.st_ino or c["size"] > st.st_size: %%%             if c is None:
-asc/past.py %%%             f.seek(start) %%%             f.seek(0)
-asc/past.py %%%                 budget -= len(b) %%%                 pass
-asc/past.py %%%         f = live.open_regular(p) if p else None %%%         f = open(p, "rb") if p else None
-asc/watch.py %%%         st["at"] = int(time.time()) %%%         pass
-asc/watch.py %%%         past.update_lengths( %%%         (lambda *a: None)(
-asc/boot.py %%%         signal.signal(signal.SIGTERM, lambda *_: sys.exit(143)) %%%         pass
-asc/boot.py %%%             todo = [i for i in todo if es.get(i, {}).get("resurrect") is True and es[i].get("want_on") is True] %%%             pass
-asc/events.py %%%             drop |= rank[id4] + 1 >= KEEP_PER + KEEP_SLACK %%%             drop = True
-asc/events.py %%%         while per > 1 and total() > MAX_BYTES // 2: %%%         while False:
-asc/past.py %%%     return max(sorted(paths), key=mtime) if paths else None %%%     return sorted(paths)[0] if paths else None
-asc/past.py %%%             if isinstance(k, str) and _entry(v) and v["size"] == v["seen"]} %%%             if isinstance(k, str) and _entry(v)}
-asc/boot.py %%%             _status([], "", done=True) %%%             pass
-asc/boot.py %%%         _status(todo, why) %%%         pass
-MUTANTS
-fi
 
 echo "asc: $pass passed, $fail failed"
 [ "$fail" = 0 ]

@@ -2,12 +2,13 @@
 # The dashboard server (asc/dash.py) over its unix socket, with curl, in a throwaway HOME, a
 # tmux server of its own and the fake claude of tests/asc.sh.
 #   tests/dash.sh                  about 20 s
-#   DASH_MUTANTS=1 tests/dash.sh   also the mutants below, each must make it fail (minutes)
+#   ASC_ONLY=<case,...> tests/dash.sh   only those cases (tests/cases.sh)
+# Its mutants (changes to the dashboard each check must catch) are in tests/mutants-dash.txt,
+# run by tests/mutate.sh. TEST_STOP_AT=<check>: exit right after that check's FAIL.
 set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 T=$(mktemp -d) || exit 2
 export ASC_TMUX_SOCKET="asc-dash-$$" ASC_CLAUDE="$REPO/tests/asc/bin/claude"
-export REPO_HOME="${REPO_HOME:-$HOME}"
 export HOME="$T/home" XDG_STATE_HOME="" XDG_CONFIG_HOME="" XDG_RUNTIME_DIR="$T/run" SHELL=/bin/bash
 unset TMUX
 mkdir -p "$HOME" "$T/fakebash" "$T/run"
@@ -47,7 +48,7 @@ pass=0 fail=0
 # tests/lint.sh). DETAILS, what was seen, go on the lines after the FAIL, each indented.
 # `skip NAME WHY` for a check that cannot run here.
 ok()   { echo "  ok    $1"; pass=$((pass + 1)); }
-bad()  { echo "  FAIL  $1"; [ -z "${2-}" ] || printf '        %s\n' "${2//$'\n'/$'\n'        }"; fail=$((fail + 1)); [ -z "${TEST_FAILFAST:-}" ] || exit 1; }
+bad()  { echo "  FAIL  $1"; [ -z "${2-}" ] || printf '        %s\n' "${2//$'\n'/$'\n'        }"; fail=$((fail + 1)); [ "${TEST_STOP_AT-}" != "$1" ] || exit 1; }
 skip() { echo "  skip  $1"; [ -z "${2-}" ] || printf '        %s\n' "${2//$'\n'/$'\n'        }"; }
 # A setup step that did not come (what the test itself started: a claude in a session it made, a
 # process of its own): one FAIL, "setup: NAME" (NAME fixed, as a check's), and the suite ends there,
@@ -62,7 +63,6 @@ poll()      { local _poll_i; for ((_poll_i = 0; _poll_i < $1 * 10; _poll_i++)); 
 poll_gone() { local _poll_i; for ((_poll_i = 0; _poll_i < $1 * 10; _poll_i++)); do "${@:2}" || return 0; sleep 0.1; done; ! "${@:2}"; }
 asctl() { "$REPO/bin/asctl" "$@"; }
 seen() { grep "$@" >/dev/null; }
-. "$REPO/tests/mutate.sh"
 . "$REPO/tests/cases.sh"
 # Put together at run time, so the privacy check does not read them as real ones.
 E=@ N=.ts
@@ -752,13 +752,13 @@ echo "== systemd socket activation"
 fresh; dash_conf /u; tmux_up
 if command -v systemd-socket-activate >/dev/null; then
 	mkdir -p "$T/sa"; chmod 700 "$T/sa"
-	systemd-socket-activate -E HOME -E PATH -E ASC_TMUX_SOCKET -l "$T/sa/s.sock" "$REPO/bin/asctl" dash --idle 0 2>"$T/err" & DPID=$!
+	systemd-socket-activate -E HOME -E PATH -E ASC_TMUX_SOCKET ${ASC_MUT_RUN:+-E ASC_MUT_RUN} -l "$T/sa/s.sock" "$REPO/bin/asctl" dash --idle 0 2>"$T/err" & DPID=$!
 	poll 3 [ -S "$T/sa/s.sock" ] || stop "systemd-socket-activate listening"
 	chmod 666 "$T/sa/s.sock"  # before the first connection, which starts asctl
 	curl -s -m 5 -o /dev/null --unix-socket "$T/sa/s.sock" http://x/ ; sleep 0.5
 	seen 'open to other users' "$T/err" && ok "a passed socket open to other users is refused" || bad "a passed socket open to other users is refused" "a passed socket 0666 accepted: $(tail -1 "$T/err")"
 	stop_dash; rm -f "$T/sa/s.sock"
-	systemd-socket-activate -E HOME -E PATH -E ASC_TMUX_SOCKET -l "$T/sa/s.sock" "$REPO/bin/asctl" dash --idle 0 2>"$T/sa.err" & DPID=$!
+	systemd-socket-activate -E HOME -E PATH -E ASC_TMUX_SOCKET ${ASC_MUT_RUN:+-E ASC_MUT_RUN} -l "$T/sa/s.sock" "$REPO/bin/asctl" dash --idle 0 2>"$T/sa.err" & DPID=$!
 	poll 3 [ -S "$T/sa/s.sock" ] || stop "systemd-socket-activate listening again"
 	r=$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$T/sa/s.sock" -H "Tailscale-User-Login: $LOGIN" -H "Host: localhost" -H "$XFH" -H "$XFF" http://x/u/api/state)
 	[ "$r" = 200 ] && ok "serves on the socket systemd passes" || bad "serves on the socket systemd passes" "socket activation: $r $(tail -2 "$T/sa.err")"
@@ -770,107 +770,6 @@ fi
 }
 
 run_cases dash page config socket pwa state actions_token actions_fav past client operator stale tmux_hang transcripts token rc notices prefix systemd
-
-# DASH_MUTANTS=1: break the server one way at a time, in a copy; each must make this test fail.
-if [ "${DASH_MUTANTS:-}" = 1 ]; then
-	echo "== mutants"
-	run_mutants dash.sh DASH_MUTANTS <<'MUTANTS'
-asc/dash.py %%% , env=dict(os.environ, ASC_BY="page")) %%% )
-asc/dash.py %%%             if q is not None and not registry.ID4_RE.fullmatch(q): %%%             if False:
-asc/dash.py %%% len(logins) == 1 and %%% len(logins) >= 1 and
-asc/dash.py %%%         if not (len(logins) == 1 and logins[0] == cfg["login"]): %%%         if not len(logins) == 1:
-asc/dash.py %%% len(fwd) == 1 and fwd[0] == cfg["host"] and %%% True and
-asc/dash.py %%%  and len(hosts) == 1 and hosts[0] in ("localhost", cfg["host"]) %%%  and True
-asc/dash.py %%% if (origins != ["https://" + self.server.cfg["host"]] %%% if (False
-asc/dash.py %%% or not hmac.compare_digest( %%% or False and hmac.compare_digest(
-asc/dash.py %%% if not (self.headers.get("Content-Type") or "").startswith("application/json"): %%% if False:
-asc/dash.py %%% if not 0 <= n <= MAX_BODY: %%% if n < 0:
-asc/dash.py %%%         if a.get("mode") not in WEB_MODES: %%%         if False:
-asc/dash.py %%% (["--force"] if a.get("force") is True else []) %%% (["--force"] if a.get("force") else [])
-asc/dash.py %%% or re.fullmatch(r"[0-9]{1,10}", ref)) %%% or True)
-asc/dash.py %%% or stat.S_IMODE(st.st_mode) != 0o700 %%% or False
-asc/dash.py %%%         old = os.umask(0o177) %%%         old = os.umask(0o022)
-asc/dash.py %%% return path[len(prefix):] if path.startswith(prefix + "/") else None %%% return path[len(prefix):]
-asc/dash.py %%%         self.send_header("Content-Security-Policy", CSP) %%%         pass
-asc/dash.py %%% if s["session_id"] not in fav_sids and not (s["pane"] and s["pane"]["session"] in fav_tmux)] %%% if True]
-asc/dash.py %%%         self.send_header("Connection", "close") %%%         pass
-asc/dash.py %%%         why = self._refusal() %%%         why = self.server.touch() or self._refusal()
-asc/dash.py %%%                 if _answers(sock_path): %%%                 if False:
-asc/dash.py %%%         if self.headers.get_all("Transfer-Encoding") or ( %%%         if False and (
-asc/dash.py %%% token.encode("utf-8", "replace") %%% token
-asc/dash.py %%%         if not remote_client(self.headers): %%%         if False:
-asc/dash.py %%%     if ip.version == 6 and ip.ipv4_mapped: %%%     if False:
-asc/dash.py %%% xff[0].split(",")[-1] %%% xff[0].split(",")[0]
-asc/dash.py %%%     if len(xff) != 1: %%%     if not xff:
-asc/dash.py %%%  and ip not in ips %%% 
-asc/dash.py %%%     if a.get("tmux") != e["tmux"]: %%%     if False:
-asc/dash.py %%%         srv.wait_actions(100) %%%         pass
-asc/dash.py %%%         return t %%%         return secrets.token_urlsafe(32)
-asc/dash.py %%%             raise RegistryError(f"cannot listen on {sock_path}: {e}") %%%             raise
-asc/dash.py %%% "/favicon.svg": "image/svg+xml", ** %%% "/favicon.svg": "image/svg+xml", "/app.js": "application/javascript", **
-asc/dash.py %%% PUBLIC or self.headers.get_all("Transfer-Encoding") or ( %%% PUBLIC or False and (
-asc/dash.py %%%             self._send(200, icons.icon(path[1:]), PUBLIC[path], cache="public, max-age=86400") %%%             self._send(200, icons.icon(path[1:]), PUBLIC[path])
-asc/icons.py %%%     "icon-maskable-512.png": (512, 0.8, 0.18, WHITE), %%%     "icon-maskable-512.png": (512, 0.8, 0, WHITE),
-asc/icons.py %%%     "apple-touch-icon.png": (180, 0.97, 0, WHITE), %%%     "apple-touch-icon.png": (180, 0.97, 0.18, WHITE),
-asc/icons.py %%%     "favicon-512.png": (512, 1, 0.25, None), %%%     "favicon-512.png": (512, 1, 0.25, WHITE),
-asc/icons.py %%%     "icon-512.png": (512, 0, 0, WHITE), %%%     "icon-512.png": (512, 1, 0, WHITE),
-asc/icons.py %%% return 0.0 if d >= 0.5 else 1.0 if d <= -0.5 else 0.5 - d %%% return 0.0 if d >= 0.5 else 1.0
-asc/icons.py %%%         if data.startswith(PNG_SIG): %%%         if data:
-asc/icons.py %%%         os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True) %%%         os.makedirs(os.path.dirname(path), exist_ok=True)
-asc/dash.py %%% .replace("@V@", ICON_VER) %%% .replace("@X@", ICON_VER)
-asc/dash.py %%%         if self._public(self._path()): %%%         if self._public(urllib.parse.urlsplit(self.path).path):
-asc/dash.py %%% "start_url": f"./?v={ICON_VER}" %%% "start_url": "/"
-asc/live.py %%%                 if own_sid and own_sid not in (s["session_id"], (s.get("host") or {}).get("session_id")): %%%                 if False:
-asc/live.py %%% "replace"))⏎    except (ValueError, RecursionError): %%% "replace"))⏎    except ValueError:
-asc/past.py %%%             except (ValueError, RecursionError): %%%             except ValueError:
-asc/past.py %%%     if not stat.S_ISREG(st.st_mode): %%%     if False:
-asc/dash.py %%%         if not serve_is_ours(): %%%         if False:
-asc/dash.py %%% op in (None, "", pwd.getpwuid(os.getuid()).pw_name) %%% True
-asc/dash.py %%%         ok = r.returncode == 0 and op in %%%         ok = op in
-asc/dash.py %%%     if stat.S_IMODE(os.stat(path).st_mode) & 0o022: %%%     if False:
-asc/tmuxctl.py %%% timeout=timeout, stdin=subprocess.DEVNULL) %%% stdin=subprocess.DEVNULL)
-asc/dash.py %%%  + (["--force-memory"] if a.get("force_memory") is True else []) %%%  + (["--force-memory"] if a.get("force_memory") else [])
-asc/dash.py %%%         if not isinstance(a.get("on"), bool):⏎            raise RegistryError("auto_restart needs %%%         if False:⏎            raise RegistryError("auto_restart needs
-asc/past.py %%%         elif r.get("type") == "ai-title" and %%%         elif False and
-asc/past.py %%% (title or ai or "") %%% (ai or title or "")
-asc/dash.py %%% (s["derived"] or not s["name"]) and past.title %%% False and past.title
-asc/dash.py %%% (s["derived"] or not s["name"]) and past.title %%% True and past.title
-asc/dash.py %%% ("busy", None) if s["task"] else %%% ("busy", None) if False else
-asc/past.py %%%                 title = t %%%                 title = title or t
-asc/past.py %%%     out.sort(key=lambda c: c["mtime"], reverse=True) %%%     out.sort(key=lambda c: c["mtime"])
-asc/dash.py %%% if st.st_uid != os.getuid() or st.st_mode & 0o022: %%% if st.st_uid != os.getuid():
-asc/dash.py %%%             _private(d, os.stat(d)) %%%             pass
-asc/dash.py %%%             d = os.path.dirname(os.path.realpath(p)) %%%             d = os.path.dirname(p)
-asc/icons.py %%% os.O_NOFOLLOW, 0o600), "wb") %%% os.O_NOFOLLOW, 0o644), "wb")
-asc/dash.py %%%             if self.command in ("GET", "HEAD") and self._path() == "/": %%%             if True:
-asc/live.py %%%                 if line.startswith("Pss:"): %%%                 if line.startswith("Rss:"):
-asc/cli.py %%%             if path in _modes and _modes[path][0] == key: %%%             if path in _modes:
-asc/dash.py %%%     if not isinstance(b, dict) or b.get("done") is not False or b.get("boot") != memory.boot_id(): %%%     if not isinstance(b, dict) or b.get("done") is not False:
-asc/dash.py %%%     if not flock_held(os.path.join(d, "boot.lock")): %%%     if False:
-asc/dash.py %%%         if len(w) >= 6 and w[1] == "FLOCK" and w[5] == dev: %%%         if False:
-asc/dash.py %%%     if now - _setup["at"] < 60: %%%     if False:
-asc/dash.py %%%         if word not in ("enabled", "enabled-runtime"): %%%         if False:
-asc/dash.py %%%             ok = None  # no answer %%%             ok = False  # no answer
-asc/dash.py %%%     t = w.get("at") if isinstance(w, dict) else None %%%     t = None
-asc/dash.py %%%         return f"{st.st_size}:{st.st_mtime_ns}" %%%         return "1"
-asc/web/app.js %%% const m = t.match(/: (?:rc|resurrect) (on|off)\b/); %%% const m = t.match(/\b(on|off)\b/);
-asc/web/app.js %%%        .replace(UUID_G, "…"); %%%        ;
-asc/web/app.js %%%   if (S && S.home) t = t.split(S.home + "/").join("~/"); %%%   if (false) t = "";
-asc/web/app.js %%%     if (g && g.key === key) { g.n++; g.first = x.t; } %%%     if (false) { g.n++; g.first = x.t; }
-asc/web/app.js %%% return n + (n === 1 ? " day ago" : " days ago"); %%% return n + " days ago";
-asc/web/app.js %%%            why: e.resurrect ? "Off, so a reboot won't bring it back." : "", whyCls: "wait" }; %%%            why: "", whyCls: "wait" };
-asc/web/app.js %%%   if (why.startsWith("pause") || !why) return "Starts in a moment."; %%%   if (why.startsWith("pause") || !why) return "Starts in a moment."; return why;
-asc/web/app.js %%% month: "short", year: "numeric" %%% month: "short"
-asc/web/app.js %%%     why: e.outside ? `Its claude runs in ${e.outside.text}, not in tmux session ${e.tmux}.` %%%     why: e.outside ? `Its claude runs, but not in tmux session ${e.tmux}.`
-asc/dash.py %%%         if not isinstance(a.get("on"), bool):⏎            raise RegistryError(f"{kind} needs %%%         if False:⏎            raise RegistryError(f"{kind} needs
-asc/dash.py %%%             "conv_lines": lens.get(e.get("session_id"), {}).get("lines"), %%%             "conv_lines": None,
-asc/dash.py %%% max(0, mem["total_kb"] - mem["avail_kb"] - total) %%% mem["total_kb"] - mem["avail_kb"] - total
-asc/dash.py %%% mem["avail_kb"] - total)} %%% mem["avail_kb"])}
-asc/dash.py %%%             "outside": dict(live.where(s), busy=cli.outside_busy(s, kids)) if st.startswith("on (outside") else None, %%%             "outside": None,
-asc/dash.py %%%         return ["restart", ref, "--outside"] %%%         return ["restart", ref]
-asc/past.py %%%     ok = isinstance(x, dict) and all(type(x.get(k)) is int and x[k] >= 0 for k in ("ino", "size", "lines", "seen")) %%%     ok = isinstance(x, dict)
-MUTANTS
-fi
 
 echo "dash: $pass passed, $fail failed"
 [ "$fail" = 0 ]

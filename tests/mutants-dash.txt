@@ -1,0 +1,94 @@
+asc/dash.py %%% , env=dict(os.environ, ASC_BY="page")) %%% ) %%% events: the page's actions by page (asctl's own by cli), newest first %%% actions_fav
+asc/dash.py %%%             if q is not None and not registry.ID4_RE.fullmatch(q): %%%             if False: %%% events: a bad id is 400 %%% actions_fav
+asc/dash.py %%% len(logins) == 1 and %%% len(logins) >= 1 and %%% the login header twice: 403 %%% socket
+asc/dash.py %%%         if not (len(logins) == 1 and logins[0] == cfg["login"]): %%%         if not len(logins) == 1: %%% another login: 403 %%% socket
+asc/dash.py %%% len(fwd) == 1 and fwd[0] == cfg["host"] and %%% True and %%% no X-Forwarded-Host: 403 %%% socket
+asc/dash.py %%%  and len(hosts) == 1 and hosts[0] in ("localhost", cfg["host"]) %%%  and True %%% another Host (neither localhost nor the host): 403 %%% socket
+asc/dash.py %%% if (origins != ["https://" + self.server.cfg["host"]] %%% if (False %%% a POST from another origin: 403 %%% actions_token
+asc/dash.py %%% or not hmac.compare_digest( %%% or False and hmac.compare_digest( %%% a POST without the token: 403 %%% actions_token
+asc/dash.py %%% if not (self.headers.get("Content-Type") or "").startswith("application/json"): %%% if False: %%% a form POST (not JSON): 415 %%% actions_token
+asc/dash.py %%% if not 0 <= n <= MAX_BODY: %%% if n < 0: %%% a body over 4 KB: 413 %%% actions_token
+asc/dash.py %%%         if a.get("mode") not in WEB_MODES: %%%         if False: %%% mode skip from the page: refused %%% actions_fav
+asc/dash.py %%% (["--force"] if a.get("force") is True else []) %%% (["--force"] if a.get("force") else []) %%% force only when it is true ("yes" is not) %%% actions_fav
+asc/dash.py %%% or re.fullmatch(r"[0-9]{1,10}", ref)) %%% or True) %%% a ref that is no pid or id: 400 %%% actions_token
+asc/dash.py %%% or stat.S_IMODE(st.st_mode) != 0o700 %%% or False %%% dash refuses a socket folder that is not 0700 %%% config
+asc/dash.py %%%         old = os.umask(0o177) %%%         old = os.umask(0o022) %%% socket mode 0600 %%% socket
+asc/dash.py %%% return path[len(prefix):] if path.startswith(prefix + "/") else None %%% return path[len(prefix):] %%% outside the prefix: 404 (also a path as long as it) %%% prefix
+asc/dash.py %%%         self.send_header("Content-Security-Policy", CSP) %%%         pass %%% the page has a strict CSP %%% socket
+asc/dash.py %%% if s["session_id"] not in fav_sids and not (s["pane"] and s["pane"]["session"] in fav_tmux)] %%% if True] %%% state: no longer in the not-favorited list %%% actions_fav
+asc/dash.py %%%         self.send_header("Connection", "close") %%%         pass %%% responses say Connection: close %%% socket
+asc/dash.py %%%         why = self._refusal() %%%         why = self.server.touch() or self._refusal() %%% refused requests do not keep dash alive %%% prefix
+asc/dash.py %%%                 if _answers(sock_path): %%%                 if False: %%% a socket another process listens on (asctl-dash.socket) is refused, not removed %%% token
+asc/dash.py %%%         if self.headers.get_all("Transfer-Encoding") or ( %%%         if False and ( %%% a chunked body: 400 %%% socket
+asc/dash.py %%% token.encode("utf-8", "replace") %%% token %%% a POST without the token: 403 %%% actions_token
+asc/dash.py %%%         if not remote_client(self.headers): %%%         if False: %%% no X-Forwarded-For: 403 %%% client
+asc/dash.py %%%     if ip.version == 6 and ip.ipv4_mapped: %%%     if False: %%% from loopback as IPv4-mapped IPv6: 403 %%% client
+asc/dash.py %%% xff[0].split(",")[-1] %%% xff[0].split(",")[0] %%% a client's own entry first does not hide that the last is this machine %%% client
+asc/dash.py %%%     if len(xff) != 1: %%%     if not xff: %%% X-Forwarded-For twice: 403 %%% client
+asc/dash.py %%%  and ip not in ips %%%  %%% from one of this machine's own addresses: 403 %%% client
+asc/dash.py %%%     if a.get("tmux") != e["tmux"]: %%%     if False: %%% an action from an out-of-date page (another name): refused, nothing done %%% stale
+asc/dash.py %%%         srv.wait_actions(100) %%%         pass %%% SIGTERM waits for a running action to finish %%% token
+asc/dash.py %%%         return t %%%         return secrets.token_urlsafe(32) %%% the token survives a restart (an open page keeps working) %%% token
+asc/dash.py %%%             raise RegistryError(f"cannot listen on {sock_path}: {e}") %%%             raise %%% a socket path too long: a clean error %%% token
+asc/dash.py %%% "/favicon.svg": "image/svg+xml", ** %%% "/favicon.svg": "image/svg+xml", "/app.js": "application/javascript", ** %%% app.js and app.css served %%% socket
+asc/dash.py %%% PUBLIC or self.headers.get_all("Transfer-Encoding") or ( %%% PUBLIC or False and ( %%% a public path with a body goes through the checks: 403 %%% pwa
+asc/dash.py %%%             self._send(200, icons.icon(path[1:]), PUBLIC[path], cache="public, max-age=86400") %%%             self._send(200, icons.icon(path[1:]), PUBLIC[path]) %%% every icon is a PNG, served without a login, cacheable %%% pwa
+asc/icons.py %%%     "icon-maskable-512.png": (512, 0.8, 0.18, WHITE), %%%     "icon-maskable-512.png": (512, 0.8, 0, WHITE), %%% maskable icon: white corners, blue edges, the lime knob %%% pwa
+asc/icons.py %%%     "apple-touch-icon.png": (180, 0.97, 0, WHITE), %%%     "apple-touch-icon.png": (180, 0.97, 0.18, WHITE), %%% apple-touch icon: full bleed %%% pwa
+asc/icons.py %%%     "favicon-512.png": (512, 1, 0.25, None), %%%     "favicon-512.png": (512, 1, 0.25, WHITE), %%% favicon: transparent corners %%% pwa
+asc/icons.py %%%     "icon-512.png": (512, 0, 0, WHITE), %%%     "icon-512.png": (512, 1, 0, WHITE), %%% the any icons are plain white %%% pwa
+asc/icons.py %%% return 0.0 if d >= 0.5 else 1.0 if d <= -0.5 else 0.5 - d %%% return 0.0 if d >= 0.5 else 1.0 %%% anti-aliased edges %%% pwa
+asc/icons.py %%%         if data.startswith(PNG_SIG): %%%         if data: %%% a cached file that is no PNG is drawn again %%% prefix
+asc/icons.py %%%         os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True) %%%         os.makedirs(os.path.dirname(path), exist_ok=True) %%% icons cached 0600 in a 0700 folder, the same bytes served %%% pwa
+asc/dash.py %%% .replace("@V@", ICON_VER) %%% .replace("@X@", ICON_VER) %%% the page links the manifest and icons, versioned %%% pwa
+asc/dash.py %%%         if self._public(self._path()): %%%         if self._public(urllib.parse.urlsplit(self.path).path): %%% a cached file that is no PNG is drawn again %%% prefix
+asc/dash.py %%% "start_url": f"./?v={ICON_VER}" %%% "start_url": "/" %%% the manifest, without a login: standalone, relative URLs, versioned id %%% pwa
+asc/live.py %%%                 if own_sid and own_sid not in (s["session_id"], (s.get("host") or {}).get("session_id")): %%%                 if False: %%% off refused: an idle second claude would end too %%% stale
+asc/live.py %%% "replace"))⏎    except (ValueError, RecursionError): %%% "replace"))⏎    except ValueError: %%% past: deep JSON, a FIFO and a symlink to /dev/zero neither hang nor crash it %%% transcripts
+asc/past.py %%%             except (ValueError, RecursionError): %%%             except ValueError: %%% past: deep JSON, a FIFO and a symlink to /dev/zero neither hang nor crash it %%% transcripts
+asc/past.py %%%     if not stat.S_ISREG(st.st_mode): %%%     if False: %%% past: a FIFO or a symlink is not listed %%% transcripts
+asc/dash.py %%%         if not serve_is_ours(): %%%         if False: %%% another user as the Tailscale operator: every request refused %%% operator
+asc/dash.py %%% op in (None, "", pwd.getpwuid(os.getuid()).pw_name) %%% True %%% another user as the Tailscale operator: every request refused %%% operator
+asc/dash.py %%%         ok = r.returncode == 0 and op in %%%         ok = op in %%% the setting cannot be read: refused (fail closed) %%% operator
+asc/dash.py %%%     if stat.S_IMODE(os.stat(path).st_mode) & 0o022: %%%     if False: %%% a passed socket open to other users is refused %%% systemd
+asc/tmuxctl.py %%% timeout=timeout, stdin=subprocess.DEVNULL) %%% stdin=subprocess.DEVNULL) %%% state still answers while tmux hangs %%% tmux_hang
+asc/dash.py %%%  + (["--force-memory"] if a.get("force_memory") is True else []) %%%  + (["--force-memory"] if a.get("force_memory") else []) %%% force_memory only when it is true %%% rc
+asc/dash.py %%%         if not isinstance(a.get("on"), bool):⏎            raise RegistryError("auto_restart needs %%%         if False:⏎            raise RegistryError("auto_restart needs %%% auto-restart on must be a boolean %%% notices
+asc/past.py %%%         elif r.get("type") == "ai-title" and %%%         elif False and %%% past: without a title given, claude's own (the last ai-title) %%% past
+asc/past.py %%% (title or ai or "") %%% (ai or title or "") %%% past: the latest title, sent as raw text (the page sets it as text) %%% past
+asc/dash.py %%% (s["derived"] or not s["name"]) and past.title %%% False and past.title %%% a running claude with a made-up name goes by its title %%% past
+asc/dash.py %%% (s["derived"] or not s["name"]) and past.title %%% True and past.title %%% a name given to claude stays, over its title %%% past
+asc/dash.py %%% ("busy", None) if s["task"] else %%% ("busy", None) if False else %%% state: an idle claude that runs a command (a background one too) is working %%% actions_fav
+asc/past.py %%%                 title = t %%%                 title = title or t %%% past: the latest title, sent as raw text (the page sets it as text) %%% past
+asc/past.py %%%     out.sort(key=lambda c: c["mtime"], reverse=True) %%%     out.sort(key=lambda c: c["mtime"]) %%% past: newest first %%% past
+asc/dash.py %%% if st.st_uid != os.getuid() or st.st_mode & 0o022: %%% if st.st_uid != os.getuid(): %%% dash refuses a config others can write %%% config
+asc/dash.py %%%             _private(d, os.stat(d)) %%%             pass %%% dash refuses a config in a folder others can write %%% config
+asc/dash.py %%%             d = os.path.dirname(os.path.realpath(p)) %%%             d = os.path.dirname(p) %%% and a symlinked config in a folder others can write %%% config
+asc/icons.py %%% os.O_NOFOLLOW, 0o600), "wb") %%% os.O_NOFOLLOW, 0o644), "wb") %%% icons cached 0600 in a 0700 folder, the same bytes served %%% pwa
+asc/dash.py %%%             if self.command in ("GET", "HEAD") and self._path() == "/": %%%             if True: %%% the API refused: plain JSON 403 %%% socket
+asc/live.py %%%                 if line.startswith("Pss:"): %%%                 if line.startswith("Rss:"): %%% state: memory is PSS (shared pages split), under the tree's RSS %%% actions_fav
+asc/cli.py %%%             if path in _modes and _modes[path][0] == key: %%%             if path in _modes: %%% state: the mode claude switched to (the transcript read again when it changes) %%% actions_fav
+asc/dash.py %%%     if not isinstance(b, dict) or b.get("done") is not False or b.get("boot") != memory.boot_id(): %%%     if not isinstance(b, dict) or b.get("done") is not False: %%% a boot.json from an earlier boot: none shown %%% notices
+asc/dash.py %%%     if not flock_held(os.path.join(d, "boot.lock")): %%%     if False: %%% boot.lock not held: no boot shown (one that was killed) %%% notices
+asc/dash.py %%%         if len(w) >= 6 and w[1] == "FLOCK" and w[5] == dev: %%%         if False: %%% state: what boot still brings back, and why the next waits (boot.lock held) %%% notices
+asc/dash.py %%%     if now - _setup["at"] < 60: %%%     if False: %%% setup is asked once a minute, not on every request %%% notices
+asc/dash.py %%%         if word not in ("enabled", "enabled-runtime"): %%%         if False: %%% state: not set up (asctl's units not enabled) %%% notices
+asc/dash.py %%%             ok = None  # no answer %%%             ok = False  # no answer %%% no answer from the user manager: setup unknown (no notice) %%% notices
+asc/dash.py %%%     t = w.get("at") if isinstance(w, dict) else None %%%     t = None %%% state: when the watcher last ran %%% notices
+asc/dash.py %%%         return f"{st.st_size}:{st.st_mtime_ns}" %%%         return "1" %%% state: the event log's version moves with a new event, not otherwise %%% notices
+asc/web/app.js %%% const m = t.match(/: (?:rc|resurrect) (on|off)\b/); %%% const m = t.match(/\b(on|off)\b/); %%% page: rc on/off read from its own words, not from a name with off in it %%% page
+asc/web/app.js %%%        .replace(UUID_G, "…"); %%%        ; %%% page: no pid, session id, tmux command or home folder in a detail %%% page
+asc/web/app.js %%%   if (S && S.home) t = t.split(S.home + "/").join("~/"); %%%   if (false) t = ""; %%% page: no pid, session id, tmux command or home folder in a detail %%% page
+asc/web/app.js %%%     if (g && g.key === key) { g.n++; g.first = x.t; } %%%     if (false) { g.n++; g.first = x.t; } %%% page: repeats in a row fold into one line, from the first %%% page
+asc/web/app.js %%% return n + (n === 1 ? " day ago" : " days ago"); %%% return n + " days ago"; %%% page: 1 day ago, 3 days ago %%% page
+asc/web/app.js %%%            why: e.resurrect ? "Off, so a reboot won't bring it back." : "", whyCls: "wait" }; %%%            why: "", whyCls: "wait" }; %%% page: resurrect on but off: why a reboot will not bring it back %%% page
+asc/web/app.js %%%   if (why.startsWith("pause") || !why) return "Starts in a moment."; %%%   if (why.startsWith("pause") || !why) return "Starts in a moment."; return why; %%% page: boot reasons in words; an odd one passed on %%% page
+asc/web/app.js %%% month: "short", year: "numeric" %%% month: "short" %%% page: the time it was updated: day, month, year and seconds %%% page
+asc/web/app.js %%%     why: e.outside ? `Its claude runs in ${e.outside.text}, not in tmux session ${e.tmux}.` %%%     why: e.outside ? `Its claude runs, but not in tmux session ${e.tmux}.` %%% page: outside its tmux session: where it runs %%% page
+asc/dash.py %%%         if not isinstance(a.get("on"), bool):⏎            raise RegistryError(f"{kind} needs %%%         if False:⏎            raise RegistryError(f"{kind} needs %%% rc on must be a boolean %%% rc
+asc/dash.py %%%             "conv_lines": lens.get(e.get("session_id"), {}).get("lines"), %%%             "conv_lines": None, %%% state: a conversation's lines and bytes, as the watcher counted them %%% notices
+asc/dash.py %%% max(0, mem["total_kb"] - mem["avail_kb"] - total) %%% mem["total_kb"] - mem["avail_kb"] - total %%% state: less in use than this user's own: the rest is 0, not below %%% state
+asc/dash.py %%% mem["avail_kb"] - total)} %%% mem["avail_kb"])} %%% state: other users and the system are what is in use less this user's (never more than the machine has) %%% state
+asc/dash.py %%%             "outside": dict(live.where(s), busy=cli.outside_busy(s, kids)) if st.startswith("on (outside") else None, %%%             "outside": None, %%% state: a claude outside its tmux session says where it runs, and why a move in waits %%% actions_fav
+asc/dash.py %%%         return ["restart", ref, "--outside"] %%%         return ["restart", ref] %%% restart from the page only moves a claude outside its tmux session in (one in it: refused, left alone) %%% actions_fav
+asc/past.py %%%     ok = isinstance(x, dict) and all(type(x.get(k)) is int and x[k] >= 0 for k in ("ino", "size", "lines", "seen")) %%%     ok = isinstance(x, dict) %%% odd lengths: lines as a string, none shown %%% notices

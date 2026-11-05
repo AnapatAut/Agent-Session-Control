@@ -10,7 +10,8 @@ In a suite with cases every check is in one.
 `check(NAME, ...)` names are plain string literals, each used once; a suite that relays page.js
 (dash.sh) prints them as "page: NAME", so its own names must not clash with those. No suite prints
 a check line of its own (`echo "  ok    ..."`): only the helpers do. Names are compared as bash
-reads them ('a' and "a" are one name), with spaces at the ends ignored.
+reads them ('a' and "a" are one name); a name has no space at either end (tests/mutate.sh
+stops a run at a check by its name as written).
 
 A setup step that did not come is `stop NAME [DETAILS]` (printed "setup: NAME"): its NAME as a
 check's, and its exit must end the suite, so never inside ( ), $( ), <( ), a pipeline or an &
@@ -35,6 +36,10 @@ their own commands. Send it as `-H @<(printf 'X-Asctl-Token: %s\n' "$TOK")`.
 
 The suites are read with tests/bashtree.py: a script it cannot read is a fault.
   python3 -I tests/checklint.py <file>...     prints each fault; exit 1 if any
+  python3 -I tests/checklint.py --names <file>...   each check of each suite as "<file>\t<case>\t<name>"
+                                              (page.js's in the case that relays them), and each
+                                              case as "<file>\t<case>\t" (one with no check too),
+                                              after the same checks: exit 1, and none, on a fault
   python3 -I tests/checklint.py --self-test   each form it must refuse, refused
 """
 import os
@@ -162,9 +167,13 @@ def unit(cmd):
     return last
 
 
-def check_suite(path, text, page=()):
-    """page: the names of the page.js checks this suite relays (as "page: NAME")."""
+def check_suite(path, text, page=(), owners=None, cases=None):
+    """page: the names of the page.js checks this suite relays (as "page: NAME"). owners, a dict:
+    filled with each check's name and the case it is in ('' outside every case); cases, a list:
+    with the name of each case_ function."""
     faults, sites = [], {}
+    owners = {} if owners is None else owners
+    cases = [] if cases is None else cases
     if PAGE in text:
         sites = {'page: ' + p: f'{PAGE} ({p})' for p in page}
     try:
@@ -183,7 +192,8 @@ def check_suite(path, text, page=()):
         if PRINT.search(bare):
             faults.append(f'{path}:{n}: prints a check line itself; use ok, bad or skip')
     units = {}
-    has_cases = any(f.t == 'func' and f.name.startswith('case_') for f in tree.walk())
+    cases.extend(f.name[len('case_'):] for f in tree.walk() if f.t == 'func' and f.name.startswith('case_'))
+    has_cases = bool(cases)
     for cmd in tree.walk():
         if cmd.t != 'simple' or not cmd.words:
             continue
@@ -195,10 +205,12 @@ def check_suite(path, text, page=()):
             continue
         n = tree.line(cmd.pos)
         word = args[0] if args else ''
-        if word in RELAY:
-            continue
         funcs = [a for a in cmd.ancestors() if a.t == 'func']
         in_case = len(funcs) == 1 and funcs[0].name.startswith('case_')
+        case = funcs[0].name[len('case_'):] if in_case else ''
+        if word in RELAY:
+            owners.update({'page: ' + p: case for p in page})
+            continue
         if kind != 'stop' and (any(a.t in LOOPS for a in cmd.ancestors()) or (funcs and not in_case)):
             faults.append(f'{path}:{n}: {kind} in a loop or a function: its name would print more than once')
         elif kind != 'stop' and has_cases and not in_case:
@@ -213,17 +225,21 @@ def check_suite(path, text, page=()):
         if not name:
             faults.append(f'{path}:{n}: {kind}: the name is not one quoted string: {word}')
             continue
+        if name != word[1:-1] and name == word[1:-1].strip():
+            faults.append(f'{path}:{n}: {kind}: a space at an end of the name: {word}')
+            continue
         if kind == 'stop':
             if 'setup: ' + name in sites:
                 faults.append(f'{path}:{n}: name used before, at line {sites["setup: " + name]}: setup: {name}')
             sites['setup: ' + name] = n
         elif kind != 'skip':
-            units.setdefault(id(unit(cmd)), []).append((n, kind, name))
+            units.setdefault(id(unit(cmd)), []).append((n, kind, name, case))
     for calls in sorted(units.values()):
         n = calls[0][0]
         names = {}
-        for _, kind, name in calls:
+        for _, kind, name, case in calls:
             names.setdefault(kind, []).append(name)
+            owners[name] = case
         checks = names.get('ok', []) + names.get('bad', [])
         if len(set(checks)) > 1:
             faults.append(f'{path}:{n}: ok and bad with different names: {" / ".join(sorted(set(checks)))}')
@@ -526,7 +542,6 @@ REFUSED = [
     ('time ok "a"\n', 'ok with no bad'),
     ('x && command ok "a" || bad "b"\n', 'ok and bad with different names'),
     ('x && ok "a" || bad "a"\ny && ok \'a\' || bad \'a\'\n', 'name used before'),
-    ('x && ok "a" || bad "a"\ny && ok "a " || bad "a "\n', 'name used before'),
     ("echo '  FAIL  x'\n", 'prints a check line itself'),
     ("printf '  ok    %s\\n' x\n", 'prints a check line itself'),
     ('echo "$p  skip  x"\n', 'prints a check line itself'),
@@ -534,6 +549,8 @@ REFUSED = [
     ('echo "x <<EOF"\nx && ok "a" || bad "b"\n', 'ok and bad with different names'),
     ("python3 -c 'print(1 << y)'\nx && ok \"a\" || bad \"b\"\n", 'ok and bad with different names'),
     ('x && ok "a"\'b\' || bad "a"\'b\'\n', 'the name is not one quoted string'),
+    ('x && ok "  a" || bad "  a"\n', 'a space at an end of the name'),
+    ("x && ok 'a ' || bad 'a '\n", 'a space at an end of the name'),
     ('# relays tests/dash/page.js\nx && ok "page: n" || bad "page: n"\n', 'name used before'),
     ('for k in a b; do x "$k" && ok "a" || bad "a"; done\n', 'in a loop or a function'),
     ('case_a() { x && ok "a" || bad "a"; }\ncase_a\n', 'a case is run by run_cases only'),
@@ -648,15 +665,26 @@ def self_test():
 def main(args):
     if args == ['--self-test']:
         return 1 if self_test() else 0
-    faults, texts = [], {}
-    for path in args:
+    show = args[:1] == ['--names']
+    faults, texts, owners, cases = [], {}, {}, {}
+    for path in args[show:]:
         with open(path, encoding='utf-8') as f:
             texts[path] = f.read()
     page = [n for p, t in texts.items() if p.endswith(PAGE) for n in page_names(t)]
     for path, text in texts.items():
-        faults += check_page(path, text) if path.endswith('.js') else check_suite(path, text, page)
+        if path.endswith('.js'):
+            faults += check_page(path, text)
+        else:
+            owners[path], cases[path] = {}, []
+            faults += check_suite(path, text, page, owners[path], cases[path])
     for f in faults:
-        print(f)
+        print(f, file=sys.stderr if show else sys.stdout)
+    if show and not faults:
+        for path, names in owners.items():
+            for case in cases[path]:
+                print(f'{path}\t{case}\t')
+            for name, case in names.items():
+                print(f'{path}\t{case}\t{name}')
     return 1 if faults else 0
 
 
