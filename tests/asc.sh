@@ -984,7 +984,9 @@ echo "== watcher: a claude that ended with its tmux session up"
 oomk=0; bump() { oomk=$((oomk + 1)); vm 0 0 0 "$oomk"; }
 ended() { last ended | jq -r .text; }
 asctl events "$idw" >/dev/null
-kill -TERM "$pw"; sleep 1.2; watch
+# the evidence needs a sample from a second before the end (whole seconds): the last one, from
+# the watch above, may be of the same second as the kill
+sleep 1.1; kill -TERM "$pw"; sleep 1.2; watch
 ended | seen '^claude ended, exit 143 (a signal), its tmux session up; .*not started again: auto-restart is off' && ok "ended by SIGTERM: logged, auto-restart off by default" || bad "ended by SIGTERM: logged, auto-restart off by default" "ended: $(ended)"
 e0=$(evn ended); watch; [ "$(evn ended)" = "$e0" ] && ok "an end is logged once" || bad "an end is logged once" "logged again"
 asctl auto-restart on | seen 'auto-restart on' && [ "$(jq -r .settings.auto_restart "$REG")" = true ] && ok "auto-restart on" || bad "auto-restart on" "auto-restart on failed"
