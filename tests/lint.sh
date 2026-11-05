@@ -26,7 +26,7 @@ else
 fi
 python3 -I -m py_compile asc/*.py && echo "python: ok (asc/*.py compile)" || rc=1
 python3 -I tests/checknames.py --self-test && python3 -I tests/checknames.py tests/asc.sh tests/dash.sh tests/dash/page.js \
-	&& echo "check names: ok (one fixed name per check, no value in it)" || rc=1
+	&& echo "check names: ok (one fixed name per check, no value in it, each run once)" || rc=1
 find asc -name __pycache__ -prune -exec rm -r {} + 2>/dev/null
 if command -v node >/dev/null; then
 	for js in asc/web/app.js asc/web/splash.js tests/dash/page.js; do node --check "$js" && echo "js: ok ($js parses)" || rc=1; done

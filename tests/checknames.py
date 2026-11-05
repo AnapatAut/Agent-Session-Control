@@ -1,95 +1,35 @@
 """Check names in tests/asc.sh, tests/dash.sh and tests/dash/page.js (run by tests/lint.sh).
 
-A check has one fixed name: `cond && ok NAME || bad NAME [DETAILS]`, the same NAME both ways, a
-quoted literal with no value in it ($, a backquote), used at one place only in its suite.
+A check has one fixed name: `cond && ok NAME || bad NAME [DETAILS]` (or an if or case with an ok
+and a bad), the same NAME both ways, a quoted literal with no value in it ($ or a backquote in
+double quotes), used at one place only in its suite, and run once: never in a loop or a function.
 `skip NAME WHY` names a check that cannot run here (it may share that check's name). page.js's
 `check(NAME, ...)` names are plain string literals, each used once; a suite that relays page.js
 (dash.sh) prints them as "page: NAME", so its own names must not clash with those. No suite prints
 a check line of its own (`echo "  ok    ..."`): only the helpers do. Names are compared as bash
-reads them ('a' and "a" are one name), with spaces at the ends ignored.
+reads them ('a' and "a" are one name), with spaces at the ends ignored. The suites are read with
+tests/bashtree.py: a script it cannot read is a fault.
   python3 -I tests/checknames.py <file>...     prints each fault; exit 1 if any
   python3 -I tests/checknames.py --self-test   each form it must refuse, refused
 """
+import os
 import re
 import sys
+
+sys.dont_write_bytecode = True  # no __pycache__ left in tests/
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))  # after the standard library's
+import bashtree  # noqa: E402
 
 # The page.js relay in dash.sh passes on names fixed in page.js (checked there), and its case
 # patterns hold the check line forms.
 RELAY = {'"${line#  ok    }"', '"${line#  FAIL  }"'}
 RELAY_TEXT = ('"  ok    "*)', '"  FAIL  "*)', '${line#  ok    }', '${line#  FAIL  }')
 PAGE = 'tests/dash/page.js'
-# A call at a command position: at the start, or after &&, ||, ;, |, then, else, do, time,
-# command, {, (, ) (a case arm) or !.
-CALL = re.compile(r'(?:^|&&|\|\||[;|{()!]|\bthen|\belse|\bdo|\btime|\bcommand)[ \t]*(ok|bad|skip)(?=[ \t]|$)')
+CHECKS = ('ok', 'bad', 'skip')
+LOOPS = ('for', 'while', 'until')
 PRINT = re.compile(r'  (ok    |FAIL  |skip  )')
 HELPER = re.compile(r'^(ok|bad|skip)\(\)')
 HEREDOC = re.compile(r"<<(?!<)-?[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
-
-
-def word_end(s, j):
-    """End (exclusive) of the bash word starting at s[j]; ValueError if it does not end."""
-    n = len(s)
-    while j < n and s[j] not in ' \t;&|)<>':
-        c = s[j]
-        if c == '\\':
-            j += 2
-        elif c == "'":
-            j = s.index("'", j + 1) + 1
-        elif c == '"':
-            j = dq_end(s, j + 1)
-        elif s.startswith('$(', j):
-            j = nest_end(s, j + 2, '(', ')')
-        elif s.startswith('${', j):
-            j = nest_end(s, j + 2, '{', '}')
-        elif c == '`':
-            j = s.index('`', j + 1) + 1
-        else:
-            j += 1
-    return j
-
-
-def dq_end(s, j):
-    while j < len(s):
-        c = s[j]
-        if c == '\\':
-            j += 2
-        elif c == '"':
-            return j + 1
-        elif s.startswith('$(', j):
-            j = nest_end(s, j + 2, '(', ')')
-        elif s.startswith('${', j):
-            j = nest_end(s, j + 2, '{', '}')
-        elif c == '`':
-            j = s.index('`', j + 1) + 1
-        else:
-            j += 1
-    raise ValueError('unterminated "')
-
-
-def nest_end(s, j, op, cl):
-    depth = 1
-    while j < len(s):
-        c = s[j]
-        if c == '\\':
-            j += 2
-            continue
-        if c == '"':
-            j = dq_end(s, j + 1)
-            continue
-        if c == "'":
-            j = s.index("'", j + 1) + 1
-            continue
-        if s.startswith('$(', j):
-            j = nest_end(s, j + 2, '(', ')')
-            continue
-        if c == op:
-            depth += 1
-        elif c == cl:
-            depth -= 1
-            if depth == 0:
-                return j + 1
-        j += 1
-    raise ValueError('unterminated ' + op)
 
 
 def heredoc(line):
@@ -113,6 +53,12 @@ def heredoc(line):
             return None
         elif line.startswith('<<<', j):
             j += 3
+            continue
+        elif line.startswith('((', j):  # arithmetic, $((...)) too: 1 << n is a shift
+            depth, j = 2, j + 2
+            while j < len(line) and depth:
+                depth += (line[j] == '(') - (line[j] == ')')
+                j += 1
             continue
         elif line.startswith('<<', j):
             m = HEREDOC.match(line, j)
@@ -160,6 +106,32 @@ def logical_lines(text):
     return out
 
 
+def command_name(cmd):
+    """The command a simple command runs (past assignments and `command`), and its words."""
+    words = [w for w, _ in cmd.words]
+    while words and re.match(r'[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=', words[0]):
+        words = words[1:]
+    if words[:1] == ['command']:
+        words = words[1:]
+    return (words[0] if words else None), words[1:]
+
+
+def unit(cmd):
+    """Where a check's ok and bad must meet: the && || list it is in, or the list of the { },
+    ( ), if or case that holds it; else its own list."""
+    last, n = None, cmd
+    while n.up is not None:
+        p = n.up
+        if p.t == 'andor':
+            last = p
+            if len(p.kids) >= 2:
+                return p
+        elif p.t == 'seq' and p.up is not None and p.up.t not in ('brace', 'subshell', 'if', 'case'):
+            return last
+        n = p
+    return last
+
+
 def check_suite(path, text, page=()):
     """page: the names of the page.js checks this suite relays (as "page: NAME")."""
     faults, sites = [], {}
@@ -167,7 +139,8 @@ def check_suite(path, text, page=()):
         sites = {'page: ' + p: f'{PAGE} ({p})' for p in page}
     try:
         lines = logical_lines(text)
-    except ValueError as e:
+        tree = bashtree.parse(text)
+    except (ValueError, bashtree.ParseError) as e:
         return [f'{path}: {e}']
     for n, line in lines:
         if HELPER.match(line.lstrip()):
@@ -179,28 +152,35 @@ def check_suite(path, text, page=()):
             bare = bare.replace(t, '')
         if PRINT.search(bare):
             faults.append(f'{path}:{n}: prints a check line itself; use ok, bad or skip')
+    units = {}
+    for cmd in tree.walk():
+        if cmd.t != 'simple' or not cmd.words:
+            continue
+        kind, args = command_name(cmd)
+        if kind not in CHECKS:
+            continue
+        n = tree.line(cmd.pos)
+        word = args[0] if args else ''
+        if word in RELAY:
+            continue
+        if any(a.t in LOOPS or a.t == 'func' for a in cmd.ancestors()):
+            faults.append(f'{path}:{n}: {kind} in a loop or a function: its name would print more than once')
+        if not word or word[0] not in '"\'':
+            faults.append(f'{path}:{n}: {kind} with no quoted name: {word or "(none)"}')
+            continue
+        if word[0] == '"' and ('$' in word or '`' in word):
+            faults.append(f'{path}:{n}: {kind}: a value in the name: {word}')
+            continue
+        name = unquote(word)
+        if not name:
+            faults.append(f'{path}:{n}: {kind}: the name is not one quoted string: {word}')
+            continue
+        if kind != 'skip':
+            units.setdefault(id(unit(cmd)), []).append((n, kind, name))
+    for calls in sorted(units.values()):
+        n = calls[0][0]
         names = {}
-        for m in CALL.finditer(line):
-            kind, j = m.group(1), m.end()
-            while j < len(line) and line[j] in ' \t':
-                j += 1
-            try:
-                word = line[j:word_end(line, j)]
-            except ValueError:
-                faults.append(f'{path}:{n}: {kind}: its name cannot be read')
-                continue
-            if word in RELAY:
-                continue
-            if not word or word[0] not in '"\'':
-                faults.append(f'{path}:{n}: {kind} with no quoted name: {word or "(none)"}')
-                continue
-            if '$' in word or '`' in word:
-                faults.append(f'{path}:{n}: {kind}: a value in the name: {word}')
-                continue
-            name = unquote(word)
-            if not name:
-                faults.append(f'{path}:{n}: {kind}: the name is not one quoted string: {word}')
-                continue
+        for _, kind, name in calls:
             names.setdefault(kind, []).append(name)
         checks = names.get('ok', []) + names.get('bad', [])
         if len(set(checks)) > 1:
@@ -269,6 +249,11 @@ REFUSED = [
     ("python3 -c 'print(1 << y)'\nx && ok \"a\" || bad \"b\"\n", 'ok and bad with different names'),
     ('x && ok "a"\'b\' || bad "a"\'b\'\n', 'the name is not one quoted string'),
     ('# relays tests/dash/page.js\nx && ok "page: n" || bad "page: n"\n', 'name used before'),
+    ('for k in a b; do x "$k" && ok "a" || bad "a"; done\n', 'in a loop or a function'),
+    ('while x; do\n\ty && ok "a" || bad "a"\ndone\n', 'in a loop or a function'),
+    ('f() { x && ok "a" || bad "a"; }\nf\nf\n', 'in a loop or a function'),
+    ('if x; then\n\tok "a"\nelse\n\tbad "b" "d"\nfi\n', 'ok and bad with different names'),
+    ('x && ok "a" || bad "a"\nif x; then\n', 'line'),
 ]
 PASSED = [
     'x && ok "a" || bad "a" "got: $v"\n',
@@ -278,6 +263,12 @@ PASSED = [
     "python3 - <<'EOF'\nok \"$v\"\nEOF\nx && ok 'b' || bad 'b'\n",
     '# ok "$v" in a comment\n',
     'printf "%s" "# <<< x <<<" > f\nx && ok "a" || bad "a"\ny <<<"$v" && ok "b" || bad "b"\n',
+    'if x; then\n\tok "a"\nelse\n\tbad "a" "d $v"\nfi\n',
+    'case $v in a) ok "a" ;; *) bad "a" "d" ;; esac\n',
+    'y=$((1 << n)); (( z = 2 << 1 ))\nx && ok "a" || bad "a"\n',
+    "x && ok 'cost $5' || bad 'cost $5'\n",
+    'x && { ok "a"; } || bad "a"\n',
+    'while IFS= read -r line; do case $line in "  ok    "*) ok "${line#  ok    }" ;; esac; done < <(x)\n',
 ]
 PAGE_REFUSED = [('check(`a ${x}`, `1`);\n', 'its name is not'), ('check("a", `1`);\ncheck("a", `2`);\n', 'name used before')]
 

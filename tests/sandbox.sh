@@ -33,7 +33,14 @@ BK=moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebd
 SB_UID=2001 RUN_DIR=/run/user/2001
 pass=0 fail=0 FAILED=() LOCKED=0
 ok()  { echo "  ok    $1"; pass=$((pass + 1)); }
-bad() { echo "  FAIL  $1${2:+  -- $(printf '%s' "$2" | head -20 | tr '\n' ' ')}"; fail=$((fail + 1)); FAILED+=("$1"); }
+# $2: what was seen, on the lines after the FAIL, each indented (at most 60 of them)
+bad() {
+	echo "  FAIL  $1"; fail=$((fail + 1)); FAILED+=("$1")
+	[ -n "${2-}" ] || return 0
+	local n; n=$(printf '%s\n' "$2" | wc -l)
+	printf '%s\n' "$2" | head -60 | sed 's/^/        /'
+	[ "$n" -le 60 ] || echo "        ($((n - 60)) more lines)"
+}
 # chk <name> <test> [<what to show on failure>]: both are code, the second run only on failure
 # (after any waiting in the test, so it shows the state the test ended on).
 chk() { if eval "$2"; then ok "$1"; else bad "$1" "$([ -z "${3:-}" ] || eval "$3" 2>&1)"; fi; }

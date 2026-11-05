@@ -8,7 +8,7 @@ T=$(mktemp -d) || exit 2
 trap 'rm -rf "$T"' EXIT
 pass=0 fail=0
 ok()  { echo "  ok    $1"; pass=$((pass + 1)); }
-bad() { echo "  FAIL  $1"; fail=$((fail + 1)); }
+bad() { echo "  FAIL  $1"; [ -z "${2-}" ] || printf '        %s\n' "${2//$'\n'/$'\n'        }"; fail=$((fail + 1)); }  # $2: details, indented
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=1+t@users.noreply.github.com
 export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=1+t@users.noreply.github.com
@@ -231,10 +231,12 @@ if [ "${PRIVACY_MUTANTS:-}" = 1 ]; then
 		d=$(mktemp -d -p "$T") || exit 2
 		cp -r "$REPO/tools" "$REPO/tests" "$REPO/.githooks" "$d/"
 		body=$(<"$d/$f")
-		[[ $body == *"$old"* ]] || { bad "mutant does not apply: $f: $old"; continue; }
+		# one name either way, the new text in it too; only a line that starts with "  FAIL  " is one
+		name="mutant: $f: $old => $new"
+		[[ $body == *"$old"* ]] || { bad "$name" "does not apply: the old text is not in $f"; continue; }
 		printf '%s\n' "${body/"$old"/"$new"}" > "$d/$f"
 		out=$(cd "$d" && git init -q -b main && PRIVACY_MUTANTS='' bash tests/privacy.sh 2>&1)
-		grep -q '  FAIL  ' <<<"$out" && ok "mutant caught: $f: $old" || bad "mutant missed: $f: $old"
+		grep -q '^  FAIL  ' <<<"$out" && ok "$name" || bad "$name" "missed: the suite passed with it"
 	done <<'MUTANTS'
 tools/privacy-rules %%% (?<![A-Za-z0-9._%+-])(?![0-9] %%% (?!)(?<![A-Za-z0-9._%+-])(?![0-9]
 tools/privacy-check.sh %%% grep -q . "$tmp/local" && find_hits %%% false && find_hits

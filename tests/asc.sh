@@ -31,9 +31,10 @@ tm() { tmux -L "$ASC_TMUX_SOCKET" -f /dev/null "$@"; }
 cleanup() { timeout -k 2 10 tmux -L "$ASC_TMUX_SOCKET" -f /dev/null kill-server 2>/dev/null; rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$ASC_TMUX_SOCKET"; rm -rf "$T"; }
 trap cleanup EXIT
 pass=0 fail=0
-# One check, one fixed name: `ok NAME` or `bad NAME [DETAILS]`, the same NAME both ways and never a
-# value in it (tests/checknames.py, run by tests/lint.sh). DETAILS, what was seen, go on the lines
-# after the FAIL, each indented. `skip NAME WHY` for a check that cannot run here.
+# One check, one fixed name: `ok NAME` or `bad NAME [DETAILS]`, the same NAME both ways, never a
+# value in it, and run once: not in a loop or a function (tests/checknames.py, run by
+# tests/lint.sh). DETAILS, what was seen, go on the lines after the FAIL, each indented.
+# `skip NAME WHY` for a check that cannot run here.
 ok()   { echo "  ok    $1"; pass=$((pass + 1)); }
 bad()  { echo "  FAIL  $1"; [ -z "${2-}" ] || printf '        %s\n' "${2//$'\n'/$'\n'        }"; fail=$((fail + 1)); [ -z "${TEST_FAILFAST:-}" ] || exit 1; }
 skip() { echo "  skip  $1"; [ -z "${2-}" ] || printf '        %s\n' "${2//$'\n'/$'\n'        }"; }
