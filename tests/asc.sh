@@ -72,6 +72,7 @@ lastargs() { grep ' args=' "$HOME/claude-args.log" | tail -1; }
 # pipe would then fail the pipeline (pipefail), taking the wrong branch of a check.
 seen() { grep "$@" >/dev/null; }
 . "$REPO/tests/mutate.sh"
+. "$REPO/tests/cases.sh"
 # The pid of the live fake claude in a tmux session, waiting up to 10 s.
 claude_in() {
 	local i pp
@@ -85,18 +86,38 @@ claude_in() {
 	done
 	return 1
 }
+# A case's setup: the tmux server up, kept with no session.
+server_up() { tm start-server \; set -g exit-empty off || stop "the tmux server for the case"; }
 # A live fake claude started by hand in a tmux session, as a user would (folder trusted).
 W="$T/work"; mkdir -p "$W" "$T/other"
 printf '%s\n' "$W" > "$HOME/fake-trusted"
 SID=11111111-2222-4333-8444-555555555555
 
+# Helpers more than one case uses.
+start_of() { awk '{ sub(/.*\) /, ""); print $20 }' "/proc/$1/stat"; }
+sfile() { printf '{"pid":%s,"sessionId":"%s","cwd":"/","procStart":"%s"%s}\n' "$1" "$2" "$3" "${4:-}" > "$HOME/.claude/sessions/$1.json"; }
+live_has() { asctl live | seen "$1"; }
+SD="$HOME/.local/state/agent-session-control"
+watch() { ASC_BY=watch asctl watch; }
+evn() { jq -s --arg k "$1" '[.[] | select(.kind == $k)] | length' "$SD/events.jsonl"; }
+last() { jq -s -c --arg k "$1" '[.[] | select(.kind == $k)] | last' "$SD/events.jsonl"; }
+# Seed 6 min of samples (as if the watcher had run every 30 s), from the fake readings now.
+# (Runs of the tests come seconds apart, so samples taken since stay inside the 8 min kept.)
+seed() { python3 -I -c 'import sys, time; sys.path.insert(0, sys.argv[1]); from asc import memory, registry
+s = memory.sample(); now = int(time.time())
+registry.write_private(registry.state_dir() + "/memory.json", [dict(s, t=now - 30 * i) for i in range(12, 0, -1)])' "$REPO"; }
+
+case_no_tmux_server() {
 echo "== no tmux server"
 asctl list >/dev/null && ok "list works with nothing set up" || bad "list works with nothing set up" "list fails with nothing set up"
 asctl live | seen 'no live claude' && ok "live: none" || bad "live: none" "live: wrong when none"
+}
 
+# shellcheck disable=SC2329  # helpers run only through poll
+case_main() {
 echo "== fav"
 # The server stays up with no session, as asctl-tmux.service will keep it (exit-empty off).
-tm start-server \; set -g exit-empty off
+server_up
 tm new-session -d -s dev -c "$W" -- "$ASC_CLAUDE" --session-id "$SID" --name dev
 pid=$(claude_in dev) && ok "a hand-started claude is up" || bad "a hand-started claude is up" "the hand-started claude did not come up"
 asctl live | seen "$SID.*dev" && ok "live: lists it with its tmux session" || bad "live: lists it with its tmux session" "live: does not list it"
@@ -192,52 +213,6 @@ ts "$(date -u -d '+5 sec' +%Y-%m-%dT%H:%M:%S.000Z)"; pm dontAsk
 asctl off "$id2" --force >/dev/null
 pm manual user
 
-echo "== a new name for a running claude: /rename when idle, or a restart"
-asctl on "$id2" >/dev/null
-c1=$(claude_in "chat-$id2") && ok "a new name: claude up after on" || bad "a new name: claude up after on" "no claude in chat-$id2"
-sname() { jq -r .name "$HOME/.claude/sessions/$1.json"; }
-touch "$HOME/fake-busy"; sleep 0.8
-out=$(asctl rename "$id2" talk 2>&1)
-seen "renamed to talk-$id2; claude's own name not changed now: claude is busy" <<<"$out" && [ "$(sname "$c1")" = "chat-$id2" ] && ! seen 'line: /rename' "$HOME/claude-args.log" \
-	&& ok "rename while claude works: the favorite renamed, nothing typed" || bad "rename while claude works: the favorite renamed, nothing typed" "rename while busy: $out"
-rm -f "$HOME/fake-busy"; sleep 0.8
-out=$(asctl rename "$id2" talk 2>&1)
-seen 'claude and its claude.ai title too' <<<"$out" && [ "$(claude_in "talk-$id2")" = "$c1" ] && [ "$(sname "$c1")" = "talk-$id2" ] && seen "line: /rename talk-$id2" "$HOME/claude-args.log" \
-	&& ok "rename of an idle claude: /rename typed, the same claude takes the name" || bad "rename of an idle claude: /rename typed, the same claude takes the name" "live rename: $out / $(sname "$c1")"
-touch "$HOME/fake-menu-on"
-out=$(asctl rename "$id2" talk3 2>&1)
-seen 'not changed now: a command menu opened at its prompt; nothing was sent' <<<"$out" && [ "$(sname "$c1")" = "talk-$id2" ] && ok "rename: not when a menu would take Enter" || bad "rename: not when a menu would take Enter" "rename with a menu: $out"
-rm -f "$HOME/fake-menu-on"
-touch "$HOME/fake-no-rename"
-out=$(asctl rename "$id2" talk4 2>&1)
-seen "not changed now: typed, but claude did not record the new name" <<<"$out" && ok "rename: typed but not taken by claude: said so" || bad "rename: typed but not taken by claude: said so" "rename not taken: $out"
-rm -f "$HOME/fake-no-rename"
-asctl rename "$id2" talk >/dev/null
-touch "$HOME/fake-task"; sleep 0.8
-out=$(asctl rename "$id2" talk2 --restart 2>&1)
-seen 'not restarted now: busy: .* runs a command' <<<"$out" && [ "$(claude_in "talk2-$id2")" = "$c1" ] && ok "rename --restart: not while claude runs a command (a background one too)" || bad "rename --restart: not while claude runs a command (a background one too)" "restart with a command running: $out"
-asctl off "$id2" >/dev/null 2>&1 && bad "off refused while claude runs a command" "off went ahead while claude runs a command" || ok "off refused while claude runs a command"
-rm -f "$HOME/fake-task"; sleep 0.8
-AG="$HOME/.claude/projects/-x/$SID2/subagents"; mkdir -p "$AG"
-printf '{"type":"user","message":{"role":"user","content":"go"}}\n' > "$AG/agent-a1.jsonl"
-out=$(errof restart "$id2"); seen 'runs a subagent' <<<"$out" && ok "restart: not while a subagent runs" || bad "restart: not while a subagent runs" "restart with a subagent: $out"
-printf '{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[]}}\n' >> "$AG/agent-a1.jsonl"
-printf '{"type":"user","message":{"role":"user","content":"go"}}\n' > "$AG/agent-a2.jsonl"; echo '{"finished":true}' > "$AG/agent-a2.meta.json"
-printf '{"type":"user","message":{"role":"user","content":"go"}}\n' > "$AG/agent-a3.jsonl"; touch -d '20 minutes ago' "$AG/agent-a3.jsonl"
-asctl rc "$id2" on --next-start >/dev/null
-out=$(asctl restart "$id2" 2>&1)
-c2=$(claude_in "talk2-$id2") && [ "$c2" != "$c1" ] && [ "$(jqe ".entries[\"$id2\"].session_id")" = "$SID2" ] \
-	&& lastargs | seen -- "--resume $SID2 --name talk2-$id2 .*--remote-control talk2-$id2" \
-	&& ok "restart: a new claude on the same conversation, with the new name and rc title (finished, ended or old subagents do not hold it)" || bad "restart: a new claude on the same conversation, with the new name and rc title (finished, ended or old subagents do not hold it)" "restart: $out / $(lastargs)"
-grep "pid=$c2 " "$HOME/claude-args.log" | seen "line: /rename talk2-$id2" && ok "a start with rc sends its name to claude.ai (/rename, once rc is up)" || bad "a start with rc sends its name to claude.ai (/rename, once rc is up)" "no /rename after an rc start: $(grep "pid=$c2 " "$HOME/claude-args.log")"
-out=$(asctl rename "$id2" chat --restart 2>&1)
-c3=$(claude_in "chat-$id2") && [ "$c3" != "$c2" ] && lastargs | seen -- "--name chat-$id2" && ok "rename --restart of an idle claude: restarted with the new name" || bad "rename --restart of an idle claude: restarted with the new name" "rename --restart: $out"
-touch "$HOME/fake-wait"; sleep 0.8
-out=$(errof restart "$id2"); seen 'its claude is waiting' <<<"$out" && [ "$(claude_in "chat-$id2")" = "$c3" ] && ok "restart: not while claude waits (a question or dialog would be lost)" || bad "restart: not while claude waits (a question or dialog would be lost)" "restart while waiting: $out"
-rm -f "$HOME/fake-wait" "$AG"/*
-asctl rc "$id2" off --next-start >/dev/null; asctl off "$id2" --force >/dev/null
-asctl restart "$id2" >/dev/null 2>&1 && bad "restart: refused when it is off" "restart of an off favorite went ahead" || ok "restart: refused when it is off"
-
 echo "== shared session, stale files, locks, a broken registry"
 tm new-session -d -s shared -c "$W" -- "$ASC_CLAUDE" --session-id 33333333-4444-4555-8666-777777777777
 tm split-window -t "=shared:" -- sleep 300
@@ -301,8 +276,6 @@ echo "== PID checks: start time, name, machine"
 "$FAKE_BASH" -c 'sleep 300; true' >/dev/null 2>&1 & sp=$!
 sleep 300 >/dev/null 2>&1 & np=$!
 sleep 0.3
-start_of() { awk '{ sub(/.*\) /, ""); print $20 }' "/proc/$1/stat"; }
-sfile() { printf '{"pid":%s,"sessionId":"%s","cwd":"/","procStart":"%s"%s}\n' "$1" "$2" "$3" "${4:-}" > "$HOME/.claude/sessions/$1.json"; }
 sfile "$sp" aaaaaaaa-0000-4000-8000-000000000001 "$(start_of "$sp")"
 asctl live | seen aaaaaaaa && ok "a claude with its own start time is live" || bad "a claude with its own start time is live" "a claude with its own start time is not live"
 sfile "$sp" aaaaaaaa-0000-4000-8000-000000000002 1
@@ -348,79 +321,12 @@ asctl live | grep cccccccc-0000-4000-8000-000000000003 | seen '(not in tmux)' &&
 tm kill-session -t =daemonhome; rm -f "$HOME/.claude/sessions/$dp.json"
 kill $(pgrep -P "$jp") $(pgrep -P "$op") "$jp" "$op"; wait "$jp" "$op" 2>/dev/null
 rm -f "$HOME/.claude/sessions/$jp.json" "$HOME/.claude/sessions/$op.json" "$HOME/fake-parked-$PS7"
-echo "== a claude outside its tmux session: where it runs, off of a background session, restart into tmux"
-OS=eeeeeeee-0000-4000-8000-000000000001
-tm new-session -d -s outer -c "$W" -- "$ASC_CLAUDE" --session-id "$OS"
-po=$(claude_in outer) || stop "a claude in outer"
-asctl fav "$po" --name outer >/dev/null; ido=$(jq -r '.entries[] | select(.name == "outer") | .id4' "$REG")
-asctl off "$ido" >/dev/null; asctl rc "$ido" on --next-start >/dev/null
-# a claude that ends on SIGTERM, as the real one does; $1: anything: it ignores SIGTERM
-printf '%s\n' '[ -n "${1:-}" ] && trap "" TERM || trap '"'"'kill $! 2>/dev/null; exit 143'"'"' TERM' 'sleep 300 & wait; wait' > "$T/outside.sh"
-outer_up() { tp=$(pgrep -P "$sc" | head -1); [ -n "$tp" ] && [ "$(cat /proc/"$tp"/comm 2>/dev/null)" = claude ]; }
-outer_tty() { script -qfc "exec -a claude '$FAKE_BASH' '$T/outside.sh' ${1:-}" /dev/null >/dev/null 2>&1 & sc=$!; poll 3 outer_up || return 1; }
-outer_tty || stop "a claude in a terminal outside tmux"
-sfile "$tp" "$OS" "$(start_of "$tp")" ',"kind":"interactive","status":"busy"'
-asctl list | seen "outer-$ido *on (outside" && ok "outside: its favorite is on, outside its tmux session" || bad "outside: its favorite is on, outside its tmux session" "outside list: $(asctl list | grep outer)"
-o=$(errof off "$ido")
-seen "runs outside its tmux session 'outer-$ido', in a terminal outside tmux (script, pts/[0-9]*);" <<<"$o" && seen "asctl restart $ido moves it" <<<"$o" && kill -0 "$tp" \
-	&& ok "off refused: where it runs named (the program and its terminal), and how to move it in" || bad "off refused: where it runs named (the program and its terminal), and how to move it in" "outside off: $o"
-o=$(errof restart "$ido")
-seen "busy: its claude is working (its claude runs in a terminal outside tmux" <<<"$o" && kill -0 "$tp" && ok "restart refused while it works" || bad "restart refused while it works" "outside restart busy: $o"
-sfile "$tp" "$OS" "$(start_of "$tp")" ',"kind":"interactive","status":"idle"'
-tm new-session -d -s "outer-$ido" -- sleep 300
-o=$(errof restart "$ido"); tm kill-session -t "=outer-$ido"
-seen "is up without it: close that session first" <<<"$o" && kill -0 "$tp" && ok "restart refused: its tmux session is up without it (nothing ended)" || bad "restart refused: its tmux session is up without it (nothing ended)" "outside restart, session up: $o"
-asctl restart "$ido" >/dev/null 2>&1; r=$?
-pn=$(claude_in "outer-$ido") && [ $r = 0 ] && ! kill -0 "$tp" 2>/dev/null && seen "^pid=$pn .*--resume $OS" "$HOME/claude-args.log" \
-	&& ok "restart: the idle claude outside ended, and started in its tmux session on the same conversation" || bad "restart: the idle claude outside ended, and started in its tmux session on the same conversation" "outside restart: rc $r tp $tp pn $pn"
-jq -s -c --arg i "$ido" '[.[] | select(.id4 == $i and .kind == "off")] | last | .text' "$EVF" | seen "in a terminal outside tmux (script, pts/[0-9]*) ended, to start again in its tmux session" \
-	&& ok "restart: its off event says where it ran" || bad "restart: its off event says where it ran" "outside off event: $(tail -3 "$EVF")"
-o=$(errof restart "$ido" --outside); seen "runs in 'outer-$ido', not outside it: nothing to move in" <<<"$o" && [ "$(claude_in "outer-$ido")" = "$pn" ] \
-	&& ok "restart --outside (the page's): refused for a claude in its tmux session" || bad "restart --outside (the page's): refused for a claude in its tmux session" "restart --outside in tmux: $o"
-seen "pid=$pn line: /rename outer-$ido" "$HOME/claude-args.log" && [ "$(jq -r --arg i "$ido" '.entries[$i].rename_pending' "$REG")" = null ] \
-	&& ok "restart with rc: its name sent to claude.ai at the start (a resumed claude.ai session keeps its old title)" || bad "restart with rc: its name sent to claude.ai at the start (a resumed claude.ai session keeps its old title)" "title at start: $(jq -c --arg i "$ido" '.entries[$i]' "$REG")"
-asctl off "$ido" >/dev/null; touch "$HOME/fake-busy"
-o=$(asctl on "$ido" 2>&1)
-pb=$(claude_in "outer-$ido") && seen "its name not sent to claude.ai: claude is busy" <<<"$o" && [ "$(jq -r --arg i "$ido" '.entries[$i] | "\(.rename_pending) \(.rename_title)"' "$REG")" = "outer-$ido true" ] \
-	&& ok "a start that cannot send its name to claude.ai (claude busy): owed to it, though claude has the name" || bad "a start that cannot send its name to claude.ai (claude busy): owed to it, though claude has the name" "title owed: $o / $(jq -c --arg i "$ido" '.entries[$i]' "$REG")"
-rm -f "$HOME/fake-busy"; sleep 0.8
-# the watcher's step for it alone (a whole watcher run here would start the watcher tests' state early)
-python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import cli, registry, watch
-e = registry.find(registry.load(), sys.argv[2])
-with registry.entry_lock(e["id4"]):
-    watch._pending_rename({"rename_tries": {}}, e, cli.live_in(e))' "$REPO" "$ido"
-seen "pid=$pb line: /rename outer-$ido" "$HOME/claude-args.log" && [ "$(jq -r --arg i "$ido" '.entries[$i] | "\(.rename_pending) \(.rename_title)"' "$REG")" = "null null" ] \
-	&& ok "the watcher sends it once claude is idle (/rename, though claude has the name), and it is no longer owed" || bad "the watcher sends it once claude is idle (/rename, though claude has the name), and it is no longer owed" "title sent: $(jq -c --arg i "$ido" '.entries[$i]' "$REG")"
-kill "$sc" 2>/dev/null; asctl off "$ido" >/dev/null
-outer_tty hold || stop "a claude outside tmux that ignores SIGTERM"
-sfile "$tp" "$OS" "$(start_of "$tp")" ',"kind":"interactive","status":"idle"'
-o=$(errof restart "$ido")
-seen "still runs 15 s later; nothing was started" <<<"$o" && ! tm has-session -t "=outer-$ido" 2>/dev/null && ok "restart: a claude that does not end on SIGTERM: nothing started" || bad "restart: a claude that does not end on SIGTERM: nothing started" "outside restart, no end: $o"
-kill -KILL "$tp" "$sc" 2>/dev/null; wait "$sc" 2>/dev/null; rm -f "$HOME/.claude/sessions/$tp.json"
-( exec -a claude "$T/versions/2.1.316" "$T/outside.sh" ) >/dev/null 2>&1 & bp=$!; sleep 0.3
-sfile "$bp" "$OS" "$(start_of "$bp")" ',"kind":"bg","jobId":"eeee0001","status":"busy"'
-o=$(errof off "$ido")
-seen "busy: its claude is working (its claude runs as a Claude Code background session (job eeee0001))" <<<"$o" && kill -0 "$bp" && ok "off of a background session refused while it works" || bad "off of a background session refused while it works" "bg off busy: $o"
-sfile "$bp" "$OS" "$(start_of "$bp")" ',"kind":"bg","jobId":"eeee0001","status":"idle"'; touch "$HOME/fake-stop-fails"
-o=$(errof off "$ido"); rm -f "$HOME/fake-stop-fails"
-seen "claude stop eeee0001: Could not reach the daemon" <<<"$o" && kill -0 "$bp" && ok "off: claude stop failing is said, and the session still runs" || bad "off: claude stop failing is said, and the session still runs" "bg off, stop fails: $o"
-o=$(asctl off "$ido" 2>&1); r=$?
-[ $r = 0 ] && seen "its background session stopped; the conversation is kept" <<<"$o" && ! kill -0 "$bp" 2>/dev/null && seen "args=stop eeee0001" "$HOME/claude-args.log" \
-	&& [ "$(jq -r --arg i "$ido" '.entries[$i].want_on' "$REG")" = false ] && ok "off of an idle background session: claude stop ends it, it is marked off" || bad "off of an idle background session: claude stop ends it, it is marked off" "bg off: rc $r $o"
-tail -1 "$EVF" | seen "its background session (job eeee0001) stopped with claude stop" && ok "off of a background session: logged" || bad "off of a background session: logged" "bg off event: $(tail -1 "$EVF")"
-( exec -a claude "$T/versions/2.1.316" "$T/outside.sh" ) >/dev/null 2>&1 & bp=$!; sleep 0.3
-sfile "$bp" "$OS" "$(start_of "$bp")" ',"kind":"bg","jobId":"eeee0001","status":"idle"'
-asctl restart "$ido" >/dev/null 2>&1; r=$?
-pn=$(claude_in "outer-$ido") && [ $r = 0 ] && ! kill -0 "$bp" 2>/dev/null && [ "$(grep -c "args=stop eeee0001" "$HOME/claude-args.log")" = 3 ] \
-	&& ok "restart of a background session: claude stop, then started in its tmux session" || bad "restart of a background session: claude stop, then started in its tmux session" "bg restart: rc $r pn $pn"
-asctl off "$ido" >/dev/null; asctl forget "$ido" >/dev/null
 echo "== busy: a claude asctl cannot read; trust text in a transcript"
 asctl on "$id6" >/dev/null && claude_in "duo-$id6" >/dev/null && ok "on: claude up in duo-<id>" || bad "on: claude up in duo-<id>" "no claude in duo-$id6"
 tm new-window -t "=duo-$id6:" -- "$FAKE_BASH" -c 'sleep 300; true'
 sleep 0.5
 errof off "$id6" | grep -q 'runs a claude asctl cannot read' && ok "off refused: a pane runs a claude with no session file" || bad "off refused: a pane runs a claude with no session file" "off ignored a claude with no session file"
 tm new-window -t "=duo-$id6:" -c "$W" -- "$ASC_CLAUDE" --session-id 99999999-aaaa-4bbb-8ccc-dddddddddddd
-live_has() { asctl live | seen "$1"; }
 poll 5 live_has 99999999 && ok "live: a claude in another window of a favorite's session" || bad "live: a claude in another window of a favorite's session" "not listed: $(asctl live)"
 errof fav 99999999-aaaa-4bbb-8ccc-dddddddddddd --whole-session | grep -q "tmux session of favorite $id6" && ok "fav refused: the claude runs in another favorite's tmux session" || bad "fav refused: the claude runs in another favorite's tmux session" "fav took over another favorite's tmux session"
 asctl off "$id6" --force >/dev/null
@@ -747,16 +653,155 @@ assert past.lengths(d) == {}
 past.update_lengths([a], d, home)
 assert past.lengths(d)[a]["lines"] == 1
 PY
+}
+
+case_new_name() {
+# Setup, as "exact names, trust prompt, rename, mode" left it: a favorite of a past conversation
+# (SID2, id2), off, named chat, in a trusted folder. The claude log from here on: main's rc start
+# typed a /rename, and this case's first check says none was typed.
+server_up
+: > "$HOME/claude-args.log"
+SID2=22222222-3333-4444-8555-000000000007
+mkdir -p "$HOME/.claude/projects/-x"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SID2" > "$HOME/.claude/projects/-x/$SID2.jsonl"
+asctl fav "$SID2" --name chat >/dev/null || stop "a favorite for a new name"
+id2=$(jq -r --arg s "$SID2" '.entries[] | select(.session_id == $s) | .id4' "$REG")
+echo "== a new name for a running claude: /rename when idle, or a restart"
+asctl on "$id2" >/dev/null
+c1=$(claude_in "chat-$id2") && ok "a new name: claude up after on" || bad "a new name: claude up after on" "no claude in chat-$id2"
+sname() { jq -r .name "$HOME/.claude/sessions/$1.json"; }
+touch "$HOME/fake-busy"; sleep 0.8
+out=$(asctl rename "$id2" talk 2>&1)
+seen "renamed to talk-$id2; claude's own name not changed now: claude is busy" <<<"$out" && [ "$(sname "$c1")" = "chat-$id2" ] && ! seen 'line: /rename' "$HOME/claude-args.log" \
+	&& ok "rename while claude works: the favorite renamed, nothing typed" || bad "rename while claude works: the favorite renamed, nothing typed" "rename while busy: $out"
+rm -f "$HOME/fake-busy"; sleep 0.8
+out=$(asctl rename "$id2" talk 2>&1)
+seen 'claude and its claude.ai title too' <<<"$out" && [ "$(claude_in "talk-$id2")" = "$c1" ] && [ "$(sname "$c1")" = "talk-$id2" ] && seen "line: /rename talk-$id2" "$HOME/claude-args.log" \
+	&& ok "rename of an idle claude: /rename typed, the same claude takes the name" || bad "rename of an idle claude: /rename typed, the same claude takes the name" "live rename: $out / $(sname "$c1")"
+touch "$HOME/fake-menu-on"
+out=$(asctl rename "$id2" talk3 2>&1)
+seen 'not changed now: a command menu opened at its prompt; nothing was sent' <<<"$out" && [ "$(sname "$c1")" = "talk-$id2" ] && ok "rename: not when a menu would take Enter" || bad "rename: not when a menu would take Enter" "rename with a menu: $out"
+rm -f "$HOME/fake-menu-on"
+touch "$HOME/fake-no-rename"
+out=$(asctl rename "$id2" talk4 2>&1)
+seen "not changed now: typed, but claude did not record the new name" <<<"$out" && ok "rename: typed but not taken by claude: said so" || bad "rename: typed but not taken by claude: said so" "rename not taken: $out"
+rm -f "$HOME/fake-no-rename"
+asctl rename "$id2" talk >/dev/null
+touch "$HOME/fake-task"; sleep 0.8
+out=$(asctl rename "$id2" talk2 --restart 2>&1)
+seen 'not restarted now: busy: .* runs a command' <<<"$out" && [ "$(claude_in "talk2-$id2")" = "$c1" ] && ok "rename --restart: not while claude runs a command (a background one too)" || bad "rename --restart: not while claude runs a command (a background one too)" "restart with a command running: $out"
+asctl off "$id2" >/dev/null 2>&1 && bad "off refused while claude runs a command" "off went ahead while claude runs a command" || ok "off refused while claude runs a command"
+rm -f "$HOME/fake-task"; sleep 0.8
+AG="$HOME/.claude/projects/-x/$SID2/subagents"; mkdir -p "$AG"
+printf '{"type":"user","message":{"role":"user","content":"go"}}\n' > "$AG/agent-a1.jsonl"
+out=$(errof restart "$id2"); seen 'runs a subagent' <<<"$out" && ok "restart: not while a subagent runs" || bad "restart: not while a subagent runs" "restart with a subagent: $out"
+printf '{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[]}}\n' >> "$AG/agent-a1.jsonl"
+printf '{"type":"user","message":{"role":"user","content":"go"}}\n' > "$AG/agent-a2.jsonl"; echo '{"finished":true}' > "$AG/agent-a2.meta.json"
+printf '{"type":"user","message":{"role":"user","content":"go"}}\n' > "$AG/agent-a3.jsonl"; touch -d '20 minutes ago' "$AG/agent-a3.jsonl"
+asctl rc "$id2" on --next-start >/dev/null
+out=$(asctl restart "$id2" 2>&1)
+c2=$(claude_in "talk2-$id2") && [ "$c2" != "$c1" ] && [ "$(jqe ".entries[\"$id2\"].session_id")" = "$SID2" ] \
+	&& lastargs | seen -- "--resume $SID2 --name talk2-$id2 .*--remote-control talk2-$id2" \
+	&& ok "restart: a new claude on the same conversation, with the new name and rc title (finished, ended or old subagents do not hold it)" || bad "restart: a new claude on the same conversation, with the new name and rc title (finished, ended or old subagents do not hold it)" "restart: $out / $(lastargs)"
+grep "pid=$c2 " "$HOME/claude-args.log" | seen "line: /rename talk2-$id2" && ok "a start with rc sends its name to claude.ai (/rename, once rc is up)" || bad "a start with rc sends its name to claude.ai (/rename, once rc is up)" "no /rename after an rc start: $(grep "pid=$c2 " "$HOME/claude-args.log")"
+out=$(asctl rename "$id2" chat --restart 2>&1)
+c3=$(claude_in "chat-$id2") && [ "$c3" != "$c2" ] && lastargs | seen -- "--name chat-$id2" && ok "rename --restart of an idle claude: restarted with the new name" || bad "rename --restart of an idle claude: restarted with the new name" "rename --restart: $out"
+touch "$HOME/fake-wait"; sleep 0.8
+out=$(errof restart "$id2"); seen 'its claude is waiting' <<<"$out" && [ "$(claude_in "chat-$id2")" = "$c3" ] && ok "restart: not while claude waits (a question or dialog would be lost)" || bad "restart: not while claude waits (a question or dialog would be lost)" "restart while waiting: $out"
+rm -f "$HOME/fake-wait" "$AG"/*
+asctl rc "$id2" off --next-start >/dev/null; asctl off "$id2" --force >/dev/null
+asctl restart "$id2" >/dev/null 2>&1 && bad "restart: refused when it is off" "restart of an off favorite went ahead" || ok "restart: refused when it is off"
+[ "$(grep 'line: ' "$HOME/claude-args.log" | grep -vc 'line: /rename ')" = 0 ] && ok "new names: nothing but /rename ever reached a prompt" || bad "new names: nothing but /rename ever reached a prompt" "lines entered: $(grep 'line: ' "$HOME/claude-args.log")"
+}
+
+# shellcheck disable=SC2329  # helpers run only through poll
+case_outside() {
+# Setup: the tmux server kept up with no session (the section closes its only one), Claude Code's
+# version binary (as "a background job" made it) and the event log's path.
+server_up
+[ -e "$T/versions/2.1.316" ] || { mkdir -p "$T/versions"; cp "$(command -v bash)" "$T/versions/2.1.316"; }
+EVF="$HOME/.local/state/agent-session-control/events.jsonl"
+echo "== a claude outside its tmux session: where it runs, off of a background session, restart into tmux"
+OS=eeeeeeee-0000-4000-8000-000000000001
+tm new-session -d -s outer -c "$W" -- "$ASC_CLAUDE" --session-id "$OS"
+po=$(claude_in outer) || stop "a claude in outer"
+asctl fav "$po" --name outer >/dev/null; ido=$(jq -r '.entries[] | select(.name == "outer") | .id4' "$REG")
+asctl off "$ido" >/dev/null; asctl rc "$ido" on --next-start >/dev/null
+# a claude that ends on SIGTERM, as the real one does; $1: anything: it ignores SIGTERM
+printf '%s\n' '[ -n "${1:-}" ] && trap "" TERM || trap '"'"'kill $! 2>/dev/null; exit 143'"'"' TERM' 'sleep 300 & wait; wait' > "$T/outside.sh"
+outer_up() { tp=$(pgrep -P "$sc" | head -1); [ -n "$tp" ] && [ "$(cat /proc/"$tp"/comm 2>/dev/null)" = claude ]; }
+outer_tty() { script -qfc "exec -a claude '$FAKE_BASH' '$T/outside.sh' ${1:-}" /dev/null >/dev/null 2>&1 & sc=$!; poll 3 outer_up || return 1; }
+outer_tty || stop "a claude in a terminal outside tmux"
+sfile "$tp" "$OS" "$(start_of "$tp")" ',"kind":"interactive","status":"busy"'
+asctl list | seen "outer-$ido *on (outside" && ok "outside: its favorite is on, outside its tmux session" || bad "outside: its favorite is on, outside its tmux session" "outside list: $(asctl list | grep outer)"
+o=$(errof off "$ido")
+seen "runs outside its tmux session 'outer-$ido', in a terminal outside tmux (script, pts/[0-9]*);" <<<"$o" && seen "asctl restart $ido moves it" <<<"$o" && kill -0 "$tp" \
+	&& ok "off refused: where it runs named (the program and its terminal), and how to move it in" || bad "off refused: where it runs named (the program and its terminal), and how to move it in" "outside off: $o"
+o=$(errof restart "$ido")
+seen "busy: its claude is working (its claude runs in a terminal outside tmux" <<<"$o" && kill -0 "$tp" && ok "restart refused while it works" || bad "restart refused while it works" "outside restart busy: $o"
+sfile "$tp" "$OS" "$(start_of "$tp")" ',"kind":"interactive","status":"idle"'
+tm new-session -d -s "outer-$ido" -- sleep 300
+o=$(errof restart "$ido"); tm kill-session -t "=outer-$ido"
+seen "is up without it: close that session first" <<<"$o" && kill -0 "$tp" && ok "restart refused: its tmux session is up without it (nothing ended)" || bad "restart refused: its tmux session is up without it (nothing ended)" "outside restart, session up: $o"
+asctl restart "$ido" >/dev/null 2>&1; r=$?
+pn=$(claude_in "outer-$ido") && [ $r = 0 ] && ! kill -0 "$tp" 2>/dev/null && seen "^pid=$pn .*--resume $OS" "$HOME/claude-args.log" \
+	&& ok "restart: the idle claude outside ended, and started in its tmux session on the same conversation" || bad "restart: the idle claude outside ended, and started in its tmux session on the same conversation" "outside restart: rc $r tp $tp pn $pn"
+jq -s -c --arg i "$ido" '[.[] | select(.id4 == $i and .kind == "off")] | last | .text' "$EVF" | seen "in a terminal outside tmux (script, pts/[0-9]*) ended, to start again in its tmux session" \
+	&& ok "restart: its off event says where it ran" || bad "restart: its off event says where it ran" "outside off event: $(tail -3 "$EVF")"
+o=$(errof restart "$ido" --outside); seen "runs in 'outer-$ido', not outside it: nothing to move in" <<<"$o" && [ "$(claude_in "outer-$ido")" = "$pn" ] \
+	&& ok "restart --outside (the page's): refused for a claude in its tmux session" || bad "restart --outside (the page's): refused for a claude in its tmux session" "restart --outside in tmux: $o"
+seen "pid=$pn line: /rename outer-$ido" "$HOME/claude-args.log" && [ "$(jq -r --arg i "$ido" '.entries[$i].rename_pending' "$REG")" = null ] \
+	&& ok "restart with rc: its name sent to claude.ai at the start (a resumed claude.ai session keeps its old title)" || bad "restart with rc: its name sent to claude.ai at the start (a resumed claude.ai session keeps its old title)" "title at start: $(jq -c --arg i "$ido" '.entries[$i]' "$REG")"
+asctl off "$ido" >/dev/null; touch "$HOME/fake-busy"
+o=$(asctl on "$ido" 2>&1)
+pb=$(claude_in "outer-$ido") && seen "its name not sent to claude.ai: claude is busy" <<<"$o" && [ "$(jq -r --arg i "$ido" '.entries[$i] | "\(.rename_pending) \(.rename_title)"' "$REG")" = "outer-$ido true" ] \
+	&& ok "a start that cannot send its name to claude.ai (claude busy): owed to it, though claude has the name" || bad "a start that cannot send its name to claude.ai (claude busy): owed to it, though claude has the name" "title owed: $o / $(jq -c --arg i "$ido" '.entries[$i]' "$REG")"
+rm -f "$HOME/fake-busy"; sleep 0.8
+# the watcher's step for it alone (a whole watcher run here would start the watcher tests' state early)
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import cli, registry, watch
+e = registry.find(registry.load(), sys.argv[2])
+with registry.entry_lock(e["id4"]):
+    watch._pending_rename({"rename_tries": {}}, e, cli.live_in(e))' "$REPO" "$ido"
+seen "pid=$pb line: /rename outer-$ido" "$HOME/claude-args.log" && [ "$(jq -r --arg i "$ido" '.entries[$i] | "\(.rename_pending) \(.rename_title)"' "$REG")" = "null null" ] \
+	&& ok "the watcher sends it once claude is idle (/rename, though claude has the name), and it is no longer owed" || bad "the watcher sends it once claude is idle (/rename, though claude has the name), and it is no longer owed" "title sent: $(jq -c --arg i "$ido" '.entries[$i]' "$REG")"
+kill "$sc" 2>/dev/null; asctl off "$ido" >/dev/null
+outer_tty hold || stop "a claude outside tmux that ignores SIGTERM"
+sfile "$tp" "$OS" "$(start_of "$tp")" ',"kind":"interactive","status":"idle"'
+o=$(errof restart "$ido")
+seen "still runs 15 s later; nothing was started" <<<"$o" && ! tm has-session -t "=outer-$ido" 2>/dev/null && ok "restart: a claude that does not end on SIGTERM: nothing started" || bad "restart: a claude that does not end on SIGTERM: nothing started" "outside restart, no end: $o"
+kill -KILL "$tp" "$sc" 2>/dev/null; wait "$sc" 2>/dev/null; rm -f "$HOME/.claude/sessions/$tp.json"
+( exec -a claude "$T/versions/2.1.316" "$T/outside.sh" ) >/dev/null 2>&1 & bp=$!; sleep 0.3
+sfile "$bp" "$OS" "$(start_of "$bp")" ',"kind":"bg","jobId":"eeee0001","status":"busy"'
+o=$(errof off "$ido")
+seen "busy: its claude is working (its claude runs as a Claude Code background session (job eeee0001))" <<<"$o" && kill -0 "$bp" && ok "off of a background session refused while it works" || bad "off of a background session refused while it works" "bg off busy: $o"
+sfile "$bp" "$OS" "$(start_of "$bp")" ',"kind":"bg","jobId":"eeee0001","status":"idle"'; touch "$HOME/fake-stop-fails"
+o=$(errof off "$ido"); rm -f "$HOME/fake-stop-fails"
+seen "claude stop eeee0001: Could not reach the daemon" <<<"$o" && kill -0 "$bp" && ok "off: claude stop failing is said, and the session still runs" || bad "off: claude stop failing is said, and the session still runs" "bg off, stop fails: $o"
+o=$(asctl off "$ido" 2>&1); r=$?
+[ $r = 0 ] && seen "its background session stopped; the conversation is kept" <<<"$o" && ! kill -0 "$bp" 2>/dev/null && seen "args=stop eeee0001" "$HOME/claude-args.log" \
+	&& [ "$(jq -r --arg i "$ido" '.entries[$i].want_on' "$REG")" = false ] && ok "off of an idle background session: claude stop ends it, it is marked off" || bad "off of an idle background session: claude stop ends it, it is marked off" "bg off: rc $r $o"
+tail -1 "$EVF" | seen "its background session (job eeee0001) stopped with claude stop" && ok "off of a background session: logged" || bad "off of a background session: logged" "bg off event: $(tail -1 "$EVF")"
+( exec -a claude "$T/versions/2.1.316" "$T/outside.sh" ) >/dev/null 2>&1 & bp=$!; sleep 0.3
+sfile "$bp" "$OS" "$(start_of "$bp")" ',"kind":"bg","jobId":"eeee0001","status":"idle"'
+asctl restart "$ido" >/dev/null 2>&1; r=$?
+pn=$(claude_in "outer-$ido") && [ $r = 0 ] && ! kill -0 "$bp" 2>/dev/null && [ "$(grep -c "args=stop eeee0001" "$HOME/claude-args.log")" = 3 ] \
+	&& ok "restart of a background session: claude stop, then started in its tmux session" || bad "restart of a background session: claude stop, then started in its tmux session" "bg restart: rc $r pn $pn"
+asctl off "$ido" >/dev/null; asctl forget "$ido" >/dev/null
+[ "$(grep 'line: ' "$HOME/claude-args.log" | grep -vc 'line: /rename ')" = 0 ] && ok "outside: nothing but /rename ever reached a prompt" || bad "outside: nothing but /rename ever reached a prompt" "lines entered: $(grep 'line: ' "$HOME/claude-args.log")"
+}
+
+case_watcher_memory() {
+# Setup: two favorites, off, as main leaves them: one holding SID2 ("not followed: a session id
+# another favorite holds"), one whose conversation has no transcript (its length counted).
+server_up
+SID2=22222222-3333-4444-8555-000000000022 NT=22222222-3333-4444-8555-000000000023
+mkdir -p "$HOME/.claude/projects/-x"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SID2" > "$HOME/.claude/projects/-x/$SID2.jsonl"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$NT" > "$HOME/.claude/projects/-x/$NT.jsonl"
+asctl fav "$SID2" --name held >/dev/null || stop "a favorite holding SID2"
+asctl fav "$NT" --name nolen >/dev/null || stop "a favorite with no transcript"
+rm -f "$HOME/.claude/projects/-x/$NT.jsonl"
 echo "== watcher: memory, sizes, following, a pending rename, duplicates"
-SD="$HOME/.local/state/agent-session-control"
-watch() { ASC_BY=watch asctl watch; }
-evn() { jq -s --arg k "$1" '[.[] | select(.kind == $k)] | length' "$SD/events.jsonl"; }
-last() { jq -s -c --arg k "$1" '[.[] | select(.kind == $k)] | last' "$SD/events.jsonl"; }
-# Seed 6 min of samples (as if the watcher had run every 30 s), from the fake readings now.
-# (Runs of the tests come seconds apart, so samples taken since stay inside the 8 min kept.)
-seed() { python3 -I -c 'import sys, time; sys.path.insert(0, sys.argv[1]); from asc import memory, registry
-s = memory.sample(); now = int(time.time())
-registry.write_private(registry.state_dir() + "/memory.json", [dict(s, t=now - 30 * i) for i in range(12, 0, -1)])' "$REPO"; }
 watch && jq -e 'length == 1 and .[0].avail_pct == 50 and .[0].oom_kill == 0 and (.[0].boot | length) > 0' "$SD/memory.json" >/dev/null \
 	&& [ "$(stat -c %a "$SD/memory.json" "$SD/watch.json" | sort -u)" = 600 ] && ok "watch: a memory sample kept, its files 0600" || bad "watch: a memory sample kept, its files 0600" "watch: no sample: $(cat "$SD/memory.json")"
 jq -e --argjson n "$(date +%s)" '.at <= $n and .at > $n - 60' "$SD/watch.json" >/dev/null && ok "watch: when its run began, for the dashboard" || bad "watch: when its run began, for the dashboard" "watch.json at: $(cat "$SD/watch.json")"
@@ -839,7 +884,30 @@ assert memory._ok(S(1)) and not memory._ok(S(1, oom_kill="3")) and not memory._o
 python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import live, tmuxctl
 tmuxctl.panes = lambda *a, **k: None
 assert live.busy_reason("x", []) == "tmux did not list its panes"' "$REPO" && ok "busy: tmux not answering counts as busy" || bad "busy: tmux not answering counts as busy" "tmux failure read as not busy"
+# Its favorite off: no later case meets its claude.
+asctl off "$idw" --force >/dev/null
+}
 
+# shellcheck disable=SC2329  # helpers run only through poll
+case_watcher_ended() {
+# Setup, as the watcher's first tests left it: a favorite (idw) on, its claude started by asctl
+# in wat2-<id> on session WS2, its folder followed to $T/moved, the watcher run since (a memory
+# sample from before the end below); and a second favorite, off ("the others go on").
+server_up
+WS2=eeeeeeee-0000-4000-8000-0000000000e2 OT=eeeeeeee-0000-4000-8000-0000000000e3
+tm new-session -d -s wend -c "$W" -- "$ASC_CLAUDE" --session-id "$WS2"
+pw=$(claude_in wend) || stop "a claude in wend"
+asctl fav "$pw" --name wat2 >/dev/null || stop "a favorite of the claude in wend"
+idw=$(jq -r --arg s "$WS2" '.entries[] | select(.session_id == $s) | .id4' "$REG")
+asctl off "$idw" >/dev/null; asctl on "$idw" >/dev/null
+pw=$(claude_in "wat2-$idw") || stop "a claude in wat2-<id> after on"
+mkdir -p "$T/moved"; echo "$T/moved" > "$HOME/fake-cd-$WS2"
+moved_in() { watch; [ "$(jq -r ".entries[\"$idw\"].cwd" "$REG")" = "$T/moved" ]; }
+poll 5 moved_in || stop "wat2-<id> followed to its folder"
+rm -f "$HOME/fake-cd-$WS2"
+mkdir -p "$HOME/.claude/projects/-x"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$OT" > "$HOME/.claude/projects/-x/$OT.jsonl"
+asctl fav "$OT" --name wother >/dev/null || stop "a second favorite for the watcher"
 echo "== watcher: a claude that ended with its tmux session up"
 # OOM kills seen: a counter that only grows, as the kernel's does
 oomk=0; bump() { oomk=$((oomk + 1)); vm 0 0 0 "$oomk"; }
@@ -988,7 +1056,24 @@ asctl off "$idw" --force >/dev/null; watch
 claude_in "wat3-$idw" >/dev/null 2>&1 && bad "off: the watcher leaves it off" "off, and started anyway" || ok "off: the watcher leaves it off"
 [ "$(jq -r ".entries[\"$idw\"].want_on" "$REG")" = false ] && ok "want_on only changed by off" || bad "want_on only changed by off" "want_on changed"
 asctl auto-restart off >/dev/null
+}
 
+# shellcheck disable=SC2329  # helpers run only through poll
+case_boot() {
+# Setup, as the watcher tests left it: the tmux server up, not started by the unit (nothing has
+# called systemctl yet); a favorite (idw) named wat3, off, its size known; and two other favorites
+# for boot to leave alone ("boot: 1 started", "not started: resurrect on but off, on but
+# resurrect off").
+server_up
+B1=bbbbbbbb-0000-4000-8000-000000000001 B2=bbbbbbbb-0000-4000-8000-000000000002 B3=bbbbbbbb-0000-4000-8000-000000000003
+mkdir -p "$HOME/.claude/projects/-boot"
+for x in "$B1" "$B2" "$B3"; do printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$x" > "$HOME/.claude/projects/-boot/$x.jsonl"; done
+asctl fav "$B1" --name wat3 >/dev/null || stop "boot's favorite"
+asctl fav "$B2" --name bootx >/dev/null || stop "a favorite boot leaves alone"
+asctl fav "$B3" --name booty >/dev/null || stop "another favorite boot leaves alone"
+idw=$(jq -r --arg s "$B1" '.entries[] | select(.session_id == $s) | .id4' "$REG")
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import registry
+with registry.changing() as d: d["entries"][sys.argv[2]]["rss_kb"] = 400000' "$REPO" "$idw" || stop "boot's favorite's size"
 echo "== the tmux server unit, and boot"
 SC="$HOME/systemctl.log"
 asctl tmux-server | seen 'already runs' && [ ! -e "$SC" ] && ok "tmux-server with a server up: left as it is" || bad "tmux-server with a server up: left as it is" "tmux-server with a server up: $(asctl tmux-server 2>&1)"
@@ -1077,6 +1162,11 @@ out=$(ASC_NET=127.0.0.1:$shut_port boot --net-wait 1 --wait 60 2>&1)
 last waiting | seen "127.0.0.1:$shut_port did not answer in 1 s; starting anyway" && [ "$(evn on)" = $((non + 1)) ] \
 	&& ok "claude.ai not answering: started anyway after the wait" || bad "claude.ai not answering: started anyway after the wait" "net down: $out $(last waiting)"
 kill "$lp" 2>/dev/null
+}
+
+case_asctl_setup() {
+# Setup: a tmux server up (the section turns continuum on in it).
+server_up
 echo "== asctl setup (a fake user manager: tests/asc/bin/systemctl)"
 # A home of its own: its fake units must not change how On starts the tmux server above.
 H2="$T/h2" F2="$T/h2/fake-units"; mkdir -p "$H2" "$T/linger"
@@ -1200,6 +1290,9 @@ ud() { HOME="$H2" XDG_CONFIG_HOME="$1" python3 -I -c 'import sys; sys.path.inser
 [ "$(ud "$T/shellcfg")" = "$H2/.config/systemd/user" ] && echo "XDG_CONFIG_HOME=$H2/mgrcfg" > "$F2/environment" && [ "$(ud "$T/shellcfg")" = "$H2/mgrcfg/systemd/user" ] \
 	&& ok "the unit folder follows the manager's XDG_CONFIG_HOME, not the shell's" || bad "the unit folder follows the manager's XDG_CONFIG_HOME, not the shell's" "unit_dir: $(ud "$T/shellcfg")"
 rm "$F2/environment"
+}
+
+run_cases asc no_tmux_server main new_name outside watcher_memory watcher_ended boot asctl_setup
 # ASC_MUTANTS=1: break asctl one way at a time, in a copy; each must make this test fail.
 if [ "${ASC_MUTANTS:-}" = 1 ]; then
 	echo "== mutants"
