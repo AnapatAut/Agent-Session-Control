@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Static checks: bash syntax and shellcheck for every script in the repo, the suites' checks and
-# waits (tests/checklint.py), and the privacy check of every tracked file. Fast, changes nothing.
+# waits (tests/checklint.py), their mutant lists (tests/mutantlint.py), and the privacy check of
+# every tracked file. Fast, changes nothing.
 #   tests/lint.sh
 set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -27,6 +28,8 @@ fi
 python3 -I -m py_compile asc/*.py && echo "python: ok (asc/*.py compile)" || rc=1
 python3 -I tests/checklint.py --self-test && python3 -I tests/checklint.py tests/asc.sh tests/dash.sh tests/dash/page.js \
 	&& echo "checks and waits: ok (one fixed name per check, run once; every wait's status used)" || rc=1
+python3 -I tests/mutantlint.py --self-test && python3 -I tests/mutantlint.py tests/asc.sh tests/dash.sh tests/privacy.sh \
+	&& echo "mutants: ok (each old text found once in its file, no line twice, each change parses)" || rc=1
 find asc -name __pycache__ -prune -exec rm -r {} + 2>/dev/null
 if command -v node >/dev/null; then
 	for js in asc/web/app.js asc/web/splash.js tests/dash/page.js; do node --check "$js" && echo "js: ok ($js parses)" || rc=1; done

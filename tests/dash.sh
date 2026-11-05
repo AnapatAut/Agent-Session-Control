@@ -704,7 +704,7 @@ asc/dash.py %%% .replace("@V@", ICON_VER) %%% .replace("@X@", ICON_VER)
 asc/dash.py %%%         if self._public(self._path()): %%%         if self._public(urllib.parse.urlsplit(self.path).path):
 asc/dash.py %%% "start_url": f"./?v={ICON_VER}" %%% "start_url": "/"
 asc/live.py %%%                 if own_sid and own_sid not in (s["session_id"], (s.get("host") or {}).get("session_id")): %%%                 if False:
-asc/live.py %%%     except (ValueError, RecursionError): %%%     except ValueError:
+asc/live.py %%% "replace"))⏎    except (ValueError, RecursionError): %%% "replace"))⏎    except ValueError:
 asc/past.py %%%             except (ValueError, RecursionError): %%%             except ValueError:
 asc/past.py %%%     if not stat.S_ISREG(st.st_mode): %%%     if False:
 asc/dash.py %%%         if not serve_is_ours(): %%%         if False:
@@ -713,7 +713,7 @@ asc/dash.py %%%         ok = r.returncode == 0 and op in %%%         ok = op in
 asc/dash.py %%%     if stat.S_IMODE(os.stat(path).st_mode) & 0o022: %%%     if False:
 asc/tmuxctl.py %%% timeout=timeout, stdin=subprocess.DEVNULL) %%% stdin=subprocess.DEVNULL)
 asc/dash.py %%%  + (["--force-memory"] if a.get("force_memory") is True else []) %%%  + (["--force-memory"] if a.get("force_memory") else [])
-asc/dash.py %%%         if not isinstance(a.get("on"), bool): %%%         if False:
+asc/dash.py %%%         if not isinstance(a.get("on"), bool):⏎            raise RegistryError("auto_restart needs %%%         if False:⏎            raise RegistryError("auto_restart needs
 asc/past.py %%%         elif r.get("type") == "ai-title" and %%%         elif False and
 asc/past.py %%% (title or ai or "") %%% (ai or title or "")
 asc/dash.py %%% (s["derived"] or not s["name"]) and past.title %%% False and past.title
@@ -745,7 +745,7 @@ asc/web/app.js %%%            why: e.resurrect ? "Off, so a reboot won't bring i
 asc/web/app.js %%%   if (why.startsWith("pause") || !why) return "Starts in a moment."; %%%   if (why.startsWith("pause") || !why) return "Starts in a moment."; return why;
 asc/web/app.js %%% month: "short", year: "numeric" %%% month: "short"
 asc/web/app.js %%%     why: e.outside ? `Its claude runs in ${e.outside.text}, not in tmux session ${e.tmux}.` %%%     why: e.outside ? `Its claude runs, but not in tmux session ${e.tmux}.`
-asc/dash.py %%%         if not isinstance(a.get("on"), bool): %%%         if False:
+asc/dash.py %%%         if not isinstance(a.get("on"), bool):⏎            raise RegistryError(f"{kind} needs %%%         if False:⏎            raise RegistryError(f"{kind} needs
 asc/dash.py %%%             "conv_lines": lens.get(e.get("session_id"), {}).get("lines"), %%%             "conv_lines": None,
 asc/dash.py %%% max(0, mem["total_kb"] - mem["avail_kb"] - total) %%% mem["total_kb"] - mem["avail_kb"] - total
 asc/dash.py %%% mem["avail_kb"] - total)} %%% mem["avail_kb"])}

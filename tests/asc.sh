@@ -1217,7 +1217,7 @@ asc/cli.py %%%     if away: %%%     if False:
 asc/cli.py %%%     return live_in(e, lv) or next( %%%     return live_in(e, lv) or None and next(
 asc/cli.py %%%     return (any(l.endswith("No, exit") %%%     return True or (any(l.endswith("No, exit")
 asc/tmuxctl.py %%%     return run("has-session", "-t", "=" + name) %%%     return run("has-session", "-t", name)
-asc/tmuxctl.py %%% cwd.replace("#", "##") %%% cwd
+asc/tmuxctl.py %%% "-s", name, "-c", cwd.replace("#", "##") %%% "-s", name, "-c", cwd
 asc/live.py %%%         if s["live"]: %%%         if s["ok"]:
 asc/cli.py %%%             if owner: %%%             if False:
 asc/cli.py %%%             if others and not whole: %%%             if False:
@@ -1268,7 +1268,7 @@ asc/live.py %%%         if isinstance(meta, dict) and meta.get("finished") is Tr
 asc/live.py %%%  and m.get("stop_reason") == "end_turn": %%%  and False:
 asc/live.py %%%             if now - os.lstat(path).st_mtime > AGENT_FRESH: %%%             if False:
 asc/live.py %%%                 t = claude_tasks(s, kids) %%%                 t = ""
-asc/cli.py %%%     if s["status"] != "idle": %%%     if False:
+asc/cli.py %%%     if s["status"] != "idle":⏎        raise RegistryError(f"its claude is %%%     if False:⏎        raise RegistryError(f"its claude is
 asc/live.py %%%         j["pane"], j["host"] = h["pane"], h %%%         pass
 asc/live.py %%% s["pane"] = None if s["kind"] == "bg" else next( %%% s["pane"] = next(
 asc/live.py %%%     known.update({s["host"]["pid"]: s for s in lv if s.get("host")}) %%%     pass
@@ -1327,7 +1327,7 @@ asc/events.py %%%     return "".join(" " if unicodedata.category(c) in ("Cc", "C
 asc/cli.py %%%         events.log("refused", e, f"{what}: {x}") %%%         pass
 asc/cli.py %%%         elif not args.restart: %%%         elif False:
 asc/cli.py %%%     if pid is not None: %%%     if False:
-asc/cli.py %%%     if pid is None: %%%     if False:
+asc/cli.py %%%     if pid is None:⏎        raise RegistryError("no tmux server is running %%%     if False:⏎        raise RegistryError("no tmux server is running
 asc/cli.py %%%         server = ensure_server() %%%         server = tmuxctl.server_pid()
 asc/cli.py %%%         argv = claude_argv(e, resurrect) %%%         argv = claude_argv(e)
 asc/cli.py %%%     if running is not None: %%%     if False:
@@ -1384,7 +1384,7 @@ asc/cli.py %%%             x["rename_title"] = True if title else None %%%      
 asc/watch.py %%%     if pend != e["tmux"] or (s["name"] == pend and not e.get("rename_title")): %%%     if pend != e["tmux"] or s["name"] == pend:
 asc/rclive.py %%%     if wait_for(lambda: offers_cmd(screen(pane), before), timeout): %%%     if offers_cmd(steady(pane), before):
 asc/events.py %%% [i for r, i in mine if r < per] %%% [i for r, i in mine]
-asc/events.py %%%         elif t >= cut: %%%         else:
+asc/events.py %%%         elif t >= cut: %%%         elif True:
 asc/events.py %%%         if fav and kind == "forget": %%%         if False:
 asc/events.py %%%     if size <= CHECK_BYTES and _time(first) >= cut: %%%     if _time(first) >= cut:
 asc/events.py %%%         return set(registry.load(d)["entries"]) %%%         return None

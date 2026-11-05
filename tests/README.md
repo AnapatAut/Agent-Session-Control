@@ -36,8 +36,12 @@ lint refuses one, and a poll loop written out by hand. On exit each suite ends w
 before removing its folder.
 
 Mutant runs (`tests/mutate.sh`) run 8 copies at a time, each stopping at its first FAIL, and
-print the check that caught each mutant. Do not edit a test script while it runs: bash reads a
-script as it goes, and the run breaks.
+print the check that caught each mutant. A mutant's old text must be found exactly once in its
+file (a `⏎` in old or new stands for a newline, so it can take in the line after or before it),
+and the lint (`tests/mutantlint.py`) refuses one that is not, a line given twice, and a change
+that no longer parses: a mutant that breaks the syntax fails every check, a catch that tests
+nothing. Do not edit a test script while it runs: bash reads a script as it goes, and the run
+breaks.
 
 ## The sandbox
 

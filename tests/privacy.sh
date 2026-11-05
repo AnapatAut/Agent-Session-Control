@@ -222,21 +222,28 @@ newrepo; printf '(unclosed\n' >> "$T/r/tools/privacy-rules"; printf 'x\n' > "$T/
 chk --staged; [ $? = 2 ] && ok "a broken rule stops the check (exit 2), never passes" || bad "a broken rule lets the check pass"
 
 # PRIVACY_MUTANTS=1: break the checker or a hook one way at a time, in a copy; each must make
-# this test fail. About two minutes (37 mutants).
+# this test fail. About two minutes (38 mutants). As in tests/mutate.sh: the old text must be found
+# exactly once in its file, a ⏎ stands for a newline, and a line given twice fails.
 if [ "${PRIVACY_MUTANTS:-}" = 1 ]; then
 	echo "== mutants"
+	declare -A had=()
 	while IFS= read -r m; do
 		[ -n "$m" ] || continue
 		f=${m%%' %%% '*}; rest=${m#*' %%% '}; old=${rest%%' %%% '*}; new=${rest#*' %%% '}
-		d=$(mktemp -d -p "$T") || exit 2
-		cp -r "$REPO/tools" "$REPO/tests" "$REPO/.githooks" "$d/"
-		body=$(<"$d/$f")
 		# one name either way, the new text in it too; only a line that starts with "  FAIL  " is one
 		name="mutant: $f: $old => $new"
-		[[ $body == *"$old"* ]] || { bad "$name" "does not apply: the old text is not in $f"; continue; }
+		[ -z "${had[$m]+x}" ] || { bad "$name" "in the list twice"; continue; }
+		had[$m]=1
+		old=${old//⏎/$'\n'}; new=${new//⏎/$'\n'}
+		d=$(mktemp -d -p "$T") || exit 2
+		cp -r "$REPO/tools" "$REPO/tests" "$REPO/.githooks" "$d/"
+		body=$(<"$d/$f") n=0
+		[ -z "$old" ] || { left=${body//"$old"}; n=$(( (${#body} - ${#left}) / ${#old} )); }
+		[ "$n" = 1 ] || { bad "$name" "does not apply: the old text is in $f $n times, not once"; rm -rf "$d"; continue; }
 		printf '%s\n' "${body/"$old"/"$new"}" > "$d/$f"
 		out=$(cd "$d" && git init -q -b main && PRIVACY_MUTANTS='' bash tests/privacy.sh 2>&1)
 		grep -q '^  FAIL  ' <<<"$out" && ok "$name" || bad "$name" "missed: the suite passed with it"
+		rm -rf "$d"
 	done <<'MUTANTS'
 tools/privacy-rules %%% (?<![A-Za-z0-9._%+-])(?![0-9] %%% (?!)(?<![A-Za-z0-9._%+-])(?![0-9]
 tools/privacy-check.sh %%% grep -q . "$tmp/local" && find_hits %%% false && find_hits
@@ -247,7 +254,8 @@ tools/privacy-check.sh %%% find_hits -P '^[^\t]*\tBINARY ' %%% :
 tools/privacy-check.sh %%% /^[#;] ------------------------ >8 ------------------------$/ { %%% /^#/ { next } /^[#;] ------------------------ >8 ------------------------$/ {
 tools/privacy-check.sh %%% printf 'author\t%s\ncommitter\t%s\n' "$a" "$c" >> "$in" %%% :
 tools/privacy-check.sh %%% git diff --cached --name-only -z --no-renames > "$tmp/files" %%% : > "$tmp/files"
-tools/privacy-check.sh %%% names path < "$tmp/files" >> "$in" %%% :
+tools/privacy-check.sh %%% || die "git ls-files"⏎	names path < "$tmp/files" >> "$in" %%% || die "git ls-files"⏎	:
+tools/privacy-check.sh %%% || die "git diff --name-only"⏎	names path < "$tmp/files" >> "$in" %%% || die "git diff --name-only"⏎	:
 tools/privacy-check.sh %%% [ -n "$users" ] || users=fresh %%% users=nobodyx
 tools/privacy-check.sh %%% --diff-merges=first-parent -U0 %%% -U0
 tools/privacy-check.sh %%% /^@@ /                   { h = 0; next } %%% /^@@ /                   { next }
