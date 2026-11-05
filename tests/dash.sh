@@ -26,8 +26,12 @@ DPID=
 cleanup() { [ -n "$DPID" ] && kill "$DPID" 2>/dev/null; timeout -k 2 10 tmux -L "$ASC_TMUX_SOCKET" -f /dev/null kill-server 2>/dev/null; rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$ASC_TMUX_SOCKET"; rm -rf "$T"; }
 trap cleanup EXIT
 pass=0 fail=0
-ok()  { echo "  ok    $1"; pass=$((pass + 1)); }
-bad() { echo "  FAIL  $1"; fail=$((fail + 1)); [ -z "${TEST_FAILFAST:-}" ] || exit 1; }
+# One check, one fixed name: `ok NAME` or `bad NAME [DETAILS]`, the same NAME both ways and never a
+# value in it (tests/checknames.py, run by tests/lint.sh). DETAILS, what was seen, go on the lines
+# after the FAIL, each indented. `skip NAME WHY` for a check that cannot run here.
+ok()   { echo "  ok    $1"; pass=$((pass + 1)); }
+bad()  { echo "  FAIL  $1"; [ -z "${2-}" ] || printf '        %s\n' "${2//$'\n'/$'\n'        }"; fail=$((fail + 1)); [ -z "${TEST_FAILFAST:-}" ] || exit 1; }
+skip() { echo "  skip  $1"; [ -z "${2-}" ] || printf '        %s\n' "${2//$'\n'/$'\n'        }"; }
 asctl() { "$REPO/bin/asctl" "$@"; }
 seen() { grep "$@" >/dev/null; }
 . "$REPO/tests/mutate.sh"
@@ -98,55 +102,68 @@ PREFIX=
 
 echo "== the page's own logic (tests/dash/page.js, in node)"
 if command -v node >/dev/null; then
+	# Its checks relayed as they come (their names are page.js's own, fixed there), a FAIL's details
+	# (the indented lines after it) with it. Any other line, such as the stack trace of an app.js
+	# that does not load, goes into one FAIL of its own.
+	other='' pfails=0 last=''
 	while IFS= read -r line; do
-		case $line in "  ok    "*) ok "${line#  ok    }" ;; *) bad "${line#  FAIL  }" ;; esac
+		case $line in
+		"  ok    "*) ok "${line#  ok    }"; last= ;;
+		"  FAIL  "*) bad "${line#  FAIL  }"; pfails=$((pfails + 1)); last=fail ;;
+		"        "*) if [ "$last" = fail ]; then echo "$line"; else other+="$line"$'\n'; fi ;;
+		*) other+="$line"$'\n'; last= ;;
+		esac
 	done < <(node "$REPO/tests/dash/page.js" "$REPO" 2>&1)
+	wait $!; prc=$?
+	[ -z "$other" ] && ok "page: nothing from node but its checks" || bad "page: nothing from node but its checks" "${other%$'\n'}"
+	{ [ "$prc" = 0 ] && [ "$pfails" = 0 ]; } || { [ "$prc" = 1 ] && [ "$pfails" -gt 0 ]; } && ok "page: node's exit status matches its checks" \
+		|| bad "page: node's exit status matches its checks" "exit $prc with $pfails FAIL lines"
 else
-	echo "  skip  the page's own logic: node not installed"
+	skip "page: the page's own logic" "node not installed"
 fi
 
 echo "== config"
 # A refusal is exit 1 at once; a server that starts anyway is cut off by timeout (124).
 refuses() { timeout 5 "$REPO/bin/asctl" dash --idle 0 2>"$T/err"; [ $? = 1 ]; }
-refuses && ok "dash refuses to start without a config" || bad "dash started without a config"
-seen 'login and host allowed' "$T/err" && ok "it says what the config needs" || bad "no hint: $(cat "$T/err")"
+refuses && ok "dash refuses to start without a config" || bad "dash refuses to start without a config" "dash started without a config"
+seen 'login and host allowed' "$T/err" && ok "it says what the config needs" || bad "it says what the config needs" "no hint: $(cat "$T/err")"
 mkdir -p "$(dirname "$CONF")"
 printf '{"login": "%s"}\n' "$LOGIN" > "$CONF"
-refuses && ok "dash refuses a config with no host" || bad "dash started with no host"
+refuses && ok "dash refuses a config with no host" || bad "dash refuses a config with no host" "dash started with no host"
 printf '{"login": "%s", "host": "%s"}\n' "$LOGIN" "$HOST" > "$CONF"
 chmod 700 "$(dirname "$CONF")"; chmod 664 "$CONF"
-refuses && seen 'chmod go-w' "$T/err" && ok "dash refuses a config others can write" || bad "dash used a config others can write: $(cat "$T/err")"
+refuses && seen 'chmod go-w' "$T/err" && ok "dash refuses a config others can write" || bad "dash refuses a config others can write" "dash used a config others can write: $(cat "$T/err")"
 chmod 644 "$CONF"; chmod 775 "$(dirname "$CONF")"
-refuses && ok "dash refuses a config in a folder others can write" || bad "dash used a config in a folder others can write"
+refuses && ok "dash refuses a config in a folder others can write" || bad "dash refuses a config in a folder others can write" "dash used a config in a folder others can write"
 chmod 755 "$(dirname "$CONF")"
 mkdir -p "$T/open"; chmod 777 "$T/open"; mv "$CONF" "$T/open/dash.json"; ln -s "$T/open/dash.json" "$CONF"
-refuses && ok "and a symlinked config in a folder others can write" || bad "dash used a symlinked config in an open folder"
+refuses && ok "and a symlinked config in a folder others can write" || bad "and a symlinked config in a folder others can write" "dash used a symlinked config in an open folder"
 rm "$CONF"; mv "$T/open/dash.json" "$CONF"
 chmod 755 "$T/run"; mkdir -p "$T/run/asctl"; chmod 755 "$T/run/asctl"
-refuses && ok "dash refuses a socket folder that is not 0700" || bad "dash used a socket folder others can open"
+refuses && ok "dash refuses a socket folder that is not 0700" || bad "dash refuses a socket folder that is not 0700" "dash used a socket folder others can open"
 chmod 700 "$T/run/asctl"
 
 echo "== the socket and the checks on every request"
 tm start-server \; set -g exit-empty off
-start_dash && ok "dash listens on its socket" || bad "no socket: $(cat "$T/dash.err")"
-[ "$(stat -c %a "$SOCK")" = 600 ] && ok "socket mode 0600" || bad "socket mode $(stat -c %a "$SOCK")"
-[ "$(stat -c %a "$T/run/asctl")" = 700 ] && ok "socket folder 0700" || bad "socket folder $(stat -c %a "$T/run/asctl")"
-[ "$(code http://x/api/state)" = 200 ] && ok "the right login and host: 200" || bad "the right login and host: $(code http://x/api/state)"
-[ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Host: $HOST" http://x/api/state)" = 403 ] && ok "no login header: 403" || bad "no login header let in"
+start_dash && ok "dash listens on its socket" || bad "dash listens on its socket" "no socket: $(cat "$T/dash.err")"
+[ "$(stat -c %a "$SOCK")" = 600 ] && ok "socket mode 0600" || bad "socket mode 0600" "socket mode $(stat -c %a "$SOCK")"
+[ "$(stat -c %a "$T/run/asctl")" = 700 ] && ok "socket folder 0700" || bad "socket folder 0700" "socket folder $(stat -c %a "$T/run/asctl")"
+[ "$(code http://x/api/state)" = 200 ] && ok "the right login and host: 200" || bad "the right login and host: 200" "the right login and host: $(code http://x/api/state)"
+[ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Host: $HOST" http://x/api/state)" = 403 ] && ok "no login header: 403" || bad "no login header: 403" "no login header let in"
 r=$(curl -s -D - --unix-socket "$SOCK" -H "Host: $HOST" http://x/)
 seen '^HTTP/1.[01] 403' <<<"$r" && seen -i '^content-type: text/html' <<<"$r" && seen '<title>Agent Session Control</title>' <<<"$r" \
 	&& seen 'href="favicon.svg?v=' <<<"$r" && ! seen -i 'asctl-token\|@TOKEN@\|<script' <<<"$r" \
-	&& ok "the page refused: 403 with its title and tab icon only (no token, no script)" || bad "refused page: $r"
-curl -s --unix-socket "$SOCK" -H "Host: $HOST" http://x/api/state | seen -x '{"error": "forbidden"}' && ok "the API refused: plain JSON 403" || bad "refused API body changed"
-[ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Tailscale-User-Login: other${E}example.com" -H "Host: $HOST" -H "$XFH" -H "$XFF" http://x/api/state)" = 403 ] && ok "another login: 403" || bad "another login let in"
-[ "$(raw "Host: $HOST" "Tailscale-User-Login: $LOGIN")" = 200 ] && ok "raw request with the right headers: 200" || bad "raw request refused"
-[ "$(raw "Host: $HOST" "Tailscale-User-Login: $LOGIN" "Tailscale-User-Login: $LOGIN")" = 403 ] && ok "the login header twice: 403" || bad "a doubled login header let in"
-[ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Tailscale-User-Login: $LOGIN" -H "Host: evil.example" -H "$XFH" -H "$XFF" http://x/api/state)" = 403 ] && ok "another Host (neither localhost nor the host): 403" || bad "another Host let in"
+	&& ok "the page refused: 403 with its title and tab icon only (no token, no script)" || bad "the page refused: 403 with its title and tab icon only (no token, no script)" "refused page: $r"
+curl -s --unix-socket "$SOCK" -H "Host: $HOST" http://x/api/state | seen -x '{"error": "forbidden"}' && ok "the API refused: plain JSON 403" || bad "the API refused: plain JSON 403" "refused API body changed"
+[ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Tailscale-User-Login: other${E}example.com" -H "Host: $HOST" -H "$XFH" -H "$XFF" http://x/api/state)" = 403 ] && ok "another login: 403" || bad "another login: 403" "another login let in"
+[ "$(raw "Host: $HOST" "Tailscale-User-Login: $LOGIN")" = 200 ] && ok "raw request with the right headers: 200" || bad "raw request with the right headers: 200" "raw request refused"
+[ "$(raw "Host: $HOST" "Tailscale-User-Login: $LOGIN" "Tailscale-User-Login: $LOGIN")" = 403 ] && ok "the login header twice: 403" || bad "the login header twice: 403" "a doubled login header let in"
+[ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Tailscale-User-Login: $LOGIN" -H "Host: evil.example" -H "$XFH" -H "$XFF" http://x/api/state)" = 403 ] && ok "another Host (neither localhost nor the host): 403" || bad "another Host (neither localhost nor the host): 403" "another Host let in"
 xfh() { curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Tailscale-User-Login: $LOGIN" -H "Host: localhost" -H "$XFF" "$@" http://x/api/state; }
-[ "$(xfh)" = 403 ] && ok "no X-Forwarded-Host: 403" || bad "no X-Forwarded-Host let in"
-[ "$(xfh -H 'X-Forwarded-Host: evil.example')" = 403 ] && ok "another X-Forwarded-Host: 403" || bad "another X-Forwarded-Host let in"
-[ "$(xfh -H "$XFH" -H "$XFH")" = 403 ] && ok "X-Forwarded-Host twice: 403" || bad "a doubled X-Forwarded-Host let in"
-[ "$(raw "Host: $HOST" "Host: evil.example" "Tailscale-User-Login: $LOGIN")" = 403 ] && ok "two Host headers: 403" || bad "two Host headers let in"
+[ "$(xfh)" = 403 ] && ok "no X-Forwarded-Host: 403" || bad "no X-Forwarded-Host: 403" "no X-Forwarded-Host let in"
+[ "$(xfh -H 'X-Forwarded-Host: evil.example')" = 403 ] && ok "another X-Forwarded-Host: 403" || bad "another X-Forwarded-Host: 403" "another X-Forwarded-Host let in"
+[ "$(xfh -H "$XFH" -H "$XFH")" = 403 ] && ok "X-Forwarded-Host twice: 403" || bad "X-Forwarded-Host twice: 403" "a doubled X-Forwarded-Host let in"
+[ "$(raw "Host: $HOST" "Host: evil.example" "Tailscale-User-Login: $LOGIN")" = 403 ] && ok "two Host headers: 403" || bad "two Host headers: 403" "two Host headers let in"
 second="GET /api/state HTTP/1.1
 Host: $HOST
 $XFF
@@ -154,27 +171,27 @@ $XFH
 Tailscale-User-Login: $LOGIN
 "
 r=$(printf 'GET / HTTP/1.1\nHost: %s\n%s\n%s\nTailscale-User-Login: evil%sexample.com\nContent-Length: %s\n\n%s\n' "$HOST" "$XFF" "$XFH" "$E" "$(( ${#second} + $(printf '%s' "$second" | tr -cd '\n' | wc -c) + 2 ))" "$second" | rawsend)
-[ "$r" = 403 ] && ok "a request smuggled in a refused one's body is never answered (one request per connection)" || bad "smuggling: responses $r"
+[ "$r" = 403 ] && ok "a request smuggled in a refused one's body is never answered (one request per connection)" || bad "a request smuggled in a refused one's body is never answered (one request per connection)" "smuggling: responses $r"
 r=$(printf 'GET /api/state HTTP/1.1\nHost: %s\n%s\n%s\nTailscale-User-Login: %s\n\nGET /api/state HTTP/1.1\nHost: %s\n%s\n%s\nTailscale-User-Login: %s\n\n' "$HOST" "$XFF" "$XFH" "$LOGIN" "$HOST" "$XFF" "$XFH" "$LOGIN" | rawsend)
-[ "$r" = 200 ] && ok "keep-alive: the connection closes after one response" || bad "keep-alive: responses $r"
+[ "$r" = 200 ] && ok "keep-alive: the connection closes after one response" || bad "keep-alive: the connection closes after one response" "keep-alive: responses $r"
 r=$(printf 'POST /api/action HTTP/1.1\nHost: %s\n%s\n%s\nTailscale-User-Login: %s\nTransfer-Encoding: chunked\n\n0\n\n' "$HOST" "$XFF" "$XFH" "$LOGIN" | rawsend)
-[ "$r" = 400 ] && ok "a chunked body: 400" || bad "a chunked body: $r"
+[ "$r" = 400 ] && ok "a chunked body: 400" || bad "a chunked body: 400" "a chunked body: $r"
 r=$(printf 'GET /api/state HTTP/1.1\nHost: %s\n%s\n%s\nTailscale-User-Login: %s\nContent-Length: 3\n\nabc' "$HOST" "$XFF" "$XFH" "$LOGIN" | rawsend)
-[ "$r" = 400 ] && ok "a GET with a body: 400" || bad "a GET with a body: $r"
-refuses && ok "a second dash refuses the socket in use" || bad "a second dash took the socket"
-[ "$(code http://x/app.css)" = 200 ] && ok "the first one still answers" || bad "the first dash lost its socket"
-[ "$(code http://x/nope)" = 404 ] && ok "an unknown path: 404" || bad "an unknown path: $(code http://x/nope)"
+[ "$r" = 400 ] && ok "a GET with a body: 400" || bad "a GET with a body: 400" "a GET with a body: $r"
+refuses && ok "a second dash refuses the socket in use" || bad "a second dash refuses the socket in use" "a second dash took the socket"
+[ "$(code http://x/app.css)" = 200 ] && ok "the first one still answers" || bad "the first one still answers" "the first dash lost its socket"
+[ "$(code http://x/nope)" = 404 ] && ok "an unknown path: 404" || bad "an unknown path: 404" "an unknown path: $(code http://x/nope)"
 hdr=$(dc -D - -o "$T/page" http://x/)
-seen -i "^content-security-policy: default-src 'self'; script-src 'self'" <<<"$hdr" && ok "the page has a strict CSP" || bad "no strict CSP"
-seen -i '^x-frame-options: DENY' <<<"$hdr" && seen -i '^cache-control: no-store' <<<"$hdr" && ok "no framing, no caching" || bad "framing or caching allowed"
-seen -i '^connection: close' <<<"$hdr" && ok "responses say Connection: close" || bad "no Connection: close"
+seen -i "^content-security-policy: default-src 'self'; script-src 'self'" <<<"$hdr" && ok "the page has a strict CSP" || bad "the page has a strict CSP" "no strict CSP"
+seen -i '^x-frame-options: DENY' <<<"$hdr" && seen -i '^cache-control: no-store' <<<"$hdr" && ok "no framing, no caching" || bad "no framing, no caching" "framing or caching allowed"
+seen -i '^connection: close' <<<"$hdr" && ok "responses say Connection: close" || bad "responses say Connection: close" "no Connection: close"
 TOK=$(token)
-[ ${#TOK} -ge 40 ] && ok "the page carries a token" || bad "no token in the page"
-grep -E '<script>|<script [^>]*>[^<]' "$T/page" >/dev/null && bad "the page has inline script" || ok "the page has no inline script"
-[ "$(code http://x/app.js)" = 200 ] && [ "$(code http://x/app.css)" = 200 ] && ok "app.js and app.css served" || bad "static files missing"
+[ ${#TOK} -ge 40 ] && ok "the page carries a token" || bad "the page carries a token" "no token in the page"
+grep -E '<script>|<script [^>]*>[^<]' "$T/page" >/dev/null && bad "the page has no inline script" "the page has inline script" || ok "the page has no inline script"
+[ "$(code http://x/app.js)" = 200 ] && [ "$(code http://x/app.css)" = 200 ] && ok "app.js and app.css served" || bad "app.js and app.css served" "static files missing"
 # Reading outerHTML (to compare two rows) is fine; any way of turning a string into HTML is not.
-grep -nE '(inner|outer)HTML[[:space:]]*\+?=|insertAdjacentHTML|document\.write|createContextualFragment|DOMParser|srcdoc' "$REPO/asc/web/app.js" "$REPO/asc/web/splash.js" >/dev/null && bad "app.js writes HTML from strings" || ok "app.js sets text only (no innerHTML)"
-grep -nE '\b(window\.)?(confirm|prompt|alert)\(' "$REPO/asc/web/app.js" >/dev/null && bad "app.js uses the browser's own dialogs" || ok "app.js asks with its own dialog (no confirm, prompt or alert)"
+grep -nE '(inner|outer)HTML[[:space:]]*\+?=|insertAdjacentHTML|document\.write|createContextualFragment|DOMParser|srcdoc' "$REPO/asc/web/app.js" "$REPO/asc/web/splash.js" >/dev/null && bad "app.js sets text only (no innerHTML)" "app.js writes HTML from strings" || ok "app.js sets text only (no innerHTML)"
+grep -nE '\b(window\.)?(confirm|prompt|alert)\(' "$REPO/asc/web/app.js" >/dev/null && bad "app.js asks with its own dialog (no confirm, prompt or alert)" "app.js uses the browser's own dialogs" || ok "app.js asks with its own dialog (no confirm, prompt or alert)"
 
 echo "== the installable app (PWA)"
 # No login: as an install check fetches the manifest, worker and icons, outside the page.
@@ -183,19 +200,18 @@ acode() { anon -o /dev/null -w '%{http_code}' "$@"; }
 m=$(anon "http://x$PREFIX/manifest.json?v=1")
 jq -e '.display == "standalone" and .short_name == "Sessions" and .x_title == "Agent Session Control" and (.start_url | startswith("./?v="))
 	and .scope == "./" and (.id | test("v=")) and (.icons | length == 4)' <<<"$m" >/dev/null \
-	&& ok "the manifest, without a login: standalone, relative URLs, versioned id" || bad "manifest: $m"
-anon -D - -o /dev/null "http://x/manifest.json" | seen -i '^content-type: application/manifest+json' && ok "the manifest's type" || bad "manifest type wrong"
-for u in $(jq -r '.icons[].src' <<<"$m"); do
-	[ "$(acode "http://x/$u")" = 200 ] || bad "manifest icon $u: $(acode "http://x/$u")"
-done
+	&& ok "the manifest, without a login: standalone, relative URLs, versioned id" || bad "the manifest, without a login: standalone, relative URLs, versioned id" "manifest: $m"
+anon -D - -o /dev/null "http://x/manifest.json" | seen -i '^content-type: application/manifest+json' && ok "the manifest's type" || bad "the manifest's type" "manifest type wrong"
+miss=; for u in $(jq -r '.icons[].src' <<<"$m"); do [ "$(acode "http://x/$u")" = 200 ] || miss="$miss $u: $(acode "http://x/$u")"; done
+[ -z "$miss" ] && ok "every icon the manifest names is served" || bad "every icon the manifest names is served" "not served:$miss"
 sw=$(anon http://x/sw.js)
-seen -F 'fetch(e.request)' <<<"$sw" && ! seen caches <<<"$sw" && ok "the worker passes through and never caches" || bad "worker: $sw"
-for f in favicon-512.png apple-touch-icon.png splash-512.png icon-192.png icon-512.png icon-maskable-192.png icon-maskable-512.png; do
+seen -F 'fetch(e.request)' <<<"$sw" && ! seen caches <<<"$sw" && ok "the worker passes through and never caches" || bad "the worker passes through and never caches" "worker: $sw"
+miss=; for f in favicon-512.png apple-touch-icon.png splash-512.png icon-192.png icon-512.png icon-maskable-192.png icon-maskable-512.png; do
 	h=$(anon -D - -o "$T/icon" "http://x/$f?v=1")
 	seen -i '^content-type: image/png' <<<"$h" && seen -i '^cache-control: public' <<<"$h" \
-		&& [ "$(head -c 4 "$T/icon" | od -An -tx1 | tr -d ' ')" = 89504e47 ] || bad "icon $f"
+		&& [ "$(head -c 4 "$T/icon" | od -An -tx1 | tr -d ' ')" = 89504e47 ] || miss="$miss $f"
 done
-ok "every icon is a PNG, served without a login, cacheable"
+[ -z "$miss" ] && ok "every icon is a PNG, served without a login, cacheable" || bad "every icon is a PNG, served without a login, cacheable" "not so:$miss"
 # Pixels where the recipe needs them (asc/icons.py): maskable tile edge to edge with white only in
 # its corners, the lime knob, a transparent favicon corner, the "any" icons plain white.
 px() { anon "http://x/$1" | python3 -I -c 'import struct, sys, zlib
@@ -207,136 +223,136 @@ raw = zlib.decompress(raw); x, y = (int(v) for v in sys.argv[1:3]); o = y * (w *
 print(raw[o:o + n].hex())' "$2" "$3"; }
 [ "$(px icon-maskable-512.png 0 0)" = ffffff ] && [ "$(px icon-maskable-512.png 256 0)" = 3d3df5 ] \
 	&& [ "$(px icon-maskable-512.png 0 256)" = 3d3df5 ] && [ "$(px icon-maskable-512.png 336 256)" = d7f34f ] \
-	&& ok "maskable icon: white corners, blue edges, the lime knob" || bad "maskable icon pixels: $(px icon-maskable-512.png 0 0) $(px icon-maskable-512.png 256 0) $(px icon-maskable-512.png 336 256)"
+	&& ok "maskable icon: white corners, blue edges, the lime knob" || bad "maskable icon: white corners, blue edges, the lime knob" "maskable icon pixels: $(px icon-maskable-512.png 0 0) $(px icon-maskable-512.png 256 0) $(px icon-maskable-512.png 336 256)"
 v=$(px icon-maskable-512.png 26 27)  # on the corner's curve: a blend, so edges are smooth
-[ "$v" != ffffff ] && [ "$v" != 3d3df5 ] && ok "anti-aliased edges ($v on the corner's curve)" || bad "hard edges: $v"
-[ "$(px apple-touch-icon.png 0 0)" = 3d3df5 ] && ok "apple-touch icon: full bleed" || bad "apple-touch corner: $(px apple-touch-icon.png 0 0)"
-[ "$(px favicon-512.png 0 0)" = 00000000 ] && [ "$(px favicon-512.png 256 4)" = 3d3df5ff ] && ok "favicon: transparent corners" || bad "favicon pixels"
-[ "$(px icon-192.png 96 96)" = ffffff ] && [ "$(px icon-512.png 256 256)" = ffffff ] && ok "the any icons are plain white" || bad "any icons not white"
+[ "$v" != ffffff ] && [ "$v" != 3d3df5 ] && ok "anti-aliased edges" || bad "anti-aliased edges" "hard edges: $v"
+[ "$(px apple-touch-icon.png 0 0)" = 3d3df5 ] && ok "apple-touch icon: full bleed" || bad "apple-touch icon: full bleed" "apple-touch corner: $(px apple-touch-icon.png 0 0)"
+[ "$(px favicon-512.png 0 0)" = 00000000 ] && [ "$(px favicon-512.png 256 4)" = 3d3df5ff ] && ok "favicon: transparent corners" || bad "favicon: transparent corners" "favicon pixels"
+[ "$(px icon-192.png 96 96)" = ffffff ] && [ "$(px icon-512.png 256 256)" = ffffff ] && ok "the any icons are plain white" || bad "the any icons are plain white" "any icons not white"
 # Drawn once, then served from the cache (the server starts again after every idle exit).
 # shellcheck disable=SC2012  # one cache file name, made by asctl
 ic=$(ls "$HOME/.cache/agent-session-control/icons/"*-icon-maskable-512.png 2>/dev/null | head -1)
 [ -n "$ic" ] && [ "$(stat -c %a "$(dirname "$ic")")" = 700 ] && [ "$(stat -c %a "$ic")" = 600 ] && cmp -s "$ic" <(anon http://x/icon-maskable-512.png) \
-	&& ok "icons cached 0600 in a 0700 folder, the same bytes served" || bad "no icon cache: $ic"
-anon -D - -o /dev/null http://x/favicon.svg | seen -i '^content-type: image/svg+xml' && ok "favicon.svg" || bad "no favicon.svg"
+	&& ok "icons cached 0600 in a 0700 folder, the same bytes served" || bad "icons cached 0600 in a 0700 folder, the same bytes served" "no icon cache: $ic"
+anon -D - -o /dev/null http://x/favicon.svg | seen -i '^content-type: image/svg+xml' && ok "favicon.svg" || bad "favicon.svg" "no favicon.svg"
 [ "$(acode -I http://x/sw.js)" = 200 ] && ok "HEAD on a public file" || bad "HEAD on a public file"
 r=""; for u in / /app.js /app.css /splash.js /api/state "/api/past?q=" /index.html /sw.js/ /./sw.js /%2e%2e/asc/dash.py /icon-1.png /favicon.ico; do
 	[ "$(acode --path-as-is "http://x$u")" = 403 ] || r="$r $u"
 done
-[ -z "$r" ] && ok "everything else still needs the login (exact paths only)" || bad "served without a login:$r"
+[ -z "$r" ] && ok "everything else still needs the login (exact paths only)" || bad "everything else still needs the login (exact paths only)" "served without a login:$r"
 r=$(printf 'GET /sw.js HTTP/1.1\nHost: localhost\nContent-Length: 3\n\nabc' | rawsend)
-[ "$r" = 403 ] && ok "a public path with a body goes through the checks: 403" || bad "a public path with a body: $r"
+[ "$r" = 403 ] && ok "a public path with a body goes through the checks: 403" || bad "a public path with a body goes through the checks: 403" "a public path with a body: $r"
 r=$(printf 'GET /sw.js HTTP/1.1\nHost: localhost\nTransfer-Encoding: chunked\n\n0\n\n' | rawsend)
-[ "$r" = 403 ] && ok "a public path, chunked: 403" || bad "a public path, chunked: $r"
+[ "$r" = 403 ] && ok "a public path, chunked: 403" || bad "a public path, chunked: 403" "a public path, chunked: $r"
 seen -F 'href="manifest.json?v=' "$T/page" && seen -F 'src="splash-512.png?v=' "$T/page" && ! seen -F '@V@' "$T/page" \
-	&& ok "the page links the manifest and icons, versioned" || bad "page: no manifest link or @V@ left"
+	&& ok "the page links the manifest and icons, versioned" || bad "the page links the manifest and icons, versioned" "page: no manifest link or @V@ left"
 # Width, height or top animate on the main thread (a busy page makes them stutter); transform
 # and opacity run on the compositor.
 seen -E 'transition: transform' "$REPO/asc/web/app.css" && ! seen -E 'transition:[^;]*\b(width|height|top|left)\b' "$REPO/asc/web/app.css" \
-	&& ok "the splash animates only transform and opacity" || bad "the splash animates a property the compositor cannot"
+	&& ok "the splash animates only transform and opacity" || bad "the splash animates only transform and opacity" "the splash animates a property the compositor cannot"
 seen -F 'rel="preload" href="splash.js"' "$T/page" && seen -F 'rel="preload" href="splash-512.png?v=' "$T/page" \
-	&& ok "the splash script and image are preloaded" || bad "splash not preloaded"
-seen -F 'serviceWorker.register("sw.js")' "$REPO/asc/web/app.js" && ok "the page registers the worker (relative, works under a prefix)" || bad "no worker registration"
+	&& ok "the splash script and image are preloaded" || bad "the splash script and image are preloaded" "splash not preloaded"
+seen -F 'serviceWorker.register("sw.js")' "$REPO/asc/web/app.js" && ok "the page registers the worker (relative, works under a prefix)" || bad "the page registers the worker (relative, works under a prefix)" "no worker registration"
 
 echo "== state"
 tm new-session -d -s dev -c "$W" -- "$ASC_CLAUDE" --session-id "$SID" --name dev
 pid=$(claude_in dev)
 s=$(state)
-jq -e '.memory.avail_pct > 0 and .memory.total_kb > 0' <<<"$s" >/dev/null && ok "state: memory" || bad "state: no memory"
-jq -e --arg s "$SID" '.active | map(select(.session_id == $s and .tmux == "dev")) | length == 1' <<<"$s" >/dev/null && ok "state: the running claude, not favorited" || bad "state: active list wrong: $s"
-jq -e '.top.mine | length > 0 and all(keys == ["mem_kb", "name"])' <<<"$s" >/dev/null && ok "state: own biggest processes, names and sizes only" || bad "state: top processes wrong"
-jq -e '.top.others_kb | type == "number"' <<<"$s" >/dev/null && ok "state: other users as one total" || bad "state: no others total"
+jq -e '.memory.avail_pct > 0 and .memory.total_kb > 0' <<<"$s" >/dev/null && ok "state: memory" || bad "state: memory" "state: no memory"
+jq -e --arg s "$SID" '.active | map(select(.session_id == $s and .tmux == "dev")) | length == 1' <<<"$s" >/dev/null && ok "state: the running claude, not favorited" || bad "state: the running claude, not favorited" "state: active list wrong: $s"
+jq -e '.top.mine | length > 0 and all(keys == ["mem_kb", "name"])' <<<"$s" >/dev/null && ok "state: own biggest processes, names and sizes only" || bad "state: own biggest processes, names and sizes only" "state: top processes wrong"
+jq -e '.top.others_kb | type == "number"' <<<"$s" >/dev/null && ok "state: other users as one total" || bad "state: other users as one total" "state: no others total"
 mem 100000000 60000000
 jq -e '(.top.mine_kb > 0) and (.top.mine_kb >= (.top.mine | map(.mem_kb) | add)) and (.top.others_kb + .top.mine_kb == 40000000)' <<<"$(state)" >/dev/null \
-	&& ok "state: other users and the system are what is in use less this user's (never more than the machine has)" || bad "state: others $(state | jq -c .top)"
+	&& ok "state: other users and the system are what is in use less this user's (never more than the machine has)" || bad "state: other users and the system are what is in use less this user's (never more than the machine has)" "state: others $(state | jq -c .top)"
 mem 100000000 99999990
-jq -e '.top.others_kb == 0' <<<"$(state)" >/dev/null && ok "state: less in use than this user's own: the rest is 0, not below" || bad "state: others below 0: $(state | jq -c .top)"
+jq -e '.top.others_kb == 0' <<<"$(state)" >/dev/null && ok "state: less in use than this user's own: the rest is 0, not below" || bad "state: less in use than this user's own: the rest is 0, not below" "state: others below 0: $(state | jq -c .top)"
 mem 32000000 16000000
-jq -e '.server == true' <<<"$s" >/dev/null && ok "state: the tmux server is up" || bad "state: server not seen"
+jq -e '.server == true' <<<"$s" >/dev/null && ok "state: the tmux server is up" || bad "state: the tmux server is up" "state: server not seen"
 
 echo "== actions: token, origin, body"
 r=$(dc -w '%{http_code}' -o /dev/null -X POST -H "Origin: https://$HOST" -H 'Content-Type: application/json' --data '{"action":"fav","ref":"'"$pid"'"}' http://x/api/action)
-[ "$r" = 403 ] && ok "a POST without the token: 403" || bad "a POST without the token: $r"
+[ "$r" = 403 ] && ok "a POST without the token: 403" || bad "a POST without the token: 403" "a POST without the token: $r"
 r=$(dc -w '%{http_code}' -o /dev/null -X POST -H "Origin: https://evil.example" -H "X-Asctl-Token: $TOK" -H 'Content-Type: application/json' --data '{"action":"fav","ref":"'"$pid"'"}' http://x/api/action)
-[ "$r" = 403 ] && ok "a POST from another origin: 403" || bad "a POST from another origin: $r"
+[ "$r" = 403 ] && ok "a POST from another origin: 403" || bad "a POST from another origin: 403" "a POST from another origin: $r"
 r=$(dc -w '%{http_code}' -o /dev/null -X POST -H "X-Asctl-Token: $TOK" -H 'Content-Type: application/json' --data '{"action":"fav","ref":"'"$pid"'"}' http://x/api/action)
-[ "$r" = 403 ] && ok "a POST with no origin: 403" || bad "a POST with no origin: $r"
+[ "$r" = 403 ] && ok "a POST with no origin: 403" || bad "a POST with no origin: 403" "a POST with no origin: $r"
 r=$(dc -w '%{http_code}' -o /dev/null -X POST -H "Origin: https://$HOST" -H "X-Asctl-Token: $TOK" --data '{"action":"fav"}' http://x/api/action)
-[ "$r" = 415 ] && ok "a form POST (not JSON): 415" || bad "a form POST: $r"
+[ "$r" = 415 ] && ok "a form POST (not JSON): 415" || bad "a form POST (not JSON): 415" "a form POST: $r"
 r=$(dc -w '%{http_code}' -o /dev/null -X POST -H "Origin: https://$HOST" -H "X-Asctl-Token: $TOK" -H 'Content-Type: application/json' --data "$(head -c 5000 /dev/zero | tr '\0' x)" http://x/api/action)
-[ "$r" = 413 ] && ok "a body over 4 KB: 413" || bad "a big body: $r"
-[ "$(post '{"action":"fav","ref":"--help"}' | tail -1)" = 400 ] && ok "a ref that is no pid or id: 400" || bad "a bad ref accepted"
-[ "$(post '{"action":"on","id":"12; rm"}' | tail -1)" = 400 ] && ok "an id that is not 4 digits: 400" || bad "a bad id accepted"
-[ "$(post '{"action":"exec","id":"1234"}' | tail -1)" = 400 ] && ok "an unknown action: 400" || bad "an unknown action accepted"
+[ "$r" = 413 ] && ok "a body over 4 KB: 413" || bad "a body over 4 KB: 413" "a big body: $r"
+[ "$(post '{"action":"fav","ref":"--help"}' | tail -1)" = 400 ] && ok "a ref that is no pid or id: 400" || bad "a ref that is no pid or id: 400" "a bad ref accepted"
+[ "$(post '{"action":"on","id":"12; rm"}' | tail -1)" = 400 ] && ok "an id that is not 4 digits: 400" || bad "an id that is not 4 digits: 400" "a bad id accepted"
+[ "$(post '{"action":"exec","id":"1234"}' | tail -1)" = 400 ] && ok "an unknown action: 400" || bad "an unknown action: 400" "an unknown action accepted"
 r=$(dc -w '%{http_code}' -o /dev/null -X POST -H "Origin: https://$HOST" -H "X-Asctl-Token: tökén" -H 'Content-Type: application/json' --data '{}' http://x/api/action)
-[ "$r" = 403 ] && ok "a token with non-ASCII bytes: 403 (no crash)" || bad "a non-ASCII token: $r"
-[ "$(post '[1]' | tail -1)" = 400 ] && ok "a body that is not an object: 400" || bad "a non-object body accepted"
+[ "$r" = 403 ] && ok "a token with non-ASCII bytes: 403 (no crash)" || bad "a token with non-ASCII bytes: 403 (no crash)" "a non-ASCII token: $r"
+[ "$(post '[1]' | tail -1)" = 400 ] && ok "a body that is not an object: 400" || bad "a body that is not an object: 400" "a non-object body accepted"
 
 echo "== actions: favorite, off, on, mode, rename, forget"
 out=$(post '{"action":"fav","ref":"'"$pid"'","name":"das"}')
-[ "$(tail -1 <<<"$out")" = 200 ] && ok "fav by pid" || bad "fav failed: $out"
+[ "$(tail -1 <<<"$out")" = 200 ] && ok "fav by pid" || bad "fav by pid" "fav failed: $out"
 id=$(state | jq -r '.favorites[0].id4'); TM="das-$id"
 s=$(state)
-jq -e --arg i "$id" '.favorites[0] | .tmux == "das-\($i)" and .state == "on" and .status == "idle" and .mem_kb > 0' <<<"$s" >/dev/null && ok "state: the favorite, on, idle, its memory" || bad "state: favorite wrong: $(jq -c '.favorites[0]' <<<"$s")"
-jq -e '.active | length == 0' <<<"$s" >/dev/null && ok "state: no longer in the not-favorited list" || bad "state: still listed as not favorited"
+jq -e --arg i "$id" '.favorites[0] | .tmux == "das-\($i)" and .state == "on" and .status == "idle" and .mem_kb > 0' <<<"$s" >/dev/null && ok "state: the favorite, on, idle, its memory" || bad "state: the favorite, on, idle, its memory" "state: favorite wrong: $(jq -c '.favorites[0]' <<<"$s")"
+jq -e '.active | length == 0' <<<"$s" >/dev/null && ok "state: no longer in the not-favorited list" || bad "state: no longer in the not-favorited list" "state: still listed as not favorited"
 pp=$(tm list-panes -t "=das-$id:" -F '#{pane_pid}'); rss=$(ps -o rss= -p "$pp" --ppid "$pp" | awk '{ s += $1 } END { print s }')
-jq -e --argjson r "${rss:-0}" '.favorites[0].mem_kb > 0 and .favorites[0].mem_kb < $r' <<<"$s" >/dev/null && ok "state: memory is PSS (shared pages split), under the tree's RSS" || bad "state: memory $(jq '.favorites[0].mem_kb' <<<"$s") vs RSS $rss"
-jq -e '.favorites[0] | .mode_used == null and .mode_next == "auto"' <<<"$s" >/dev/null && ok "state: the mode used (none in a transcript) and the next start's" || bad "state: modes: $(jq -c '.favorites[0] | {mode_used, mode_next}' <<<"$s")"
+jq -e --argjson r "${rss:-0}" '.favorites[0].mem_kb > 0 and .favorites[0].mem_kb < $r' <<<"$s" >/dev/null && ok "state: memory is PSS (shared pages split), under the tree's RSS" || bad "state: memory is PSS (shared pages split), under the tree's RSS" "state: memory $(jq '.favorites[0].mem_kb' <<<"$s") vs RSS $rss"
+jq -e '.favorites[0] | .mode_used == null and .mode_next == "auto"' <<<"$s" >/dev/null && ok "state: the mode used (none in a transcript) and the next start's" || bad "state: the mode used (none in a transcript) and the next start's" "state: modes: $(jq -c '.favorites[0] | {mode_used, mode_next}' <<<"$s")"
 mkdir -p "$HOME/.claude/projects/-w"; tr="$HOME/.claude/projects/-w/$SID.jsonl"
 printf '{"type":"permission-mode","permissionMode":"auto","sessionId":"%s"}\n' "$SID" > "$tr"
-state | jq -e '.favorites[0].mode_used == "auto"' >/dev/null || bad "state: mode not read from the transcript"
+state | jq -e '.favorites[0].mode_used == "auto"' >/dev/null && ok "state: the mode used, read from the transcript" || bad "state: the mode used, read from the transcript" "state: mode not read from the transcript"
 printf '{"type":"permission-mode","permissionMode":"acceptEdits","sessionId":"%s"}\n' "$SID" >> "$tr"
 state | jq -e '.favorites[0] | .mode_used == "acceptEdits" and .mode_next == "acceptEdits"' >/dev/null \
-	&& ok "state: the mode claude switched to (the transcript read again when it changes)" || bad "state: mode stale: $(state | jq -c '.favorites[0] | {mode_used, mode_next}')"
+	&& ok "state: the mode claude switched to (the transcript read again when it changes)" || bad "state: the mode claude switched to (the transcript read again when it changes)" "state: mode stale: $(state | jq -c '.favorites[0] | {mode_used, mode_next}')"
 rm -f "$tr"
-jq -e --arg l "$LOGIN" --arg h "$HOME" '.login == $l and .home == $h and .favorites[0].rc_live == false' <<<"$s" >/dev/null && ok "state: the login, the home folder, remote control not live" || bad "state: login, home or rc_live wrong: $(jq -c '{login, home, rc_live: .favorites[0].rc_live}' <<<"$s")"
+jq -e --arg l "$LOGIN" --arg h "$HOME" '.login == $l and .home == $h and .favorites[0].rc_live == false' <<<"$s" >/dev/null && ok "state: the login, the home folder, remote control not live" || bad "state: the login, the home folder, remote control not live" "state: login, home or rc_live wrong: $(jq -c '{login, home, rc_live: .favorites[0].rc_live}' <<<"$s")"
 touch "$HOME/fake-rc" "$HOME/fake-wait"; sleep 0.6
-state | jq -e '.favorites[0] | .rc_live == true and .status == "waiting" and .busy == "" and .waiting_for == "dialog open" and (.status_at | type) == "number"' >/dev/null && ok "state: remote control live, waiting (not busy), why and since when" || bad "state: rc_live/waiting wrong: $(state | jq -c '.favorites[0] | {rc_live, status, busy}')"
+state | jq -e '.favorites[0] | .rc_live == true and .status == "waiting" and .busy == "" and .waiting_for == "dialog open" and (.status_at | type) == "number"' >/dev/null && ok "state: remote control live, waiting (not busy), why and since when" || bad "state: remote control live, waiting (not busy), why and since when" "state: rc_live/waiting wrong: $(state | jq -c '.favorites[0] | {rc_live, status, busy}')"
 rm -f "$HOME/fake-rc" "$HOME/fake-wait"; sleep 0.6
 touch "$HOME/fake-task"; sleep 0.8
 state | jq -e '.favorites[0] | .status == "busy" and .task == "runs a command" and .status_at == null and (.busy | test("runs a command"))' >/dev/null \
-	&& ok "state: an idle claude that runs a command (a background one too) is working" || bad "state: task not shown: $(state | jq -c '.favorites[0] | {status, task, busy}')"
+	&& ok "state: an idle claude that runs a command (a background one too) is working" || bad "state: an idle claude that runs a command (a background one too) is working" "state: task not shown: $(state | jq -c '.favorites[0] | {status, task, busy}')"
 rm -f "$HOME/fake-task"; sleep 0.8
-state | jq -e '.favorites[0] | .status == "idle" and .task == ""' >/dev/null && ok "state: idle again once the command ended" || bad "state: still working after the command"
+state | jq -e '.favorites[0] | .status == "idle" and .task == ""' >/dev/null && ok "state: idle again once the command ended" || bad "state: idle again once the command ended" "state: still working after the command"
 touch "$HOME/fake-busy"; sleep 0.6
 out=$(post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'"}')
-[ "$(tail -1 <<<"$out")" = 409 ] && seen 'busy: claude is working' <<<"$out" && ok "off refused while busy, with the reason" || bad "off while busy: $out"
-state | jq -e '.favorites[0].busy | test("is working")' >/dev/null && ok "state: busy reason shown" || bad "state: no busy reason"
+[ "$(tail -1 <<<"$out")" = 409 ] && seen 'busy: claude is working' <<<"$out" && ok "off refused while busy, with the reason" || bad "off refused while busy, with the reason" "off while busy: $out"
+state | jq -e '.favorites[0].busy | test("is working")' >/dev/null && ok "state: busy reason shown" || bad "state: busy reason shown" "state: no busy reason"
 rm -f "$HOME/fake-busy"; sleep 0.6
-[ "$(post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] && ok "off" || bad "off failed"
-state | jq -e '.favorites[0].state == "off"' >/dev/null && ok "state: off" || bad "state: not off"
-[ "$(post '{"action":"mode","id":"'"$id"'","tmux":"'"$TM"'","mode":"skip"}' | tail -1)" = 400 ] && ok "mode skip from the page: refused" || bad "mode skip from the page accepted"
-[ "$(jq -r ".entries[\"$id\"].mode" "$HOME/.local/state/agent-session-control/registry.json")" = auto ] && ok "the mode stayed auto" || bad "the mode changed"
-[ "$(post '{"action":"mode","id":"'"$id"'","tmux":"'"$TM"'","mode":"manual"}' | tail -1)" = 200 ] && ok "mode manual from the page" || bad "mode manual failed"
+[ "$(post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] && ok "off" || bad "off" "off failed"
+state | jq -e '.favorites[0].state == "off"' >/dev/null && ok "state: off" || bad "state: off" "state: not off"
+[ "$(post '{"action":"mode","id":"'"$id"'","tmux":"'"$TM"'","mode":"skip"}' | tail -1)" = 400 ] && ok "mode skip from the page: refused" || bad "mode skip from the page: refused" "mode skip from the page accepted"
+[ "$(jq -r ".entries[\"$id\"].mode" "$HOME/.local/state/agent-session-control/registry.json")" = auto ] && ok "the mode stayed auto" || bad "the mode stayed auto" "the mode changed"
+[ "$(post '{"action":"mode","id":"'"$id"'","tmux":"'"$TM"'","mode":"manual"}' | tail -1)" = 200 ] && ok "mode manual from the page" || bad "mode manual from the page" "mode manual failed"
 asctl mode "$id" skip >/dev/null
-[ "$(post '{"action":"on","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] && ok "on (a favorite in skip still starts from the page)" || bad "on failed"
-lastargs | seen -- '--permission-mode bypassPermissions' && ok "started with its skip mode" || bad "skip not passed: $(lastargs)"
+[ "$(post '{"action":"on","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] && ok "on (a favorite in skip still starts from the page)" || bad "on (a favorite in skip still starts from the page)" "on failed"
+lastargs | seen -- '--permission-mode bypassPermissions' && ok "started with its skip mode" || bad "started with its skip mode" "skip not passed: $(lastargs)"
 touch "$HOME/fake-busy"; sleep 0.6
-[ "$(post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'","force":"yes"}' | tail -1)" = 409 ] && ok "force only when it is true (\"yes\" is not)" || bad "force taken from a non-boolean"
-[ "$(post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'","force":true}' | tail -1)" = 200 ] && ok "off with force while busy" || bad "off --force failed"
+[ "$(post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'","force":"yes"}' | tail -1)" = 409 ] && ok "force only when it is true (\"yes\" is not)" || bad "force only when it is true (\"yes\" is not)" "force taken from a non-boolean"
+[ "$(post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'","force":true}' | tail -1)" = 200 ] && ok "off with force while busy" || bad "off with force while busy" "off --force failed"
 rm -f "$HOME/fake-busy"
-[ "$(post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"Bad Name"}' | tail -1)" = 400 ] && ok "rename to a bad name: 400" || bad "a bad name accepted"
+[ "$(post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"Bad Name"}' | tail -1)" = 400 ] && ok "rename to a bad name: 400" || bad "rename to a bad name: 400" "a bad name accepted"
 asctl mode "$id" auto >/dev/null
-[ "$(post '{"action":"on","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] || bad "on before the rename failed"
-state | jq -e --arg t "$TM" '.favorites[0] | .claude_name == $t and .claude_name_kept == false' >/dev/null && ok "state: the name its claude goes by" || bad "state: claude_name: $(state | jq -c '.favorites[0].claude_name')"
+[ "$(post '{"action":"on","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] && ok "on from the page, before the renames" || bad "on from the page, before the renames" "on before the rename failed"
+state | jq -e --arg t "$TM" '.favorites[0] | .claude_name == $t and .claude_name_kept == false' >/dev/null && ok "state: the name its claude goes by" || bad "state: the name its claude goes by" "state: claude_name: $(state | jq -c '.favorites[0].claude_name')"
 touch "$HOME/fake-peer-name"; sleep 0.6
-state | jq -e '.favorites[0].claude_name_kept == true' >/dev/null && ok "state: a name claude keeps from its own job record (a restart does not change it)" || bad "state: claude_name_kept not set"
+state | jq -e '.favorites[0].claude_name_kept == true' >/dev/null && ok "state: a name claude keeps from its own job record (a restart does not change it)" || bad "state: a name claude keeps from its own job record (a restart does not change it)" "state: claude_name_kept not set"
 rm -f "$HOME/fake-peer-name"; sleep 0.6
 pid0=$(state | jq '.favorites[0].pid')
 out=$(post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"db"}')
 [ "$(tail -1 <<<"$out")" = 200 ] && seen 'claude and its claude.ai title too' <<<"$out" && state | jq -e --argjson p "$pid0" '.favorites[0] | (.tmux | startswith("db-")) and .claude_name == .tmux and .pid == $p' >/dev/null \
-	&& ok "rename from the page: the same claude takes the name (/rename)" || bad "rename: $out / $(state | jq -c '.favorites[0] | {tmux, claude_name, pid}')"
+	&& ok "rename from the page: the same claude takes the name (/rename)" || bad "rename from the page: the same claude takes the name (/rename)" "rename: $out / $(state | jq -c '.favorites[0] | {tmux, claude_name, pid}')"
 TM="db-$id"
 touch "$HOME/fake-busy"; sleep 0.6
 post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"db2"}' >/dev/null; TM="db2-$id"
-state | jq -e --arg t "db-$id" '.favorites[0].claude_name == $t' >/dev/null || bad "rename while busy changed claude's name"
+state | jq -e --arg t "db-$id" '.favorites[0].claude_name == $t' >/dev/null && ok "rename while busy: claude's name not changed" || bad "rename while busy: claude's name not changed" "rename while busy changed claude's name"
 rm -f "$HOME/fake-busy"; sleep 0.6
 out=$(post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"db2"}')
 seen 'claude and its claude.ai title too' <<<"$out" && state | jq -e --arg t "$TM" '.favorites[0].claude_name == $t' >/dev/null \
-	&& ok "rename to the same name sends it to a claude that goes by another (renamed while busy)" || bad "same-name rename: $out"
+	&& ok "rename to the same name sends it to a claude that goes by another (renamed while busy)" || bad "rename to the same name sends it to a claude that goes by another (renamed while busy)" "same-name rename: $out"
 out=$(post '{"action":"restart","id":"'"$id"'","tmux":"'"$TM"'"}')
 [ "$(tail -1 <<<"$out")" = 409 ] && seen 'not outside it: nothing to move in' <<<"$out" && [ "$(state | jq '.favorites[0].pid')" = "$pid0" ] \
-	&& ok "restart from the page only moves a claude outside its tmux session in (one in it: refused, left alone)" || bad "page restart in tmux: $out"
+	&& ok "restart from the page only moves a claude outside its tmux session in (one in it: refused, left alone)" || bad "restart from the page only moves a claude outside its tmux session in (one in it: refused, left alone)" "page restart in tmux: $out"
 post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'","force":true}' >/dev/null
 # its claude in a Claude Code background session, outside its tmux session
 fsid=$(state | jq -r '.favorites[0].session_id')
@@ -346,24 +362,24 @@ bgfile() { printf '{"pid":%s,"sessionId":"%s","cwd":"/","procStart":"%s","kind":
 bgfile busy
 state | jq -e '.favorites[0] | (.state | startswith("on (outside")) and .outside.how == "background"
 	and .outside.text == "a Claude Code background session (job ffff0001)" and .outside.busy == "its claude is working"' >/dev/null \
-	&& ok "state: a claude outside its tmux session says where it runs, and why a move in waits" || bad "state outside: $(state | jq -c '.favorites[0] | {state, outside}')"
+	&& ok "state: a claude outside its tmux session says where it runs, and why a move in waits" || bad "state: a claude outside its tmux session says where it runs, and why a move in waits" "state outside: $(state | jq -c '.favorites[0] | {state, outside}')"
 bgfile idle
-state | jq -e '.favorites[0].outside.busy == ""' >/dev/null && ok "state: outside and idle: nothing to wait for" || bad "state outside idle: $(state | jq -c '.favorites[0].outside')"
+state | jq -e '.favorites[0].outside.busy == ""' >/dev/null && ok "state: outside and idle: nothing to wait for" || bad "state: outside and idle: nothing to wait for" "state outside idle: $(state | jq -c '.favorites[0].outside')"
 out=$(post '{"action":"restart","id":"'"$id"'","tmux":"'"$TM"'"}')
 for _ in $(seq 1 20); do state | jq -e '.favorites[0].state == "on"' >/dev/null && break; sleep 0.2; done
 [ "$(tail -1 <<<"$out")" = 200 ] && ! kill -0 "$bgp" 2>/dev/null && state | jq -e '.favorites[0] | .state == "on" and .outside == null' >/dev/null \
-	&& ok "restart in tmux from the page: the background session stopped, its claude now in its tmux session" || bad "page restart outside: $out / $(state | jq -c '.favorites[0] | {state, outside}')"
+	&& ok "restart in tmux from the page: the background session stopped, its claude now in its tmux session" || bad "restart in tmux from the page: the background session stopped, its claude now in its tmux session" "page restart outside: $out / $(state | jq -c '.favorites[0] | {state, outside}')"
 wait "$bgp" 2>/dev/null; rm -f "$HOME/.claude/sessions/$bgp.json"
 post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'","force":true}' >/dev/null
 ev=$(dc "http://x/api/events?id=$id")
 jq -e '.keep == 200 and (.events | length > 5) and ([.events[] | select(.kind != "mode") | .by] | all(. == "page"))
 	and any(.events[]; .kind == "mode" and .by == "cli")
 	and ([.events[].kind] | index("fav") and index("off") and index("on") and index("rename") and index("refused"))
-	and .events[0].kind == "off"' <<<"$ev" >/dev/null && ok "events: the page's actions by page (asctl's own by cli), newest first" || bad "events: $(jq -c '[.events[] | [.kind, .by]]' <<<"$ev")"
-[ "$(post '{"action":"forget","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] && state | jq -e '.favorites | length == 0' >/dev/null && ok "forget" || bad "forget failed"
-dc "http://x/api/events?id=$id" | jq -e '.events == []' >/dev/null && ok "events of an id: none from before its forget (an earlier favorite's)" || bad "events after forget: $(dc "http://x/api/events?id=$id" | jq -c '[.events[].kind]')"
-dc "http://x/api/events" | jq -e '(.events | length > 5) and .events[0].kind == "forget"' >/dev/null && ok "events: all of them without an id" || bad "events: all"
-[ "$(dc -o /dev/null -w '%{http_code}' "http://x/api/events?id=12")" = 400 ] && ok "events: a bad id is 400" || bad "events: bad id accepted"
+	and .events[0].kind == "off"' <<<"$ev" >/dev/null && ok "events: the page's actions by page (asctl's own by cli), newest first" || bad "events: the page's actions by page (asctl's own by cli), newest first" "events: $(jq -c '[.events[] | [.kind, .by]]' <<<"$ev")"
+[ "$(post '{"action":"forget","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] && state | jq -e '.favorites | length == 0' >/dev/null && ok "forget" || bad "forget" "forget failed"
+dc "http://x/api/events?id=$id" | jq -e '.events == []' >/dev/null && ok "events of an id: none from before its forget (an earlier favorite's)" || bad "events of an id: none from before its forget (an earlier favorite's)" "events after forget: $(dc "http://x/api/events?id=$id" | jq -c '[.events[].kind]')"
+dc "http://x/api/events" | jq -e '(.events | length > 5) and .events[0].kind == "forget"' >/dev/null && ok "events: all of them without an id" || bad "events: all of them without an id" "events: all"
+[ "$(dc -o /dev/null -w '%{http_code}' "http://x/api/events?id=12")" = 400 ] && ok "events: a bad id is 400" || bad "events: a bad id is 400" "events: bad id accepted"
 
 echo "== past conversations"
 mkdir -p "$HOME/.claude/projects/-x"
@@ -375,47 +391,47 @@ P4=44444444-5555-4666-8777-000000000004
 printf '{"type":"user","cwd":"/srv/x","sessionId":"%s"}\n{"type":"ai-title","aiTitle":"Old summary"}\n{"type":"ai-title","aiTitle":"Earlyoom setup"}\n' "$P4" > "$HOME/.claude/projects/-x/$P4.jsonl"
 touch -d '2 hours ago' "$HOME/.claude/projects/-x/$P4.jsonl"
 pj=$(dc "http://x/api/past")
-jq -e --arg a "$P1" --arg b "$P2" '[.past[].session_id] | index($a) < index($b)' <<<"$pj" >/dev/null && ok "past: newest first" || bad "past: order wrong: $pj"
-jq -e --arg a "$P1" '.past[] | select(.session_id == $a) | .title == "<b>Old</b> & talk"' <<<"$pj" >/dev/null && ok "past: the latest title, sent as raw text (the page sets it as text)" || bad "past: title changed"
-jq -e --arg b "$P2" '.past[] | select(.session_id == $b) | .title == "api work" and .cwd == "/srv/api"' <<<"$pj" >/dev/null && ok "past: title from the end of a big transcript, folder from its start" || bad "past: big transcript read wrong"
-jq -e --arg d "$P4" '.past[] | select(.session_id == $d) | .title == "Earlyoom setup"' <<<"$pj" >/dev/null && ok "past: without a title given, claude's own (the last ai-title)" || bad "past: ai-title not used"
-jq -e '.past | length == 2' <<<"$(dc "http://x/api/past?q=SRV")" >/dev/null && ok "past: search by folder, any case" || bad "past: search wrong"
+jq -e --arg a "$P1" --arg b "$P2" '[.past[].session_id] | index($a) < index($b)' <<<"$pj" >/dev/null && ok "past: newest first" || bad "past: newest first" "past: order wrong: $pj"
+jq -e --arg a "$P1" '.past[] | select(.session_id == $a) | .title == "<b>Old</b> & talk"' <<<"$pj" >/dev/null && ok "past: the latest title, sent as raw text (the page sets it as text)" || bad "past: the latest title, sent as raw text (the page sets it as text)" "past: title changed"
+jq -e --arg b "$P2" '.past[] | select(.session_id == $b) | .title == "api work" and .cwd == "/srv/api"' <<<"$pj" >/dev/null && ok "past: title from the end of a big transcript, folder from its start" || bad "past: title from the end of a big transcript, folder from its start" "past: big transcript read wrong"
+jq -e --arg d "$P4" '.past[] | select(.session_id == $d) | .title == "Earlyoom setup"' <<<"$pj" >/dev/null && ok "past: without a title given, claude's own (the last ai-title)" || bad "past: without a title given, claude's own (the last ai-title)" "past: ai-title not used"
+jq -e '.past | length == 2' <<<"$(dc "http://x/api/past?q=SRV")" >/dev/null && ok "past: search by folder, any case" || bad "past: search by folder, any case" "past: search wrong"
 tm new-session -d -s dev2 -c "$W" -- "$ASC_CLAUDE" --session-id "$P2"
 claude_in dev2 >/dev/null
 asctl fav "$P1" >/dev/null
 pj=$(dc "http://x/api/past")
-jq -e --arg b "$P2" '[.past[].session_id] | index($b) == null' <<<"$pj" >/dev/null && ok "past: a running conversation is not listed" || bad "past: a running one listed"
-jq -e --arg a "$P1" '[.past[].session_id] | index($a) == null' <<<"$pj" >/dev/null && ok "past: a favorite is not listed" || bad "past: a favorite listed"
-state | jq -e --arg b "$P2" '.active[] | select(.session_id == $b) | .name == "api work" and (.claude_name | endswith("-1a"))' >/dev/null && ok "a running claude with a made-up name goes by its title" || bad "active: made-up name shown: $(state | jq -c .active)"
+jq -e --arg b "$P2" '[.past[].session_id] | index($b) == null' <<<"$pj" >/dev/null && ok "past: a running conversation is not listed" || bad "past: a running conversation is not listed" "past: a running one listed"
+jq -e --arg a "$P1" '[.past[].session_id] | index($a) == null' <<<"$pj" >/dev/null && ok "past: a favorite is not listed" || bad "past: a favorite is not listed" "past: a favorite listed"
+state | jq -e --arg b "$P2" '.active[] | select(.session_id == $b) | .name == "api work" and (.claude_name | endswith("-1a"))' >/dev/null && ok "a running claude with a made-up name goes by its title" || bad "a running claude with a made-up name goes by its title" "active: made-up name shown: $(state | jq -c .active)"
 tm new-session -d -s dev4 -c "$W" -- "$ASC_CLAUDE" --session-id "$P4" --name given; claude_in dev4 >/dev/null
-state | jq -e --arg d "$P4" '.active[] | select(.session_id == $d) | .name == "given"' >/dev/null && ok "a name given to claude stays, over its title" || bad "active: a given name replaced: $(state | jq -c .active)"
+state | jq -e --arg d "$P4" '.active[] | select(.session_id == $d) | .name == "given"' >/dev/null && ok "a name given to claude stays, over its title" || bad "a name given to claude stays, over its title" "active: a given name replaced: $(state | jq -c .active)"
 tm kill-session -t =dev4
 
 echo "== the client must be another machine"
 nox() { curl -s -o /dev/null -w '%{http_code}' --unix-socket "$SOCK" -H "Tailscale-User-Login: $LOGIN" -H "Host: localhost" -H "$XFH" "$@" http://x/api/state; }
 myip=$(ip -j addr show | jq -r '[.[].addr_info[].local] | map(select(startswith("127.") or . == "::1" | not)) | .[0]')
-[ "$(nox)" = 403 ] && ok "no X-Forwarded-For: 403" || bad "no X-Forwarded-For let in"
-[ "$(nox -H 'X-Forwarded-For: 127.0.0.1')" = 403 ] && ok "from loopback: 403" || bad "loopback let in"
-[ "$(nox -H 'X-Forwarded-For: ::ffff:127.0.0.1')" = 403 ] && ok "from loopback as IPv4-mapped IPv6: 403" || bad "mapped loopback let in"
-[ "$myip" = 192.0.2.77 ] && [ "$(nox -H "X-Forwarded-For: $myip")" = 403 ] && ok "from one of this machine's own addresses: 403" || bad "this machine's own address let in ($myip)"
-[ "$(nox -H "X-Forwarded-For: 192.0.2.10, $myip")" = 403 ] && ok "a client's own entry first does not hide that the last is this machine" || bad "the first entry was trusted"
-[ "$(nox -H "X-Forwarded-For: 127.0.0.1, 192.0.2.10")" = 200 ] && ok "the last entry decides (another machine: 200)" || bad "the last entry not used"
-[ "$(nox -H "$XFF" -H "$XFF")" = 403 ] && ok "X-Forwarded-For twice: 403" || bad "a doubled X-Forwarded-For let in"
-[ "$(nox -H 'X-Forwarded-For: nonsense')" = 403 ] && ok "a bad address: 403" || bad "a bad address let in"
+[ "$(nox)" = 403 ] && ok "no X-Forwarded-For: 403" || bad "no X-Forwarded-For: 403" "no X-Forwarded-For let in"
+[ "$(nox -H 'X-Forwarded-For: 127.0.0.1')" = 403 ] && ok "from loopback: 403" || bad "from loopback: 403" "loopback let in"
+[ "$(nox -H 'X-Forwarded-For: ::ffff:127.0.0.1')" = 403 ] && ok "from loopback as IPv4-mapped IPv6: 403" || bad "from loopback as IPv4-mapped IPv6: 403" "mapped loopback let in"
+[ "$myip" = 192.0.2.77 ] && [ "$(nox -H "X-Forwarded-For: $myip")" = 403 ] && ok "from one of this machine's own addresses: 403" || bad "from one of this machine's own addresses: 403" "this machine's own address let in ($myip)"
+[ "$(nox -H "X-Forwarded-For: 192.0.2.10, $myip")" = 403 ] && ok "a client's own entry first does not hide that the last is this machine" || bad "a client's own entry first does not hide that the last is this machine" "the first entry was trusted"
+[ "$(nox -H "X-Forwarded-For: 127.0.0.1, 192.0.2.10")" = 200 ] && ok "the last entry decides (another machine: 200)" || bad "the last entry decides (another machine: 200)" "the last entry not used"
+[ "$(nox -H "$XFF" -H "$XFF")" = 403 ] && ok "X-Forwarded-For twice: 403" || bad "X-Forwarded-For twice: 403" "a doubled X-Forwarded-For let in"
+[ "$(nox -H 'X-Forwarded-For: nonsense')" = 403 ] && ok "a bad address: 403" || bad "a bad address: 403" "a bad address let in"
 
 echo "== the Tailscale operator"
 # Restart (the setting is cached 30 s), then the status of a request. Not in $(...): a server
 # started in a subshell would hold its pipe open.
 op_code() { stop_dash; start_dash; code http://x/api/state > "$T/opc"; }
 whoami > "$HOME/fake-operator"
-op_code; [ "$(cat "$T/opc")" = 200 ] && ok "this user as the operator: served" || bad "own operator refused"
+op_code; [ "$(cat "$T/opc")" = 200 ] && ok "this user as the operator: served" || bad "this user as the operator: served" "own operator refused"
 echo someone-else > "$HOME/fake-operator"
-op_code; [ "$(cat "$T/opc")" = 403 ] && ok "another user as the Tailscale operator: every request refused" || bad "served while another user is the operator"
-seen 'refused: another user is the Tailscale operator' "$T/dash.err" && ok "the log says why (the client only gets 403)" || bad "no reason logged"
+op_code; [ "$(cat "$T/opc")" = 403 ] && ok "another user as the Tailscale operator: every request refused" || bad "another user as the Tailscale operator: every request refused" "served while another user is the operator"
+seen 'refused: another user is the Tailscale operator' "$T/dash.err" && ok "the log says why (the client only gets 403)" || bad "the log says why (the client only gets 403)" "no reason logged"
 rm -f "$HOME/fake-operator"; touch "$HOME/fake-tailscale-broken"
-op_code; [ "$(cat "$T/opc")" = 403 ] && ok "the setting cannot be read: refused (fail closed)" || bad "served without reading the operator"
+op_code; [ "$(cat "$T/opc")" = 403 ] && ok "the setting cannot be read: refused (fail closed)" || bad "the setting cannot be read: refused (fail closed)" "served without reading the operator"
 rm -f "$HOME/fake-tailscale-broken"
-op_code; [ "$(cat "$T/opc")" = 200 ] && ok "no operator: served" || bad "no operator refused"
+op_code; [ "$(cat "$T/opc")" = 200 ] && ok "no operator: served" || bad "no operator: served" "no operator refused"
 TOK=$(token)
 
 echo "== stale pages, odd bodies, a second claude"
@@ -423,28 +439,28 @@ tm new-session -d -s trio -c "$W" -- "$ASC_CLAUDE" --session-id 44444444-5555-46
 p3=$(claude_in trio)
 asctl fav "$p3" --name trio >/dev/null; id3=$(jq -r '.entries[] | select(.name == "trio") | .id4' "$HOME/.local/state/agent-session-control/registry.json")
 out=$(post '{"action":"off","id":"'"$id3"'","tmux":"old-'"$id3"'"}')
-[ "$(tail -1 <<<"$out")" = 400 ] && seen 'out of date' <<<"$out" && tm has-session -t "=trio-$id3" && ok "an action from an out-of-date page (another name): refused, nothing done" || bad "a stale page acted: $out"
-[ "$(post '{"action":"off","id":"'"$id3"'"}' | tail -1)" = 400 ] && ok "an action without the tmux name: refused" || bad "an action without the tmux name accepted"
-[ "$(post '{"action":"fav","ref":"123","name":[1]}' | tail -1)" = 400 ] && ok "a name that is not a string: 400 (no crash)" || bad "a list as name"
+[ "$(tail -1 <<<"$out")" = 400 ] && seen 'out of date' <<<"$out" && tm has-session -t "=trio-$id3" && ok "an action from an out-of-date page (another name): refused, nothing done" || bad "an action from an out-of-date page (another name): refused, nothing done" "a stale page acted: $out"
+[ "$(post '{"action":"off","id":"'"$id3"'"}' | tail -1)" = 400 ] && ok "an action without the tmux name: refused" || bad "an action without the tmux name: refused" "an action without the tmux name accepted"
+[ "$(post '{"action":"fav","ref":"123","name":[1]}' | tail -1)" = 400 ] && ok "a name that is not a string: 400 (no crash)" || bad "a name that is not a string: 400 (no crash)" "a list as name"
 tm new-window -t "=trio-$id3:" -c "$W" -- "$ASC_CLAUDE" --session-id 55555555-6666-4777-8888-999999999999
 for _ in $(seq 1 25); do state | jq -e '.favorites[] | select(.id4 == "'"$id3"'") | .claudes == 2' >/dev/null && break; sleep 0.2; done
-state | jq -e '.favorites[] | select(.id4 == "'"$id3"'") | .claudes == 2' >/dev/null && ok "state: two claudes in the favorite's session" || bad "state: claude count wrong"
+state | jq -e '.favorites[] | select(.id4 == "'"$id3"'") | .claudes == 2' >/dev/null && ok "state: two claudes in the favorite's session" || bad "state: two claudes in the favorite's session" "state: claude count wrong"
 out=$(post '{"action":"off","id":"'"$id3"'","tmux":"trio-'"$id3"'"}')
-[ "$(tail -1 <<<"$out")" = 409 ] && seen 'another claude runs in it' <<<"$out" && ok "off refused: an idle second claude would end too" || bad "off would end a second claude: $out"
+[ "$(tail -1 <<<"$out")" = 409 ] && seen 'another claude runs in it' <<<"$out" && ok "off refused: an idle second claude would end too" || bad "off refused: an idle second claude would end too" "off would end a second claude: $out"
 post '{"action":"off","id":"'"$id3"'","tmux":"trio-'"$id3"'","force":true}' >/dev/null
 
 tm new-session -d -s quad -c "$W" -- "$ASC_CLAUDE" --session-id 99999999-aaaa-4bbb-8ccc-dddddddddddd
 p4=$(claude_in quad)
 out=$(post '{"action":"fav","ref":"99999999-aaaa-4bbb-8ccc-dddddddddddd","name":"quad"}')
-[ "$(tail -1 <<<"$out")" = 200 ] && ok "fav by session id (what the page sends)" || bad "fav by session id: $out"
+[ "$(tail -1 <<<"$out")" = 200 ] && ok "fav by session id (what the page sends)" || bad "fav by session id (what the page sends)" "fav by session id: $out"
 
 echo "== a tmux server that does not answer"
 srv=$(tm display-message -p '#{pid}')
 kill -STOP "$srv"
 t0=$(date +%s); r=$(dc -m 90 -o /dev/null -w '%{http_code}' http://x/api/state); t1=$(date +%s)
 kill -CONT "$srv"
-[ "$r" = 200 ] && [ $((t1 - t0)) -lt 80 ] && ok "state still answers ($((t1 - t0)) s) while tmux hangs" || bad "state with a hung tmux: $r after $((t1 - t0)) s"
-pgrep -P "$DPID" -x tmux >/dev/null && bad "tmux clients left behind" || ok "no tmux client left waiting"
+[ "$r" = 200 ] && [ $((t1 - t0)) -lt 80 ] && ok "state still answers while tmux hangs" || bad "state still answers while tmux hangs" "state with a hung tmux: $r after $((t1 - t0)) s"
+pgrep -P "$DPID" -x tmux >/dev/null && bad "no tmux client left waiting" "tmux clients left behind" || ok "no tmux client left waiting"
 
 echo "== transcripts and session files that could hang or crash a read"
 mkdir -p "$HOME/.claude/projects/-y"
@@ -452,55 +468,55 @@ python3 -c 'import sys; open(sys.argv[1], "w").write("[" * 50000 + "\n")' "$HOME
 python3 -c 'import sys; open(sys.argv[1], "w").write("[" * 100000)' "$HOME/.claude/sessions/4000001.json"
 mkfifo "$HOME/.claude/projects/-y/77777777-8888-4999-8aaa-bbbbbbbbbbbb.jsonl" "$HOME/.claude/sessions/4000002.json"
 ln -s /dev/zero "$HOME/.claude/projects/-y/88888888-9999-4aaa-8bbb-cccccccccccc.jsonl"
-[ "$(dc -m 10 -o /dev/null -w '%{http_code}' http://x/api/past)" = 200 ] && ok "past: deep JSON, a FIFO and a symlink to /dev/zero neither hang nor crash it" || bad "past hangs or crashes on odd transcripts"
-[ "$(dc -m 10 -o /dev/null -w '%{http_code}' http://x/api/state)" = 200 ] && ok "state: deep JSON and a FIFO in the session files neither hang nor crash it" || bad "state hangs or crashes on odd session files"
-dc http://x/api/past | jq -e '[.past[].session_id] | (index("77777777-8888-4999-8aaa-bbbbbbbbbbbb") == null and index("88888888-9999-4aaa-8bbb-cccccccccccc") == null)' >/dev/null && ok "past: a FIFO or a symlink is not listed" || bad "past lists a FIFO or a symlink"
+[ "$(dc -m 10 -o /dev/null -w '%{http_code}' http://x/api/past)" = 200 ] && ok "past: deep JSON, a FIFO and a symlink to /dev/zero neither hang nor crash it" || bad "past: deep JSON, a FIFO and a symlink to /dev/zero neither hang nor crash it" "past hangs or crashes on odd transcripts"
+[ "$(dc -m 10 -o /dev/null -w '%{http_code}' http://x/api/state)" = 200 ] && ok "state: deep JSON and a FIFO in the session files neither hang nor crash it" || bad "state: deep JSON and a FIFO in the session files neither hang nor crash it" "state hangs or crashes on odd session files"
+dc http://x/api/past | jq -e '[.past[].session_id] | (index("77777777-8888-4999-8aaa-bbbbbbbbbbbb") == null and index("88888888-9999-4aaa-8bbb-cccccccccccc") == null)' >/dev/null && ok "past: a FIFO or a symlink is not listed" || bad "past: a FIFO or a symlink is not listed" "past lists a FIFO or a symlink"
 "$REPO/bin/asctl" fav 66666666-7777-4888-8999-aaaaaaaaaaaa 2>"$T/err" >/dev/null
-seen 'no conversation' "$T/err" && ! seen Traceback "$T/err" && ok "fav of a deep-JSON transcript: a clean refusal" || bad "fav of a deep-JSON transcript: $(tail -1 "$T/err")"
-state | jq -e '.unknown_files >= 2' >/dev/null && ok "state: they count as session files in an unknown format" || bad "odd session files not counted"
-timeout 10 "$REPO/bin/asctl" live >/dev/null && ok "asctl live too" || bad "asctl live hangs or crashes on them"
+seen 'no conversation' "$T/err" && ! seen Traceback "$T/err" && ok "fav of a deep-JSON transcript: a clean refusal" || bad "fav of a deep-JSON transcript: a clean refusal" "fav of a deep-JSON transcript: $(tail -1 "$T/err")"
+state | jq -e '.unknown_files >= 2' >/dev/null && ok "state: they count as session files in an unknown format" || bad "state: they count as session files in an unknown format" "odd session files not counted"
+timeout 10 "$REPO/bin/asctl" live >/dev/null && ok "asctl live too" || bad "asctl live too" "asctl live hangs or crashes on them"
 rm -f "$HOME/.claude/projects/-y/"* "$HOME/.claude/sessions/4000001.json" "$HOME/.claude/sessions/4000002.json"
 
 echo "== the token, a running action at SIGTERM, a socket path too long"
 TOK1=$(token)
-[ "$(stat -c %a "$T/run/asctl/token")" = 600 ] && ok "the token file is 0600" || bad "token file mode $(stat -c %a "$T/run/asctl/token")"
+[ "$(stat -c %a "$T/run/asctl/token")" = 600 ] && ok "the token file is 0600" || bad "the token file is 0600" "token file mode $(stat -c %a "$T/run/asctl/token")"
 stop_dash; start_dash
-[ "$(token)" = "$TOK1" ] && ok "the token survives a restart (an open page keeps working)" || bad "a new token after restart"
+[ "$(token)" = "$TOK1" ] && ok "the token survives a restart (an open page keeps working)" || bad "the token survives a restart (an open page keeps working)" "a new token after restart"
 (post '{"action":"on","id":"'"$id3"'","tmux":"trio-'"$id3"'"}' | tail -1 > "$T/inflight") &
 inf=$!
 # SIGTERM once the action runs (its tmux session is there; it then waits for claude): a request
 # not yet read when the signal comes is refused, rightly, and says nothing about this
 for _ in $(seq 1 50); do tm has-session -t "=trio-$id3" 2>/dev/null && break; sleep 0.1; done
 kill -TERM "$DPID"; wait "$inf"; wait "$DPID" 2>/dev/null; DPID=
-[ "$(cat "$T/inflight")" = 200 ] && tm has-session -t "=trio-$id3" && ok "SIGTERM waits for a running action to finish" || bad "SIGTERM cut a running action: $(cat "$T/inflight")"
+[ "$(cat "$T/inflight")" = 200 ] && tm has-session -t "=trio-$id3" && ok "SIGTERM waits for a running action to finish" || bad "SIGTERM waits for a running action to finish" "SIGTERM cut a running action: $(cat "$T/inflight")"
 long="$T/run/long/$(printf 'x%.0s' $(seq 1 120)).sock"
 timeout 5 "$REPO/bin/asctl" dash --socket "$long" --idle 0 2>"$T/err"; rc=$?
-[ "$rc" = 1 ] && seen 'cannot listen' "$T/err" && ok "a socket path too long: a clean error" || bad "a long socket path: rc $rc, $(tail -1 "$T/err")"
+[ "$rc" = 1 ] && seen 'cannot listen' "$T/err" && ok "a socket path too long: a clean error" || bad "a socket path too long: a clean error" "a long socket path: rc $rc, $(tail -1 "$T/err")"
 python3 -I -c 'import socket, sys, time
 s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.listen(1); time.sleep(30)' "$SOCK" & holder=$!
 for _ in $(seq 1 30); do [ -S "$SOCK" ] && break; sleep 0.1; done
-refuses && seen 'is in use' "$T/err" && ok "a socket another process listens on (asctl-dash.socket) is refused, not removed" || bad "dash took a socket in use"
-[ -S "$SOCK" ] && ok "that socket is still there" || bad "that socket was removed"
+refuses && seen 'is in use' "$T/err" && ok "a socket another process listens on (asctl-dash.socket) is refused, not removed" || bad "a socket another process listens on (asctl-dash.socket) is refused, not removed" "dash took a socket in use"
+[ -S "$SOCK" ] && ok "that socket is still there" || bad "that socket is still there" "that socket was removed"
 kill "$holder"; wait "$holder" 2>/dev/null
 start_dash
-[ "$(code http://x/app.css)" = 200 ] && ok "a socket nothing listens on (stale) is replaced" || bad "a stale socket blocked the start"
+[ "$(code http://x/app.css)" = 200 ] && ok "a socket nothing listens on (stale) is replaced" || bad "a socket nothing listens on (stale) is replaced" "a stale socket blocked the start"
 
 echo "== rc, resurrect and the memory gate from the page"
 REG="$HOME/.local/state/agent-session-control/registry.json"
 R3='"id":"'"$id3"'","tmux":"trio-'"$id3"'"'
-[ "$(post '{"action":"rc","on":true,"title":"Trio work",'"$R3"'}' | tail -1)" = 200 ] && [ "$(jq -r ".entries[\"$id3\"].rc_title" "$REG")" = "Trio work" ] && ok "rc on with a title" || bad "rc on from the page failed"
-[ "$(post '{"action":"rc","on":"yes",'"$R3"'}' | tail -1)" = 400 ] && ok "rc on must be a boolean" || bad "rc took a non-boolean"
-[ "$(post '{"action":"rc","on":true,"title":"-x",'"$R3"'}' | tail -1)" = 400 ] && ok "an rc title starting with - refused" || bad "an rc title starting with - accepted"
-[ "$(post '{"action":"rc","on":false,'"$R3"'}' | tail -1)" = 200 ] && [ "$(jq -r ".entries[\"$id3\"].rc" "$REG")" = false ] && ok "rc off" || bad "rc off failed"
-[ "$(post '{"action":"resurrect","on":true,'"$R3"'}' | tail -1)" = 200 ] && state | jq -e '.favorites[] | select(.id4 == "'"$id3"'") | .resurrect and .rc' >/dev/null && ok "resurrect on turns rc on" || bad "resurrect on from the page"
-[ "$(post '{"action":"note","text":"x",'"$R3"'}' | tail -1)" = 400 ] && ok "no note action from the page" || bad "the page can set a note"
+[ "$(post '{"action":"rc","on":true,"title":"Trio work",'"$R3"'}' | tail -1)" = 200 ] && [ "$(jq -r ".entries[\"$id3\"].rc_title" "$REG")" = "Trio work" ] && ok "rc on with a title" || bad "rc on with a title" "rc on from the page failed"
+[ "$(post '{"action":"rc","on":"yes",'"$R3"'}' | tail -1)" = 400 ] && ok "rc on must be a boolean" || bad "rc on must be a boolean" "rc took a non-boolean"
+[ "$(post '{"action":"rc","on":true,"title":"-x",'"$R3"'}' | tail -1)" = 400 ] && ok "an rc title starting with - refused" || bad "an rc title starting with - refused" "an rc title starting with - accepted"
+[ "$(post '{"action":"rc","on":false,'"$R3"'}' | tail -1)" = 200 ] && [ "$(jq -r ".entries[\"$id3\"].rc" "$REG")" = false ] && ok "rc off" || bad "rc off" "rc off failed"
+[ "$(post '{"action":"resurrect","on":true,'"$R3"'}' | tail -1)" = 200 ] && state | jq -e '.favorites[] | select(.id4 == "'"$id3"'") | .resurrect and .rc' >/dev/null && ok "resurrect on turns rc on" || bad "resurrect on turns rc on" "resurrect on from the page"
+[ "$(post '{"action":"note","text":"x",'"$R3"'}' | tail -1)" = 400 ] && ok "no note action from the page" || bad "no note action from the page" "the page can set a note"
 post '{"action":"off","force":true,'"$R3"'}' >/dev/null
 mem 32000000 1600000
 out=$(post '{"action":"on",'"$R3"'}')
-[ "$(tail -1 <<<"$out")" = 409 ] && seen '"error": "memory: 5.0% available' <<<"$out" && ok "on refused when memory is short, with the reason" || bad "on with short memory: $out"
-state | jq -e '.memory.warn' >/dev/null && ok "state: the memory warning is on below 15%" || bad "no memory warning"
-[ "$(post '{"action":"on","force_memory":"yes",'"$R3"'}' | tail -1)" = 409 ] && ok "force_memory only when it is true" || bad "force_memory taken from a non-boolean"
-[ "$(post '{"action":"on","force_memory":true,'"$R3"'}' | tail -1)" = 200 ] && ok "on with force_memory (after the page's confirm)" || bad "forced on failed"
+[ "$(tail -1 <<<"$out")" = 409 ] && seen '"error": "memory: 5.0% available' <<<"$out" && ok "on refused when memory is short, with the reason" || bad "on refused when memory is short, with the reason" "on with short memory: $out"
+state | jq -e '.memory.warn' >/dev/null && ok "state: the memory warning is on below 15%" || bad "state: the memory warning is on below 15%" "no memory warning"
+[ "$(post '{"action":"on","force_memory":"yes",'"$R3"'}' | tail -1)" = 409 ] && ok "force_memory only when it is true" || bad "force_memory only when it is true" "force_memory taken from a non-boolean"
+[ "$(post '{"action":"on","force_memory":true,'"$R3"'}' | tail -1)" = 200 ] && ok "on with force_memory (after the page's confirm)" || bad "on with force_memory (after the page's confirm)" "forced on failed"
 post '{"action":"off","force":true,'"$R3"'}' >/dev/null
 mem 32000000 16000000
 
@@ -509,63 +525,65 @@ SD="$HOME/.local/state/agent-session-control"
 BID=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import memory; print(memory.boot_id())' "$REPO")
 bootjs() { printf '{"boot": "%s", "at": 1, "todo": ["%s"], "why": "memory: watched for under 5 min", "done": %s}\n' "$1" "$id3" "$2" > "$SD/boot.json"; }
 bootjs "$BID" false
-state | jq -e '.boot == null' >/dev/null && ok "boot.lock not held: no boot shown (one that was killed)" || bad "boot with no lock: $(state | jq -c .boot)"
+state | jq -e '.boot == null' >/dev/null && ok "boot.lock not held: no boot shown (one that was killed)" || bad "boot.lock not held: no boot shown (one that was killed)" "boot with no lock: $(state | jq -c .boot)"
 python3 -I -c 'import fcntl, sys, time; f = open(sys.argv[1], "a"); fcntl.flock(f, fcntl.LOCK_EX); time.sleep(60)' "$SD/boot.lock" & bl=$!
 for _ in $(seq 1 50); do flock -n "$SD/boot.lock" true || break; sleep 0.1; done
 state | jq -e --arg i "$id3" '.boot == {"todo": [$i], "why": "memory: watched for under 5 min"}' >/dev/null \
-	&& ok "state: what boot still brings back, and why the next waits (boot.lock held)" || bad "boot: $(state | jq -c .boot)"
+	&& ok "state: what boot still brings back, and why the next waits (boot.lock held)" || bad "state: what boot still brings back, and why the next waits (boot.lock held)" "boot: $(state | jq -c .boot)"
 bootjs "$BID" true
-state | jq -e '.boot == null' >/dev/null && ok "boot done: no boot shown" || bad "boot done: $(state | jq -c .boot)"
+state | jq -e '.boot == null' >/dev/null && ok "boot done: no boot shown" || bad "boot done: no boot shown" "boot done: $(state | jq -c .boot)"
 bootjs "not-this-boot" false
-state | jq -e '.boot == null' >/dev/null && ok "a boot.json from an earlier boot: none shown" || bad "old boot: $(state | jq -c .boot)"
+state | jq -e '.boot == null' >/dev/null && ok "a boot.json from an earlier boot: none shown" || bad "a boot.json from an earlier boot: none shown" "old boot: $(state | jq -c .boot)"
 printf '{"boot": "%s", "todo": "x", "why": 5, "done": false}\n' "$BID" > "$SD/boot.json"
-state | jq -e '.boot == null' >/dev/null && ok "an odd boot.json: none shown, no error" || bad "odd boot.json: $(state | jq -c .boot)"
+state | jq -e '.boot == null' >/dev/null && ok "an odd boot.json: none shown, no error" || bad "an odd boot.json: none shown, no error" "odd boot.json: $(state | jq -c .boot)"
 bootjs "$BID" false; mv "$SD/boot.json" "$T/boot.json"; ln -s "$T/boot.json" "$SD/boot.json"
-state | jq -e '.boot == null' >/dev/null && ok "a symlinked boot.json is not read" || bad "symlinked boot.json read"
+state | jq -e '.boot == null' >/dev/null && ok "a symlinked boot.json is not read" || bad "a symlinked boot.json is not read" "symlinked boot.json read"
 kill "$bl"; wait "$bl" 2>/dev/null
 rm -f "$SD/boot.json"
-state | jq -e '.watch_at == null' >/dev/null && ok "state: no watcher run yet" || bad "watch_at: $(state | jq -c .watch_at)"
+state | jq -e '.watch_at == null' >/dev/null && ok "state: no watcher run yet" || bad "state: no watcher run yet" "watch_at: $(state | jq -c .watch_at)"
 echo '{"at": 1700000000, "ended": {}}' > "$SD/watch.json"
-state | jq -e '.watch_at == 1700000000' >/dev/null && ok "state: when the watcher last ran" || bad "watch_at: $(state | jq -c .watch_at)"
+state | jq -e '.watch_at == 1700000000' >/dev/null && ok "state: when the watcher last ran" || bad "state: when the watcher last ran" "watch_at: $(state | jq -c .watch_at)"
 echo '{"at": "soon"}' > "$SD/watch.json"
-state | jq -e '.watch_at == null' >/dev/null && ok "an odd watch.json: no time" || bad "odd watch_at: $(state | jq -c .watch_at)"
+state | jq -e '.watch_at == null' >/dev/null && ok "an odd watch.json: no time" || bad "an odd watch.json: no time" "odd watch_at: $(state | jq -c .watch_at)"
 rm -f "$SD/watch.json"
-state | jq -e '.setup == false' >/dev/null && ok "state: not set up (asctl's units not enabled)" || bad "setup: $(state | jq -c .setup)"
+state | jq -e '.setup == false' >/dev/null && ok "state: not set up (asctl's units not enabled)" || bad "state: not set up (asctl's units not enabled)" "setup: $(state | jq -c .setup)"
 mkdir -p "$HOME/fake-units/enabled"; : > "$HOME/fake-units/asctl-boot.service"; : > "$HOME/fake-units/enabled/asctl-boot.service"
 stop_dash; start_dash
-state | jq -e '.setup == false' >/dev/null && ok "boot enabled, the watcher not: not set up" || bad "half set up: $(state | jq -c .setup)"
+state | jq -e '.setup == false' >/dev/null && ok "boot enabled, the watcher not: not set up" || bad "boot enabled, the watcher not: not set up" "half set up: $(state | jq -c .setup)"
 : > "$HOME/fake-units/enabled/asctl-watch.timer"
-state | jq -e '.setup == false' >/dev/null && ok "setup is asked once a minute, not on every request" || bad "setup not cached"
+state | jq -e '.setup == false' >/dev/null && ok "setup is asked once a minute, not on every request" || bad "setup is asked once a minute, not on every request" "setup not cached"
 stop_dash; start_dash
-state | jq -e '.setup == true' >/dev/null && ok "state: set up (boot and the watcher enabled)" || bad "set up: $(state | jq -c .setup)"
+state | jq -e '.setup == true' >/dev/null && ok "state: set up (boot and the watcher enabled)" || bad "state: set up (boot and the watcher enabled)" "set up: $(state | jq -c .setup)"
 stop_dash; ASC_SYSTEMCTL=/bin/false start_dash
-state | jq -e '.setup == null' >/dev/null && ok "no answer from the user manager: setup unknown (no notice)" || bad "no manager: $(state | jq -c .setup)"
+state | jq -e '.setup == null' >/dev/null && ok "no answer from the user manager: setup unknown (no notice)" || bad "no answer from the user manager: setup unknown (no notice)" "no manager: $(state | jq -c .setup)"
 stop_dash; start_dash
 rm -rf "$HOME/fake-units"
-state | jq -e '.settings == {"auto_restart": false}' >/dev/null && ok "state: auto-restart off by default" || bad "settings: $(state | jq -c .settings)"
+state | jq -e '.settings == {"auto_restart": false}' >/dev/null && ok "state: auto-restart off by default" || bad "state: auto-restart off by default" "settings: $(state | jq -c .settings)"
 ev1=$(state | jq -r .events_v)
 [ "$(post '{"action":"auto_restart","on":true}' | tail -1)" = 200 ] && state | jq -e '.settings.auto_restart' >/dev/null \
-	&& [ "$(jq -r '.settings.auto_restart' "$REG")" = true ] && ok "auto-restart on from the page" || bad "auto-restart on failed"
+	&& [ "$(jq -r '.settings.auto_restart' "$REG")" = true ] && ok "auto-restart on from the page" || bad "auto-restart on from the page" "auto-restart on failed"
 tail -1 "$SD/events.jsonl" | jq -e '.kind == "setting" and .by == "page" and .text == "auto-restart on"' >/dev/null \
-	&& ok "logged as the page's setting" || bad "setting event: $(tail -1 "$SD/events.jsonl")"
+	&& ok "logged as the page's setting" || bad "logged as the page's setting" "setting event: $(tail -1 "$SD/events.jsonl")"
 ev2=$(state | jq -r .events_v)
 [ -n "$ev1" ] && [ "$ev1" != "$ev2" ] && [ "$ev2" = "$(state | jq -r .events_v)" ] \
-	&& ok "state: the event log's version moves with a new event, not otherwise" || bad "events_v: $ev1 then $ev2"
-[ "$(post '{"action":"auto_restart","on":"yes"}' | tail -1)" = 400 ] && ok "auto-restart on must be a boolean" || bad "auto-restart took a non-boolean"
+	&& ok "state: the event log's version moves with a new event, not otherwise" || bad "state: the event log's version moves with a new event, not otherwise" "events_v: $ev1 then $ev2"
+[ "$(post '{"action":"auto_restart","on":"yes"}' | tail -1)" = 400 ] && ok "auto-restart on must be a boolean" || bad "auto-restart on must be a boolean" "auto-restart took a non-boolean"
 [ "$(post '{"action":"auto_restart","on":false}' | tail -1)" = 200 ] && state | jq -e '.settings.auto_restart == false' >/dev/null \
-	&& ok "auto-restart off from the page" || bad "auto-restart off failed"
+	&& ok "auto-restart off from the page" || bad "auto-restart off from the page" "auto-restart off failed"
 sid3=$(jq -r ".entries[\"$id3\"].session_id" "$REG")
 state | jq -e --arg i "$id3" '.favorites[] | select(.id4 == $i) | .conv_lines == null and .conv_bytes == null' >/dev/null \
-	&& ok "state: no length before the watcher counted it" || bad "length before a count"
+	&& ok "state: no length before the watcher counted it" || bad "state: no length before the watcher counted it" "length before a count"
 printf '{"%s": {"ino": 7, "size": 1024, "lines": 6, "seen": 2048}}\n' "$sid3" > "$SD/lengths.json"
-state | jq -e --arg i "$id3" '.favorites[] | select(.id4 == $i) | .conv_lines == null' >/dev/null && ok "a first count not done yet: no length shown" || bad "partial length shown"
+state | jq -e --arg i "$id3" '.favorites[] | select(.id4 == $i) | .conv_lines == null' >/dev/null && ok "a first count not done yet: no length shown" || bad "a first count not done yet: no length shown" "partial length shown"
 printf '{"%s": {"ino": 7, "size": 2048, "lines": 12, "seen": 2048}, "x": {"ino": 1, "size": 1, "lines": 1, "seen": 1}}\n' "$sid3" > "$SD/lengths.json"
 state | jq -e --arg i "$id3" '.favorites[] | select(.id4 == $i) | .conv_lines == 12 and .conv_bytes == 2048' >/dev/null \
-	&& ok "state: a conversation's lines and bytes, as the watcher counted them" || bad "length: $(state | jq -c --arg i "$id3" '.favorites[] | select(.id4 == $i) | [.conv_lines, .conv_bytes]')"
-for odd in '"size": 2048, "lines": "12", "seen": 2048' '"size": 2048, "lines": -12, "seen": 2048' '"size": "2048", "lines": 12, "seen": "2048"'; do
-	printf '{"%s": {"ino": 7, %s}}\n' "$sid3" "$odd" > "$SD/lengths.json"
-	state | jq -e --arg i "$id3" '.favorites[] | select(.id4 == $i) | .conv_lines == null' >/dev/null && ok "odd lengths: none shown ($odd)" || bad "odd lengths shown: $odd"
-done
+	&& ok "state: a conversation's lines and bytes, as the watcher counted them" || bad "state: a conversation's lines and bytes, as the watcher counted them" "length: $(state | jq -c --arg i "$id3" '.favorites[] | select(.id4 == $i) | [.conv_lines, .conv_bytes]')"
+# No length shown for a record with these fields.
+oddlen() { printf '{"%s": {"ino": 7, %s}}\n' "$sid3" "$1" > "$SD/lengths.json"
+	state | jq -e --arg i "$id3" '.favorites[] | select(.id4 == $i) | .conv_lines == null' >/dev/null; }
+oddlen '"size": 2048, "lines": "12", "seen": 2048' && ok "odd lengths: lines as a string, none shown" || bad "odd lengths: lines as a string, none shown"
+oddlen '"size": 2048, "lines": -12, "seen": 2048' && ok "odd lengths: lines below 0, none shown" || bad "odd lengths: lines below 0, none shown"
+oddlen '"size": "2048", "lines": 12, "seen": "2048"' && ok "odd lengths: size and seen as strings, none shown" || bad "odd lengths: size and seen as strings, none shown"
 rm -f "$SD/lengths.json"
 
 echo "== prefix and idle exit"
@@ -573,25 +591,25 @@ stop_dash
 printf '{"login": "%s", "host": "%s", "prefix": "/u"}\n' "$LOGIN" "$HOST" > "$CONF"
 PREFIX=/u
 start_dash
-[ "$(stat -c %a "$T/run/asctl")" = 700 ] && ok "the socket folder is still 0700 after a restart" || bad "socket folder mode changed"
-[ "$(code http://x/u/api/state)" = 200 ] && ok "under the prefix: 200" || bad "prefix: $(code http://x/u/api/state)"
-[ "$(code http://x/api/state)" = 404 ] && [ "$(code http://x/x/api/state)" = 404 ] && ok "outside the prefix: 404 (also a path as long as it)" || bad "outside the prefix served"
-[ "$(code http://x/u)" = 301 ] && dc -D - -o /dev/null http://x/u | seen -i '^location: /u/' && ok "the prefix without a slash redirects to /u/" || bad "no redirect for /u"
-TOK=$(token); [ ${#TOK} -ge 40 ] && ok "the page under the prefix" || bad "no page under the prefix"
+[ "$(stat -c %a "$T/run/asctl")" = 700 ] && ok "the socket folder is still 0700 after a restart" || bad "the socket folder is still 0700 after a restart" "socket folder mode changed"
+[ "$(code http://x/u/api/state)" = 200 ] && ok "under the prefix: 200" || bad "under the prefix: 200" "prefix: $(code http://x/u/api/state)"
+[ "$(code http://x/api/state)" = 404 ] && [ "$(code http://x/x/api/state)" = 404 ] && ok "outside the prefix: 404 (also a path as long as it)" || bad "outside the prefix: 404 (also a path as long as it)" "outside the prefix served"
+[ "$(code http://x/u)" = 301 ] && dc -D - -o /dev/null http://x/u | seen -i '^location: /u/' && ok "the prefix without a slash redirects to /u/" || bad "the prefix without a slash redirects to /u/" "no redirect for /u"
+TOK=$(token); [ ${#TOK} -ge 40 ] && ok "the page under the prefix" || bad "the page under the prefix" "no page under the prefix"
 printf 'not a png' > "$ic"
-[ "$(anon http://x/u/icon-maskable-512.png | head -c 4 | od -An -tx1 | tr -d ' ')" = 89504e47 ] && ok "a cached file that is no PNG is drawn again" || bad "a broken cache file served"
-[ "$(acode http://x/u/manifest.json)" = 200 ] && [ "$(acode http://x/u/icon-192.png)" = 200 ] && ok "the app files under the prefix, without a login" || bad "app files under the prefix"
-[ "$(acode http://x/manifest.json)" = 403 ] && ok "and not outside it" || bad "the manifest served outside the prefix"
+[ "$(anon http://x/u/icon-maskable-512.png | head -c 4 | od -An -tx1 | tr -d ' ')" = 89504e47 ] && ok "a cached file that is no PNG is drawn again" || bad "a cached file that is no PNG is drawn again" "a broken cache file served"
+[ "$(acode http://x/u/manifest.json)" = 200 ] && [ "$(acode http://x/u/icon-192.png)" = 200 ] && ok "the app files under the prefix, without a login" || bad "the app files under the prefix, without a login" "app files under the prefix"
+[ "$(acode http://x/manifest.json)" = 403 ] && ok "and not outside it" || bad "and not outside it" "the manifest served outside the prefix"
 stop_dash
-[ -e "$SOCK" ] && bad "SIGTERM left the socket file" || ok "SIGTERM: the server removes its socket"
+[ -e "$SOCK" ] && bad "SIGTERM: the server removes its socket" "SIGTERM left the socket file" || ok "SIGTERM: the server removes its socket"
 start_dash 2
 for _ in 1 2 3 4 5 6 7; do curl -s -o /dev/null --unix-socket "$SOCK" -H "Host: $HOST" "http://x/u/"; sleep 0.5; done
-kill -0 "$DPID" 2>/dev/null && bad "refused requests kept dash from its idle exit" || ok "refused requests do not keep dash alive"
+kill -0 "$DPID" 2>/dev/null && bad "refused requests do not keep dash alive" "refused requests kept dash from its idle exit" || ok "refused requests do not keep dash alive"
 DPID=
 start_dash 2
 sleep 3.5
-kill -0 "$DPID" 2>/dev/null && bad "dash still runs after 2 s idle" || ok "dash exits when idle"
-[ -e "$SOCK" ] && bad "the socket file was left behind" || ok "it removes its socket on exit"
+kill -0 "$DPID" 2>/dev/null && bad "dash exits when idle" "dash still runs after 2 s idle" || ok "dash exits when idle"
+[ -e "$SOCK" ] && bad "it removes its socket on exit" "the socket file was left behind" || ok "it removes its socket on exit"
 DPID=
 
 echo "== systemd socket activation"
@@ -601,15 +619,16 @@ if command -v systemd-socket-activate >/dev/null; then
 	for _ in $(seq 1 30); do [ -S "$T/sa/s.sock" ] && break; sleep 0.1; done
 	chmod 666 "$T/sa/s.sock"  # before the first connection, which starts asctl
 	curl -s -m 5 -o /dev/null --unix-socket "$T/sa/s.sock" http://x/ ; sleep 0.5
-	seen 'open to other users' "$T/err" && ok "a passed socket open to other users is refused" || bad "a passed socket 0666 accepted: $(tail -1 "$T/err")"
+	seen 'open to other users' "$T/err" && ok "a passed socket open to other users is refused" || bad "a passed socket open to other users is refused" "a passed socket 0666 accepted: $(tail -1 "$T/err")"
 	stop_dash; rm -f "$T/sa/s.sock"
 	systemd-socket-activate -E HOME -E PATH -E ASC_TMUX_SOCKET -l "$T/sa/s.sock" "$REPO/bin/asctl" dash --idle 0 2>"$T/sa.err" & DPID=$!
 	for _ in $(seq 1 30); do [ -S "$T/sa/s.sock" ] && break; sleep 0.1; done
 	r=$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$T/sa/s.sock" -H "Tailscale-User-Login: $LOGIN" -H "Host: localhost" -H "$XFH" -H "$XFF" http://x/u/api/state)
-	[ "$r" = 200 ] && ok "serves on the socket systemd passes" || bad "socket activation: $r $(tail -2 "$T/sa.err")"
+	[ "$r" = 200 ] && ok "serves on the socket systemd passes" || bad "serves on the socket systemd passes" "socket activation: $r $(tail -2 "$T/sa.err")"
 	stop_dash
 else
-	echo "  skip  systemd-socket-activate not installed"
+	skip "a passed socket open to other users is refused" "systemd-socket-activate not installed"
+	skip "serves on the socket systemd passes" "systemd-socket-activate not installed"
 fi
 
 # DASH_MUTANTS=1: break the server one way at a time, in a copy; each must make this test fail.

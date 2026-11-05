@@ -17,7 +17,7 @@ const check = (name, code) => {
   let got;
   try { got = run(code); } catch (e) { got = e; }
   if (got === true) console.log("  ok    page: " + name);
-  else { console.log("  FAIL  page: " + name + " (" + got + ")"); fail++; }
+  else { console.log("  FAIL  page: " + name + "\n" + String(got).replace(/^/gm, "        got: ")); fail++; }
 };
 
 // A home folder put together at run time, so the privacy check does not read it as a real one.

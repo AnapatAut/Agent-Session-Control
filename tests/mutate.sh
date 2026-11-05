@@ -2,10 +2,12 @@
 # REPO_HOME). Each line on stdin is "file %%% old %%% new": the suite runs again in a copy with
 # that one change, and must fail. MUTANT_JOBS copies (default 8) run at a time, and each stops
 # at its first FAIL (TEST_FAILFAST): one FAIL is a catch, so neither changes a verdict.
-# The check that caught each mutant is printed after it, so a catch by a flaky check shows.
+# Each mutant is one check, named "mutant: <file>: <old>" either way; the check that caught it is
+# printed on the line after it (in full), so a catch by a flaky check shows. Only a line that starts
+# with "  FAIL  " is a FAIL: the details after it are indented further.
 #   run_mutants <suite file in tests/> <the suite's mutants switch, cleared in the copies>
 run_mutants() {
-	local suite=$1 off=$2 jobs=${MUTANT_JOBS:-8} i=0 n m line
+	local suite=$1 off=$2 jobs=${MUTANT_JOBS:-8} i=0 n m line det
 	mkdir -p "$T/mutants" || exit 2
 	while IFS= read -r m; do
 		[ -n "$m" ] || continue
@@ -15,24 +17,29 @@ run_mutants() {
 	done
 	wait
 	for n in $(seq 0 $((i - 1))); do
-		IFS= read -r line < "$T/mutants/$n"
-		case $line in ok:*) ok "${line#ok:}" ;; *) bad "${line#bad:}" ;; esac
+		line='' det=''; { IFS= read -r line; IFS= read -r det; } < "$T/mutants/$n"
+		case $line in
+		ok:*) ok "${line#ok:}"; echo "        $det" ;;
+		bad:*) bad "${line#bad:}" "$det" ;;
+		*) bad "mutant $((n + 1)) of $i" "no result: its run was cut off" ;;
+		esac
 	done
 }
 
 _mutant() {
-	local suite=$1 off=$2 m=$3 f rest old new d body out
+	local suite=$1 off=$2 m=$3 f rest old new d body out name
 	f=${m%%' %%% '*}; rest=${m#*' %%% '}; old=${rest%%' %%% '*}; new=${rest#*' %%% '}
-	d=$(mktemp -d -p "$T") || { echo "bad:no temp folder for $f: $old"; return; }
+	name="mutant: $f: $old"
+	d=$(mktemp -d -p "$T") || { printf 'bad:%s\n%s\n' "$name" "no temp folder"; return; }
 	cp -r "$REPO/asc" "$REPO/bin" "$REPO/systemd" "$REPO/tests" "$d/"
 	body=$(<"$d/$f")
-	[[ $body == *"$old"* ]] || { echo "bad:mutant does not apply: $f: $old"; return; }
+	[[ $body == *"$old"* ]] || { printf 'bad:%s\n%s\n' "$name" "does not apply: the old text is not in $f"; rm -rf "$d"; return; }
 	printf '%s\n' "${body/"$old"/"$new"}" > "$d/$f"
 	out=$(env HOME="$REPO_HOME" "$off=" TEST_FAILFAST=1 bash "$d/tests/$suite" 2>&1)
-	if seen '  FAIL  ' <<<"$out"; then
-		echo "ok:mutant caught: $f: $old (by: $(grep -m1 '  FAIL  ' <<<"$out" | cut -c9- | cut -c1-80))"
+	if seen '^  FAIL  ' <<<"$out"; then
+		printf 'ok:%s\n%s\n' "$name" "caught by: $(grep -m1 '^  FAIL  ' <<<"$out" | cut -c9-)"
 	else
-		echo "bad:mutant missed: $f: $old"
+		printf 'bad:%s\n%s\n' "$name" "missed: the suite passed with it"
 	fi
 	rm -rf "$d"
 }

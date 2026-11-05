@@ -153,9 +153,10 @@ echo "== 2. the host suites on a clean Ubuntu"
 for suite in asc dash; do
 	out=$(timeout 900 docker exec -u sbuser -e XDG_RUNTIME_DIR="$RUN_DIR" -e DBUS_SESSION_BUS_ADDRESS="unix:path=$RUN_DIR/bus" \
 		-w /opt/asc "$C" bash "tests/$suite.sh" 2>&1); rc=$?  # ux's options: timeout runs commands, not functions
-	chk "tests/$suite.sh: $(printf '%s\n' "$out" | tail -1)" \
+	chk "tests/$suite.sh: every check passed" \
 		'[ "$rc" = 0 ] && printf "%s\n" "$out" | tail -1 | grep -qE "^$suite: [1-9][0-9]* passed, 0 failed$"' \
-		'echo "exit $rc"; printf "%s\n" "$out" | grep "  FAIL  "'
+		'echo "exit $rc"; printf "%s\n" "$out" | awk '"'"'/^  FAIL  /{p=1; print; next} p && /^        /{print; next} {p=0}'"'"''
+	printf '        %s\n' "$(printf '%s\n' "$out" | tail -1)"  # the suite's counts
 	chk "tests/$suite.sh: nothing skipped" '! printf "%s\n" "$out" | grep -q "^  skip  "' 'printf "%s\n" "$out" | grep "^  skip  "'
 done
 
