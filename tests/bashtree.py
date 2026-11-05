@@ -1,4 +1,4 @@
-"""A small bash parser for the suites' lints (tests/checknames.py): the commands of a script, as
+"""A small bash parser for the suites' lint (tests/checklint.py): the commands of a script, as
 a tree, with what encloses each one (a function, a loop, a subshell, a $( )), the and-or list it
 is in and its pipeline. It reads what the suites use: simple commands, pipelines, && and ||
 lists, { }, ( ), $( ), <( ), for (also for ((...))), while, until, if, case, function

@@ -22,17 +22,40 @@ mem 32000000 16000000
 export PATH="$REPO/tests/dash/bin:$PATH"  # a fake tailscale (the operator setting) and ip (fixed addresses)
 tm() { tmux -L "$ASC_TMUX_SOCKET" -f /dev/null "$@"; }
 DPID=
-# kill-server has a time limit: it once hung for hours on a stuck test server (and with it this run)
-cleanup() { [ -n "$DPID" ] && kill "$DPID" 2>/dev/null; timeout -k 2 10 tmux -L "$ASC_TMUX_SOCKET" -f /dev/null kill-server 2>/dev/null; rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$ASC_TMUX_SOCKET"; rm -rf "$T"; }
+. "$REPO/tests/reap.sh"
+# What the run started ends before its folder goes (else a dashboard's action still running
+# writes into it again after the rm): its jobs and their children (the dashboard and its actions
+# among them), then the test tmux server and what its panes run. Each call to that server has a
+# time limit: kill-server once hung for hours on a stuck test server (and with it this run).
+cleanup() {
+	local srv panes=
+	reap $$
+	srv=$(timeout -k 1 5 tmux -L "$ASC_TMUX_SOCKET" -f /dev/null display -p '#{pid}' 2>/dev/null) && tree_of "$srv" && panes=${kids[*]}
+	timeout -k 2 10 tmux -L "$ASC_TMUX_SOCKET" -f /dev/null kill-server 2>/dev/null
+	# shellcheck disable=SC2086  # pids
+	end_pids $panes
+	rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$ASC_TMUX_SOCKET"; rm -rf "$T"
+}
 trap cleanup EXIT
 pass=0 fail=0
 # One check, one fixed name: `ok NAME` or `bad NAME [DETAILS]`, the same NAME both ways, never a
-# value in it, and run once: not in a loop or a function (tests/checknames.py, run by
+# value in it, and run once: not in a loop or a function (tests/checklint.py, run by
 # tests/lint.sh). DETAILS, what was seen, go on the lines after the FAIL, each indented.
 # `skip NAME WHY` for a check that cannot run here.
 ok()   { echo "  ok    $1"; pass=$((pass + 1)); }
 bad()  { echo "  FAIL  $1"; [ -z "${2-}" ] || printf '        %s\n' "${2//$'\n'/$'\n'        }"; fail=$((fail + 1)); [ -z "${TEST_FAILFAST:-}" ] || exit 1; }
 skip() { echo "  skip  $1"; [ -z "${2-}" ] || printf '        %s\n' "${2//$'\n'/$'\n'        }"; }
+# A setup step that did not come (what the test itself started: a claude in a session it made, a
+# process of its own): one FAIL, "setup: NAME" (NAME fixed, as a check's), and the suite ends there,
+# as each check after it would test nothing. Its exit must end the suite: never inside ( ), $( ),
+# <( ), a pipeline or an & job.
+stop() { echo "  FAIL  setup: $1"; [ -z "${2-}" ] || printf '        %s\n' "${2//$'\n'/$'\n'        }"; fail=$((fail + 1)); echo "dash: $pass passed, $fail failed (stopped at a setup step)"; exit 1; }
+# Waits: CMD... (run in this shell, so a function may set variables) every 0.1 s until it succeeds
+# (poll) or fails (poll_gone), at most LIMIT whole seconds of pauses, then once more; non-zero at
+# the limit. Each wait's status must be used: a check, `|| stop`, or `|| return 1` in a helper
+# (tests/checklint.py).
+poll()      { local _poll_i; for ((_poll_i = 0; _poll_i < $1 * 10; _poll_i++)); do "${@:2}" && return 0; sleep 0.1; done; "${@:2}"; }
+poll_gone() { local _poll_i; for ((_poll_i = 0; _poll_i < $1 * 10; _poll_i++)); do "${@:2}" || return 0; sleep 0.1; done; ! "${@:2}"; }
 asctl() { "$REPO/bin/asctl" "$@"; }
 seen() { grep "$@" >/dev/null; }
 . "$REPO/tests/mutate.sh"
@@ -79,9 +102,11 @@ post() { dc -w '\n%{http_code}' -X POST -H "Origin: https://$HOST" -H "X-Asctl-T
 state() { dc "http://x$PREFIX/api/state"; }
 # The arguments of the last claude started (a /rename typed after a start comes later in the log).
 lastargs() { grep ' args=' "$HOME/claude-args.log" | tail -1; }
+# Up once it answers, whatever the answer: with another user as the operator it refuses every
+# request (403), the page's files too (000: nothing listens yet).
 start_dash() {
 	"$REPO/bin/asctl" dash --idle "${1:-0}" 2>"$T/dash.err" & DPID=$!
-	local i; for i in $(seq 1 50); do [ "$(code "http://x$PREFIX/app.css")" = 200 ] && return 0; sleep 0.1; done; return 1
+	local i; for i in $(seq 1 50); do [ "$(code "http://x$PREFIX/app.css")" != 000 ] && return 0; sleep 0.1; done; return 1
 }
 stop_dash() { kill "$DPID" 2>/dev/null; wait "$DPID" 2>/dev/null; DPID=; }
 claude_in() {
@@ -146,7 +171,7 @@ chmod 700 "$T/run/asctl"
 
 echo "== the socket and the checks on every request"
 tm start-server \; set -g exit-empty off
-start_dash && ok "dash listens on its socket" || bad "dash listens on its socket" "no socket: $(cat "$T/dash.err")"
+start_dash && [ "$(code http://x/app.css)" = 200 ] && ok "dash listens on its socket" || bad "dash listens on its socket" "no socket, or app.css not served: $(cat "$T/dash.err")"
 [ "$(stat -c %a "$SOCK")" = 600 ] && ok "socket mode 0600" || bad "socket mode 0600" "socket mode $(stat -c %a "$SOCK")"
 [ "$(stat -c %a "$T/run/asctl")" = 700 ] && ok "socket folder 0700" || bad "socket folder 0700" "socket folder $(stat -c %a "$T/run/asctl")"
 [ "$(code http://x/api/state)" = 200 ] && ok "the right login and host: 200" || bad "the right login and host: 200" "the right login and host: $(code http://x/api/state)"
@@ -257,7 +282,7 @@ seen -F 'serviceWorker.register("sw.js")' "$REPO/asc/web/app.js" && ok "the page
 
 echo "== state"
 tm new-session -d -s dev -c "$W" -- "$ASC_CLAUDE" --session-id "$SID" --name dev
-pid=$(claude_in dev)
+pid=$(claude_in dev) || stop "a claude in dev"
 s=$(state)
 jq -e '.memory.avail_pct > 0 and .memory.total_kb > 0' <<<"$s" >/dev/null && ok "state: memory" || bad "state: memory" "state: no memory"
 jq -e --arg s "$SID" '.active | map(select(.session_id == $s and .tmux == "dev")) | length == 1' <<<"$s" >/dev/null && ok "state: the running claude, not favorited" || bad "state: the running claude, not favorited" "state: active list wrong: $s"
@@ -367,8 +392,8 @@ state | jq -e '.favorites[0] | (.state | startswith("on (outside")) and .outside
 bgfile idle
 state | jq -e '.favorites[0].outside.busy == ""' >/dev/null && ok "state: outside and idle: nothing to wait for" || bad "state: outside and idle: nothing to wait for" "state outside idle: $(state | jq -c '.favorites[0].outside')"
 out=$(post '{"action":"restart","id":"'"$id"'","tmux":"'"$TM"'"}')
-for _ in $(seq 1 20); do state | jq -e '.favorites[0].state == "on"' >/dev/null && break; sleep 0.2; done
-[ "$(tail -1 <<<"$out")" = 200 ] && ! kill -0 "$bgp" 2>/dev/null && state | jq -e '.favorites[0] | .state == "on" and .outside == null' >/dev/null \
+fav_on() { state | jq -e '.favorites[0].state == "on"' >/dev/null; }
+[ "$(tail -1 <<<"$out")" = 200 ] && poll 4 fav_on && ! kill -0 "$bgp" 2>/dev/null && state | jq -e '.favorites[0] | .state == "on" and .outside == null' >/dev/null \
 	&& ok "restart in tmux from the page: the background session stopped, its claude now in its tmux session" || bad "restart in tmux from the page: the background session stopped, its claude now in its tmux session" "page restart outside: $out / $(state | jq -c '.favorites[0] | {state, outside}')"
 wait "$bgp" 2>/dev/null; rm -f "$HOME/.claude/sessions/$bgp.json"
 post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'","force":true}' >/dev/null
@@ -398,13 +423,14 @@ jq -e --arg b "$P2" '.past[] | select(.session_id == $b) | .title == "api work" 
 jq -e --arg d "$P4" '.past[] | select(.session_id == $d) | .title == "Earlyoom setup"' <<<"$pj" >/dev/null && ok "past: without a title given, claude's own (the last ai-title)" || bad "past: without a title given, claude's own (the last ai-title)" "past: ai-title not used"
 jq -e '.past | length == 2' <<<"$(dc "http://x/api/past?q=SRV")" >/dev/null && ok "past: search by folder, any case" || bad "past: search by folder, any case" "past: search wrong"
 tm new-session -d -s dev2 -c "$W" -- "$ASC_CLAUDE" --session-id "$P2"
-claude_in dev2 >/dev/null
+claude_in dev2 >/dev/null || stop "a claude in dev2"
 asctl fav "$P1" >/dev/null
 pj=$(dc "http://x/api/past")
 jq -e --arg b "$P2" '[.past[].session_id] | index($b) == null' <<<"$pj" >/dev/null && ok "past: a running conversation is not listed" || bad "past: a running conversation is not listed" "past: a running one listed"
 jq -e --arg a "$P1" '[.past[].session_id] | index($a) == null' <<<"$pj" >/dev/null && ok "past: a favorite is not listed" || bad "past: a favorite is not listed" "past: a favorite listed"
 state | jq -e --arg b "$P2" '.active[] | select(.session_id == $b) | .name == "api work" and (.claude_name | endswith("-1a"))' >/dev/null && ok "a running claude with a made-up name goes by its title" || bad "a running claude with a made-up name goes by its title" "active: made-up name shown: $(state | jq -c .active)"
-tm new-session -d -s dev4 -c "$W" -- "$ASC_CLAUDE" --session-id "$P4" --name given; claude_in dev4 >/dev/null
+tm new-session -d -s dev4 -c "$W" -- "$ASC_CLAUDE" --session-id "$P4" --name given
+claude_in dev4 >/dev/null || stop "a claude in dev4"
 state | jq -e --arg d "$P4" '.active[] | select(.session_id == $d) | .name == "given"' >/dev/null && ok "a name given to claude stays, over its title" || bad "a name given to claude stays, over its title" "active: a given name replaced: $(state | jq -c .active)"
 tm kill-session -t =dev4
 
@@ -423,35 +449,35 @@ myip=$(ip -j addr show | jq -r '[.[].addr_info[].local] | map(select(startswith(
 echo "== the Tailscale operator"
 # Restart (the setting is cached 30 s), then the status of a request. Not in $(...): a server
 # started in a subshell would hold its pipe open.
-op_code() { stop_dash; start_dash; code http://x/api/state > "$T/opc"; }
+op_code() { stop_dash; start_dash || return 1; code http://x/api/state > "$T/opc"; }
 whoami > "$HOME/fake-operator"
-op_code; [ "$(cat "$T/opc")" = 200 ] && ok "this user as the operator: served" || bad "this user as the operator: served" "own operator refused"
+op_code && [ "$(cat "$T/opc")" = 200 ] && ok "this user as the operator: served" || bad "this user as the operator: served" "own operator refused"
 echo someone-else > "$HOME/fake-operator"
-op_code; [ "$(cat "$T/opc")" = 403 ] && ok "another user as the Tailscale operator: every request refused" || bad "another user as the Tailscale operator: every request refused" "served while another user is the operator"
+op_code && [ "$(cat "$T/opc")" = 403 ] && ok "another user as the Tailscale operator: every request refused" || bad "another user as the Tailscale operator: every request refused" "served while another user is the operator"
 seen 'refused: another user is the Tailscale operator' "$T/dash.err" && ok "the log says why (the client only gets 403)" || bad "the log says why (the client only gets 403)" "no reason logged"
 rm -f "$HOME/fake-operator"; touch "$HOME/fake-tailscale-broken"
-op_code; [ "$(cat "$T/opc")" = 403 ] && ok "the setting cannot be read: refused (fail closed)" || bad "the setting cannot be read: refused (fail closed)" "served without reading the operator"
+op_code && [ "$(cat "$T/opc")" = 403 ] && ok "the setting cannot be read: refused (fail closed)" || bad "the setting cannot be read: refused (fail closed)" "served without reading the operator"
 rm -f "$HOME/fake-tailscale-broken"
-op_code; [ "$(cat "$T/opc")" = 200 ] && ok "no operator: served" || bad "no operator: served" "no operator refused"
+op_code && [ "$(cat "$T/opc")" = 200 ] && ok "no operator: served" || bad "no operator: served" "no operator refused"
 TOK=$(token)
 
 echo "== stale pages, odd bodies, a second claude"
 tm new-session -d -s trio -c "$W" -- "$ASC_CLAUDE" --session-id 44444444-5555-4666-8777-888888888888
-p3=$(claude_in trio)
+p3=$(claude_in trio) || stop "a claude in trio"
 asctl fav "$p3" --name trio >/dev/null; id3=$(jq -r '.entries[] | select(.name == "trio") | .id4' "$HOME/.local/state/agent-session-control/registry.json")
 out=$(post '{"action":"off","id":"'"$id3"'","tmux":"old-'"$id3"'"}')
 [ "$(tail -1 <<<"$out")" = 400 ] && seen 'out of date' <<<"$out" && tm has-session -t "=trio-$id3" && ok "an action from an out-of-date page (another name): refused, nothing done" || bad "an action from an out-of-date page (another name): refused, nothing done" "a stale page acted: $out"
 [ "$(post '{"action":"off","id":"'"$id3"'"}' | tail -1)" = 400 ] && ok "an action without the tmux name: refused" || bad "an action without the tmux name: refused" "an action without the tmux name accepted"
 [ "$(post '{"action":"fav","ref":"123","name":[1]}' | tail -1)" = 400 ] && ok "a name that is not a string: 400 (no crash)" || bad "a name that is not a string: 400 (no crash)" "a list as name"
 tm new-window -t "=trio-$id3:" -c "$W" -- "$ASC_CLAUDE" --session-id 55555555-6666-4777-8888-999999999999
-for _ in $(seq 1 25); do state | jq -e '.favorites[] | select(.id4 == "'"$id3"'") | .claudes == 2' >/dev/null && break; sleep 0.2; done
-state | jq -e '.favorites[] | select(.id4 == "'"$id3"'") | .claudes == 2' >/dev/null && ok "state: two claudes in the favorite's session" || bad "state: two claudes in the favorite's session" "state: claude count wrong"
+two_claudes() { state | jq -e '.favorites[] | select(.id4 == "'"$id3"'") | .claudes == 2' >/dev/null; }
+poll 5 two_claudes && ok "state: two claudes in the favorite's session" || bad "state: two claudes in the favorite's session" "state: claude count wrong"
 out=$(post '{"action":"off","id":"'"$id3"'","tmux":"trio-'"$id3"'"}')
 [ "$(tail -1 <<<"$out")" = 409 ] && seen 'another claude runs in it' <<<"$out" && ok "off refused: an idle second claude would end too" || bad "off refused: an idle second claude would end too" "off would end a second claude: $out"
 post '{"action":"off","id":"'"$id3"'","tmux":"trio-'"$id3"'","force":true}' >/dev/null
 
 tm new-session -d -s quad -c "$W" -- "$ASC_CLAUDE" --session-id 99999999-aaaa-4bbb-8ccc-dddddddddddd
-p4=$(claude_in quad)
+p4=$(claude_in quad) || stop "a claude in quad"
 out=$(post '{"action":"fav","ref":"99999999-aaaa-4bbb-8ccc-dddddddddddd","name":"quad"}')
 [ "$(tail -1 <<<"$out")" = 200 ] && ok "fav by session id (what the page sends)" || bad "fav by session id (what the page sends)" "fav by session id: $out"
 
@@ -481,13 +507,14 @@ rm -f "$HOME/.claude/projects/-y/"* "$HOME/.claude/sessions/4000001.json" "$HOME
 echo "== the token, a running action at SIGTERM, a socket path too long"
 TOK1=$(token)
 [ "$(stat -c %a "$T/run/asctl/token")" = 600 ] && ok "the token file is 0600" || bad "the token file is 0600" "token file mode $(stat -c %a "$T/run/asctl/token")"
-stop_dash; start_dash
+stop_dash; start_dash && ok "dash up again, the same token to keep" || bad "dash up again, the same token to keep" "no dash: $(cat "$T/dash.err")"
 [ "$(token)" = "$TOK1" ] && ok "the token survives a restart (an open page keeps working)" || bad "the token survives a restart (an open page keeps working)" "a new token after restart"
 (post '{"action":"on","id":"'"$id3"'","tmux":"trio-'"$id3"'"}' | tail -1 > "$T/inflight") &
 inf=$!
 # SIGTERM once the action runs (its tmux session is there; it then waits for claude): a request
 # not yet read when the signal comes is refused, rightly, and says nothing about this
-for _ in $(seq 1 50); do tm has-session -t "=trio-$id3" 2>/dev/null && break; sleep 0.1; done
+trio_up() { tm has-session -t "=trio-$id3" 2>/dev/null; }
+poll 5 trio_up && ok "the action runs (its tmux session is up) before the SIGTERM" || bad "the action runs (its tmux session is up) before the SIGTERM" "no trio-$id3: $(cat "$T/inflight" 2>&1)"
 kill -TERM "$DPID"; wait "$inf"; wait "$DPID" 2>/dev/null; DPID=
 [ "$(cat "$T/inflight")" = 200 ] && tm has-session -t "=trio-$id3" && ok "SIGTERM waits for a running action to finish" || bad "SIGTERM waits for a running action to finish" "SIGTERM cut a running action: $(cat "$T/inflight")"
 long="$T/run/long/$(printf 'x%.0s' $(seq 1 120)).sock"
@@ -495,12 +522,11 @@ timeout 5 "$REPO/bin/asctl" dash --socket "$long" --idle 0 2>"$T/err"; rc=$?
 [ "$rc" = 1 ] && seen 'cannot listen' "$T/err" && ok "a socket path too long: a clean error" || bad "a socket path too long: a clean error" "a long socket path: rc $rc, $(tail -1 "$T/err")"
 python3 -I -c 'import socket, sys, time
 s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.listen(1); time.sleep(30)' "$SOCK" & holder=$!
-for _ in $(seq 1 30); do [ -S "$SOCK" ] && break; sleep 0.1; done
+poll 3 [ -S "$SOCK" ] || stop "the test's own listener on the dashboard's socket"
 refuses && seen 'is in use' "$T/err" && ok "a socket another process listens on (asctl-dash.socket) is refused, not removed" || bad "a socket another process listens on (asctl-dash.socket) is refused, not removed" "dash took a socket in use"
 [ -S "$SOCK" ] && ok "that socket is still there" || bad "that socket is still there" "that socket was removed"
 kill "$holder"; wait "$holder" 2>/dev/null
-start_dash
-[ "$(code http://x/app.css)" = 200 ] && ok "a socket nothing listens on (stale) is replaced" || bad "a socket nothing listens on (stale) is replaced" "a stale socket blocked the start"
+start_dash && [ "$(code http://x/app.css)" = 200 ] && ok "a socket nothing listens on (stale) is replaced" || bad "a socket nothing listens on (stale) is replaced" "a stale socket blocked the start"
 
 echo "== rc, resurrect and the memory gate from the page"
 REG="$HOME/.local/state/agent-session-control/registry.json"
@@ -528,7 +554,7 @@ bootjs() { printf '{"boot": "%s", "at": 1, "todo": ["%s"], "why": "memory: watch
 bootjs "$BID" false
 state | jq -e '.boot == null' >/dev/null && ok "boot.lock not held: no boot shown (one that was killed)" || bad "boot.lock not held: no boot shown (one that was killed)" "boot with no lock: $(state | jq -c .boot)"
 python3 -I -c 'import fcntl, sys, time; f = open(sys.argv[1], "a"); fcntl.flock(f, fcntl.LOCK_EX); time.sleep(60)' "$SD/boot.lock" & bl=$!
-for _ in $(seq 1 50); do flock -n "$SD/boot.lock" true || break; sleep 0.1; done
+poll_gone 5 flock -n "$SD/boot.lock" true || stop "boot.lock held by the test"
 state | jq -e --arg i "$id3" '.boot == {"todo": [$i], "why": "memory: watched for under 5 min"}' >/dev/null \
 	&& ok "state: what boot still brings back, and why the next waits (boot.lock held)" || bad "state: what boot still brings back, and why the next waits (boot.lock held)" "boot: $(state | jq -c .boot)"
 bootjs "$BID" true
@@ -549,15 +575,12 @@ state | jq -e '.watch_at == null' >/dev/null && ok "an odd watch.json: no time" 
 rm -f "$SD/watch.json"
 state | jq -e '.setup == false' >/dev/null && ok "state: not set up (asctl's units not enabled)" || bad "state: not set up (asctl's units not enabled)" "setup: $(state | jq -c .setup)"
 mkdir -p "$HOME/fake-units/enabled"; : > "$HOME/fake-units/asctl-boot.service"; : > "$HOME/fake-units/enabled/asctl-boot.service"
-stop_dash; start_dash
-state | jq -e '.setup == false' >/dev/null && ok "boot enabled, the watcher not: not set up" || bad "boot enabled, the watcher not: not set up" "half set up: $(state | jq -c .setup)"
+stop_dash; start_dash && state | jq -e '.setup == false' >/dev/null && ok "boot enabled, the watcher not: not set up" || bad "boot enabled, the watcher not: not set up" "half set up: $(state | jq -c .setup)"
 : > "$HOME/fake-units/enabled/asctl-watch.timer"
 state | jq -e '.setup == false' >/dev/null && ok "setup is asked once a minute, not on every request" || bad "setup is asked once a minute, not on every request" "setup not cached"
-stop_dash; start_dash
-state | jq -e '.setup == true' >/dev/null && ok "state: set up (boot and the watcher enabled)" || bad "state: set up (boot and the watcher enabled)" "set up: $(state | jq -c .setup)"
-stop_dash; ASC_SYSTEMCTL=/bin/false start_dash
-state | jq -e '.setup == null' >/dev/null && ok "no answer from the user manager: setup unknown (no notice)" || bad "no answer from the user manager: setup unknown (no notice)" "no manager: $(state | jq -c .setup)"
-stop_dash; start_dash
+stop_dash; start_dash && state | jq -e '.setup == true' >/dev/null && ok "state: set up (boot and the watcher enabled)" || bad "state: set up (boot and the watcher enabled)" "set up: $(state | jq -c .setup)"
+stop_dash; ASC_SYSTEMCTL=/bin/false start_dash && state | jq -e '.setup == null' >/dev/null && ok "no answer from the user manager: setup unknown (no notice)" || bad "no answer from the user manager: setup unknown (no notice)" "no manager: $(state | jq -c .setup)"
+stop_dash; start_dash && ok "dash up again, the user manager answering" || bad "dash up again, the user manager answering" "no dash: $(cat "$T/dash.err")"
 rm -rf "$HOME/fake-units"
 state | jq -e '.settings == {"auto_restart": false}' >/dev/null && ok "state: auto-restart off by default" || bad "state: auto-restart off by default" "settings: $(state | jq -c .settings)"
 ev1=$(state | jq -r .events_v)
@@ -591,8 +614,7 @@ echo "== prefix and idle exit"
 stop_dash
 printf '{"login": "%s", "host": "%s", "prefix": "/u"}\n' "$LOGIN" "$HOST" > "$CONF"
 PREFIX=/u
-start_dash
-[ "$(stat -c %a "$T/run/asctl")" = 700 ] && ok "the socket folder is still 0700 after a restart" || bad "the socket folder is still 0700 after a restart" "socket folder mode changed"
+start_dash && [ "$(stat -c %a "$T/run/asctl")" = 700 ] && ok "the socket folder is still 0700 after a restart" || bad "the socket folder is still 0700 after a restart" "socket folder mode changed"
 [ "$(code http://x/u/api/state)" = 200 ] && ok "under the prefix: 200" || bad "under the prefix: 200" "prefix: $(code http://x/u/api/state)"
 [ "$(code http://x/api/state)" = 404 ] && [ "$(code http://x/x/api/state)" = 404 ] && ok "outside the prefix: 404 (also a path as long as it)" || bad "outside the prefix: 404 (also a path as long as it)" "outside the prefix served"
 [ "$(code http://x/u)" = 301 ] && dc -D - -o /dev/null http://x/u | seen -i '^location: /u/' && ok "the prefix without a slash redirects to /u/" || bad "the prefix without a slash redirects to /u/" "no redirect for /u"
@@ -603,11 +625,11 @@ printf 'not a png' > "$ic"
 [ "$(acode http://x/manifest.json)" = 403 ] && ok "and not outside it" || bad "and not outside it" "the manifest served outside the prefix"
 stop_dash
 [ -e "$SOCK" ] && bad "SIGTERM: the server removes its socket" "SIGTERM left the socket file" || ok "SIGTERM: the server removes its socket"
-start_dash 2
+start_dash 2 && ok "dash up, idle exit after 2 s: before the refused requests" || bad "dash up, idle exit after 2 s: before the refused requests" "no dash: $(cat "$T/dash.err")"
 for _ in 1 2 3 4 5 6 7; do curl -s -o /dev/null --unix-socket "$SOCK" -H "Host: $HOST" "http://x/u/"; sleep 0.5; done
 kill -0 "$DPID" 2>/dev/null && bad "refused requests do not keep dash alive" "refused requests kept dash from its idle exit" || ok "refused requests do not keep dash alive"
 DPID=
-start_dash 2
+start_dash 2 && ok "dash up, idle exit after 2 s: before it is left idle" || bad "dash up, idle exit after 2 s: before it is left idle" "no dash: $(cat "$T/dash.err")"
 sleep 3.5
 kill -0 "$DPID" 2>/dev/null && bad "dash exits when idle" "dash still runs after 2 s idle" || ok "dash exits when idle"
 [ -e "$SOCK" ] && bad "it removes its socket on exit" "the socket file was left behind" || ok "it removes its socket on exit"
@@ -617,13 +639,13 @@ echo "== systemd socket activation"
 if command -v systemd-socket-activate >/dev/null; then
 	mkdir -p "$T/sa"; chmod 700 "$T/sa"
 	systemd-socket-activate -E HOME -E PATH -E ASC_TMUX_SOCKET -l "$T/sa/s.sock" "$REPO/bin/asctl" dash --idle 0 2>"$T/err" & DPID=$!
-	for _ in $(seq 1 30); do [ -S "$T/sa/s.sock" ] && break; sleep 0.1; done
+	poll 3 [ -S "$T/sa/s.sock" ] || stop "systemd-socket-activate listening"
 	chmod 666 "$T/sa/s.sock"  # before the first connection, which starts asctl
 	curl -s -m 5 -o /dev/null --unix-socket "$T/sa/s.sock" http://x/ ; sleep 0.5
 	seen 'open to other users' "$T/err" && ok "a passed socket open to other users is refused" || bad "a passed socket open to other users is refused" "a passed socket 0666 accepted: $(tail -1 "$T/err")"
 	stop_dash; rm -f "$T/sa/s.sock"
 	systemd-socket-activate -E HOME -E PATH -E ASC_TMUX_SOCKET -l "$T/sa/s.sock" "$REPO/bin/asctl" dash --idle 0 2>"$T/sa.err" & DPID=$!
-	for _ in $(seq 1 30); do [ -S "$T/sa/s.sock" ] && break; sleep 0.1; done
+	poll 3 [ -S "$T/sa/s.sock" ] || stop "systemd-socket-activate listening again"
 	r=$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$T/sa/s.sock" -H "Tailscale-User-Login: $LOGIN" -H "Host: localhost" -H "$XFH" -H "$XFF" http://x/u/api/state)
 	[ "$r" = 200 ] && ok "serves on the socket systemd passes" || bad "serves on the socket systemd passes" "socket activation: $r $(tail -2 "$T/sa.err")"
 	stop_dash
