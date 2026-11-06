@@ -177,8 +177,10 @@ asc/cli.py %%%         raise ActionFailed(f"claude stop {now['job']}: {(r.stderr
 asc/cli.py %%%             x["rename_title"] = True if title else None %%%             x["rename_title"] = None %%% a start that cannot send its name to claude.ai (claude busy): owed to it, though claude has the name %%% outside
 asc/watch.py %%%     if pend != e["tmux"] or (s["name"] == pend and not e.get("rename_title")): %%%     if pend != e["tmux"] or s["name"] == pend: %%% the watcher sends it once claude is idle (/rename, though claude has the name), and it is no longer owed %%% outside
 asc/rclive.py %%%     if wait_for(lambda: offers_cmd(screen(pane), before), timeout): %%%     if offers_cmd(steady(pane), before): %%% off: a menu drawn a moment after the typed text is waited for %%% main
-asc/rclive.py %%%         settled(pane, typed=cmd)  # a slow claude still drawing it: until all of it shows or stops %%%         pass %%% rc on, a slow claude: waited until its prompt stopped changing, then live %%% rc_slow
+asc/rclive.py %%%         settled(pane, typed=cmd, timeout=10)  # a slow claude still drawing it: until all of it shows or stops %%%         pass %%% rc on, a slow claude: waited until its prompt stopped changing, then live %%% rc_slow
 asc/rclive.py %%%     while (time.monotonic() - since < quiet or part(t)) and %%%     while (time.monotonic() - since < quiet) and %%% rc on, a slow claude: waited until its prompt stopped changing, then live %%% rc_slow
+asc/rclive.py %%% t is not None and t != typed and %%% t is not None and %%% settled: all of what was typed, or other text, is taken once it stops changing %%% rc_slow
+asc/rclive.py %%% and t != typed and typed.startswith(t) %%% and t != typed %%% settled: all of what was typed, or other text, is taken once it stops changing %%% rc_slow
 asc/rclive.py %%% *["BSpace"] * len(cmd)) %%% *["BSpace"] * len(t)) %%% take back, a slow claude: the whole command removed once its prompt stopped changing %%% rc_slow
 asc/rclive.py %%% else settled(pane) %%% else prompt_text(screen(pane)) %%% take back, a slow claude: the whole command removed once its prompt stopped changing %%% rc_slow
 asc/rclive.py %%% if t is not None and cmd.startswith(t): %%% if t and cmd.startswith(t): %%% take back, nothing drawn yet: removed as it shows %%% rc_slow

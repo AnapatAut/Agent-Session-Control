@@ -682,9 +682,23 @@ print(rclive.take_back(sys.argv[2], sys.argv[3], lambda: None))' "$REPO" "$spane
 }
 poll 5 slow_empty || stop "an empty prompt in the slow claude"
 echo "== rc now, a slow claude: what is typed drawn late (a busy host), or someone at its session"
+# settled() on prompts set by hand: what it holds to its timeout and what it takes once quiet
+st=$(python3 -I - "$REPO" <<'EOF'
+import sys, time; sys.path.insert(0, sys.argv[1]); from asc import rclive as r
+r.screen = lambda pane: None
+def took(shown):
+    r.prompt_text = lambda scr: shown
+    t0 = time.monotonic(); r.settled("%0", quiet=0.2, timeout=2, step=0.05, typed="/remote-control x")
+    return time.monotonic() - t0
+print("taken" if took("/remote-control x") < 1 and took("hello") < 1 else "-")
+print("held" if took("/remote-con") >= 1.9 and took("") >= 1.9 else "-")
+EOF
+)
+grep -qx taken <<<"$st" && ok "settled: all of what was typed, or other text, is taken once it stops changing" || bad "settled: all of what was typed, or other text, is taken once it stops changing" "settled: $st"
+grep -qx held <<<"$st" && ok "settled: a start of what was typed, or none of it yet, waits on to its timeout" || bad "settled: a start of what was typed, or none of it yet, waits on to its timeout" "settled: $st"
 # drawing stops after 4 characters for 4.5 s: longer than asctl waits for the command to show
 # (2 s) and then for its prompt to stop changing (1.5 s); a start of it shown, the rest is on its
-# way, and asctl waits on (up to 5 s more)
+# way, and asctl waits on (up to 10 s from when it began to wait, 2 s after typing)
 echo "5 4.5" > "$HOME/fake-echo-stall"
 out=$(asctl rc "$ids" on --title "Slow chat"); seen 'live now' <<<"$out" && [ -n "$(slow_bridge)" ] && seen -x "pid=[0-9]* line: /remote-control Slow chat" "$HOME/claude-args.log" && slow_empty \
 	&& ok "rc on, a slow claude: waited until its prompt stopped changing, then live" || bad "rc on, a slow claude: waited until its prompt stopped changing, then live" "slow on: $out / $(tm capture-pane -p -t "$spane" | tail -4 | tr "\n" "|")"
