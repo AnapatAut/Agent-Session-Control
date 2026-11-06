@@ -223,7 +223,7 @@ newrepo; printf '(unclosed\n' >> "$T/r/tools/privacy-rules"; printf 'x\n' > "$T/
 chk --staged; [ $? = 2 ] && ok "a broken rule stops the check (exit 2), never passes" || bad "a broken rule lets the check pass"
 
 # PRIVACY_MUTANTS=1: break the checker or a hook one way at a time, in a copy; each must make
-# this test fail (its run stops at its first FAIL). About 7 min (38 mutants). As in
+# this test fail (its run stops at its first FAIL). About 4 min (38 mutants). As in
 # tests/mutate.sh: the old text must be found exactly once in its file, a ⏎ stands for a newline,
 # and a line given twice fails.
 if [ "${PRIVACY_MUTANTS:-}" = 1 ]; then

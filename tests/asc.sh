@@ -2,7 +2,7 @@
 # Tests of asctl (registry, live, fav, on, off, rename, restart, mode, rc, forget, the event log,
 # the watcher, boot, the tmux server unit, setup) with the fake claude in tests/asc/bin, a
 # throwaway HOME and a tmux server of their own (tmux -L). Touches neither your tmux nor your
-# ~/.claude. About 5 min, no network.
+# ~/.claude. About 4 min, no network.
 #   tests/asc.sh                  prints ok/FAIL per check; exit 0 = all passed
 #   ASC_ONLY=<case,...> tests/asc.sh   only those cases (tests/cases.sh)
 #   ASC_TRACE=1 tests/asc.sh      after a FAIL, the end of the fake claudes' trace (each key, frame,
