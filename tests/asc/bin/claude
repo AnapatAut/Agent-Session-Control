@@ -24,6 +24,9 @@
 # 1.5 s, and the transcript quotes its lines. $HOME/fake-mangle: an x shows before typed text.
 # $HOME/fake-two-lines: the prompt has a second line (text after an empty first line).
 # $HOME/fake-slow-keys: in the dialog, an arrow key redrawn 0.7 s late (a busy host).
+# $HOME/fake-peer-name: the session file says nameSource "peer" (a name claude keeps).
+# $HOME/fake-no-rename: "/rename NAME" changes nothing. $HOME/fake-task: a command running (a
+# child bash). $HOME/fake-trusted: the folders trusted, one a line (a Yes at the prompt adds one).
 # ASC_TRACE set: each key read, each frame drawn and each status change, with its time in ms,
 # appended to $HOME/fake-trace.log (tests/asc.sh prints its end on a FAIL).
 # $HOME/fake-echo-stall, its text "AT SECONDS" or "AT hold": once AT characters are typed, the

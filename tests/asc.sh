@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Tests of asctl (registry, live, fav, on, off, rename, mode, forget) with the fake claude in
-# tests/asc/bin, a throwaway HOME and a tmux server of their own (tmux -L). Touches neither
-# your tmux nor your ~/.claude. Seconds, no network.
+# Tests of asctl (registry, live, fav, on, off, rename, restart, mode, rc, forget, the event log,
+# the watcher, boot, the tmux server unit, setup) with the fake claude in tests/asc/bin, a
+# throwaway HOME and a tmux server of their own (tmux -L). Touches neither your tmux nor your
+# ~/.claude. About 5 min, no network.
 #   tests/asc.sh                  prints ok/FAIL per check; exit 0 = all passed
 #   ASC_ONLY=<case,...> tests/asc.sh   only those cases (tests/cases.sh)
+#   ASC_TRACE=1 tests/asc.sh      after a FAIL, the end of the fake claudes' trace (each key, frame,
+#                                 status change and tmux send-keys, timed): to find a race
 # Its mutants (changes to asctl each check must catch) are in tests/mutants-asc.txt, run by
 # tests/mutate.sh. TEST_STOP_AT=<check>: exit right after that check's FAIL (the mutant run).
 set -uo pipefail

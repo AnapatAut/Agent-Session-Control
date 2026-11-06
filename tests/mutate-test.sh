@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/mutate.sh on toy repos of its own (run by tests/lint.sh, about two minutes): every verdict
+# tests/mutate.sh on toy repos of its own (run by tests/lint.sh, about 40 s): every verdict
 # (CAUGHT in its case, CAUGHT only by the whole suite, SURVIVED, a FAIL elsewhere only, flaky once,
 # a case run cut short, a check printed twice, a time limit, memory pressure and no more mutants
 # started, an OOM kill, PSI gone, a kill seen only after the run ended, BROKEN at import), the

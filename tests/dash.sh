@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The dashboard server (asc/dash.py) over its unix socket, with curl, in a throwaway HOME, a
 # tmux server of its own and the fake claude of tests/asc.sh.
-#   tests/dash.sh                  about 20 s
+#   tests/dash.sh                  about 1 min
 #   ASC_ONLY=<case,...> tests/dash.sh   only those cases (tests/cases.sh)
 # Its mutants (changes to the dashboard each check must catch) are in tests/mutants-dash.txt,
 # run by tests/mutate.sh. TEST_STOP_AT=<check>: exit right after that check's FAIL.

@@ -4,7 +4,7 @@ Six scripts. None touches your own tmux, tmux config or systemd user units.
 
 | Script | Time | Needs | Checks |
 |---|---|---|---|
-| `tests/lint.sh` | about 40 s | bash; `shellcheck` and `node` if installed | bash syntax and shellcheck for every script, Python compiles, app.js parses, the suites' checks and waits (`tests/checklint.py`, with `tests/bashtree.py`), the mutant lists, the case runner, the mutant runner on toy repos (`tests/mutate-test.sh`); the privacy check of every tracked file |
+| `tests/lint.sh` | about 45 s | bash; `shellcheck` and `node` if installed | bash syntax and shellcheck for every script, Python compiles, app.js parses, the suites' checks and waits (`tests/checklint.py`, with `tests/bashtree.py`), the mutant lists, the case runner, how a mutant run is read (`tests/mutjudge.py`), the mutant runner on toy repos (`tests/mutate-test.sh`), the sandbox's container check with a fake docker (`tests/sandbox-lib-test.sh`); the privacy check of every tracked file |
 | `tests/asc.sh` | about 5 min | bash, tmux, jq, python3 | `asctl`: live, fav, on, off, rename, restart, mode, rc, the event log, the watcher, boot, the tmux server unit and `asctl setup`, with a fake claude on a tmux server of its own and a fake systemctl (`tests/asc/bin`) |
 | `tests/dash.sh` | about 1 min | bash, tmux, jq, curl, python3; node for the page's logic (skipped without) | the dashboard server: socket and folder modes, the login, Host, Origin and token checks, one request per connection, the API and its actions, past conversations, idle and SIGTERM exit, systemd socket activation; the notices (boot, setup, the watcher), the auto-restart setting, conversation lengths; the page's own logic (`tests/dash/page.js`: row reasons, history wording and folding) |
 | `tests/sandbox.sh` | about 8 min | Docker, network for the build only | asctl under real systemd, in a container: the two suites above on a clean Ubuntu, the dashboard as user units, a real out-of-memory kill, the watcher, the units from a checkout, the machine install (`install.sh`) and `asctl setup` by a second user, a reboot, then `setup --remove` and `--uninstall` |
@@ -15,6 +15,7 @@ Six scripts. None touches your own tmux, tmux config or systemd user units.
 tests/lint.sh
 tests/asc.sh                 # prints ok/FAIL per check and a summary; exit 0 = all passed
 ASC_ONLY=main tests/asc.sh   # only that case (tests/cases.sh)
+ASC_TRACE=1 tests/asc.sh     # after a FAIL, the end of the fake claudes' trace: to find a race
 tests/dash.sh
 tests/mutate.sh              # every mutant; exit 0 only if each is caught by its own check
 tests/sandbox.sh             # KEEP=1: leave the container up; --down removes what a run left
@@ -139,7 +140,7 @@ message body and a leak behind a stale tracking ref are refused; the installer k
 else's hook and refuses while `core.hooksPath` points elsewhere; a remote with 60000 refs still
 works; a git that fails part way (a missing object) stops the check with exit 2; a local file of only comments refuses nothing; a hand-made
 `gpgsig-x` header is checked. `PRIVACY_MUTANTS=1 tests/privacy.sh` (about seven
-minutes) also breaks the checker and hooks 37 ways,
+minutes) also breaks the checker and hooks 38 ways,
 one at a time in a copy; each must make the test fail.
 
 ## What they change on the host

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # asctl in a throwaway container booting real systemd: the host suites on a clean Ubuntu, the
 # dashboard as systemd user units (socket activation, idle exit, stop), and a real out-of-memory
-# kill kept inside a capped unit. The backend's tests (watcher, tmux unit, boot resurrect,
-# setup) grow here. Leaves nothing behind.
-#   tests/sandbox.sh            build, run every check, tear down  (about 2 min)
+# kill kept inside a capped unit, the watcher, the tmux server unit, the machine install and
+# setup, a reboot (boot's resurrect). Leaves nothing behind.
+#   tests/sandbox.sh            build, run every check, tear down  (about 8 min)
 #   KEEP=1 tests/sandbox.sh     same, but leave the container and image up to look around
 #   tests/sandbox.sh --down     remove what a finished or killed run left (refused while one runs)
 # Needs Docker, and internet for the build only (Ubuntu packages); the test container has none.

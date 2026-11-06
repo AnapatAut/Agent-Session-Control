@@ -2,7 +2,7 @@
 # Static checks: bash syntax and shellcheck for every script in the repo, the suites' checks and
 # waits (tests/checklint.py), their mutant lists (tests/mutantlint.py), the sandbox's HostConfig
 # check with a fake docker (tests/sandbox-lib-test.sh), the case runner (tests/cases-test.sh), the
-# mutant runner on toy repos (tests/mutate-test.sh, about 30 s), and the privacy check of every
+# mutant runner on toy repos (tests/mutate-test.sh, about 40 s), and the privacy check of every
 # tracked file. Changes nothing.
 #   tests/lint.sh
 set -uo pipefail
