@@ -9,7 +9,7 @@ Six scripts. None touches your own tmux, tmux config or systemd user units.
 | `tests/dash.sh` | about 1 min | bash, tmux, jq, curl, python3; node for the page's logic (skipped without) | the dashboard server: socket and folder modes, the login, Host, Origin and token checks, one request per connection, the API and its actions, past conversations, idle and SIGTERM exit, systemd socket activation; the notices (boot, setup, the watcher), the auto-restart setting, conversation lengths; the page's own logic (`tests/dash/page.js`: row reasons, history wording and folding) |
 | `tests/sandbox.sh` | about 7 min | Docker, network for the build only | asctl under real systemd, in a container: the two suites above on a clean Ubuntu, the dashboard as user units, a real out-of-memory kill, the watcher, the units from a checkout, the machine install (`install.sh`) and `asctl setup` by a second user, a reboot, then `setup --remove` and `--uninstall` |
 | `tests/privacy.sh` | seconds (`PRIVACY_MUTANTS=1`: about 4 min) | bash, git | the privacy check and its hooks catch each kind of leak and let the allowed cases through |
-| `tests/mutate.sh` | about 30 min (`MUTANT_JOBS=3`; its baseline about 2 min) | as `asc.sh` and `dash.sh` | each mutant of `tests/mutants-asc.txt` and `tests/mutants-dash.txt`: one safeguard of asctl broken in a copy must make its named check fail |
+| `tests/mutate.sh` | about 20 min (`MUTANT_JOBS=3`; its baseline about 2 min) | as `asc.sh` and `dash.sh` | each mutant of `tests/mutants-asc.txt` and `tests/mutants-dash.txt`: one safeguard of asctl broken in a copy must make its named check fail |
 
 ```bash
 tests/lint.sh
