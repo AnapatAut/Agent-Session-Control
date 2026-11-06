@@ -72,6 +72,19 @@ lastargs() { grep ' args=' "$HOME/claude-args.log" | tail -1; }
 # grep that reads all its input: grep -q stops at the first match, and the writer's broken
 # pipe would then fail the pipeline (pipefail), taking the wrong branch of a check.
 seen() { grep "$@" >/dev/null; }
+# flagged: after a fake claude flag file changed (fake-busy, fake-wait, ...), until each running
+# fake claude has written its session file since (it reads the flags as it writes it), at most 5 s:
+# never a fixed sleep, which a busy host outlasts
+flagged() { : > "$T/flag-mark"; poll 5 flag_seen || stop "each fake claude wrote the flag change"; }
+flag_seen() {
+	local f p
+	for f in "$HOME"/.claude/sessions/*.json; do
+		p=${f##*/}; p=${p%.json}
+		[[ $p =~ ^[0-9]+$ ]] && [ "$(cat "/proc/$p/comm" 2>/dev/null)" = claude ] && seen statusUpdatedAt "$f" || continue
+		[[ $(awk '{sub(/.*\) /, ""); print $1}' "/proc/$p/stat" 2>/dev/null) == [RSD] ]] || continue  # stopped: never writes
+		[ -n "$(find "$f" -newer "$T/flag-mark" 2>/dev/null)" ] || return 1
+	done
+}
 . "$REPO/tests/cases.sh"
 # The pid of the live fake claude in a tmux session, waiting up to 10 s.
 claude_in() {
@@ -155,9 +168,9 @@ asctl on "$id" >/dev/null 2>&1 && bad "on refused while a live claude holds the 
 tm rename-session -t "=moved" "das-$id"
 
 echo "== busy"
-touch "$HOME/fake-busy"; sleep 0.6
+touch "$HOME/fake-busy"; flagged
 errof off "$id" | grep -q 'busy: claude is working' && ok "off refused: claude busy" || bad "off refused: claude busy" "off not refused while busy"
-rm -f "$HOME/fake-busy"; sleep 0.6
+rm -f "$HOME/fake-busy"; flagged
 tm new-window -t "=das-$id:" -- sleep 300
 sleep 0.5
 errof off "$id" | grep -q 'runs sleep' && ok "off refused: another pane runs sleep" || bad "off refused: another pane runs sleep" "off not refused for a running pane"
@@ -260,7 +273,7 @@ tm new-session -d -s duo -c "$W" -- "$ASC_CLAUDE" --session-id 77777777-8888-499
 p6=$(claude_in duo) || stop "a claude in duo"
 tm new-window -t "=duo:" -c "$W" -- "$ASC_CLAUDE" --session-id 88888888-9999-4aaa-8bbb-cccccccccccc
 sleep 1; asctl fav "$p6" --name duo --whole-session >/dev/null; id6=$(jq -r '.entries[] | select(.name == "duo") | .id4' "$REG")
-touch "$HOME/fake-busy"; sleep 0.8
+touch "$HOME/fake-busy"; flagged
 errof off "$id6" | grep -q 'is working' && ok "off refused: a second claude in the session is working" || bad "off refused: a second claude in the session is working" "off ignored a busy second claude"
 rm -f "$HOME/fake-busy"; asctl off "$id6" --force >/dev/null
 echo "== a session file asctl cannot read"
@@ -396,9 +409,9 @@ tm send-keys -t "$pane" -l "half typed"; sleep 0.5
 out=$(asctl rc "$idr" on); seen 'not changed now: something is typed in its prompt' <<<"$out" && [ -z "$(bridge)" ] && screen | seen 'half typed' \
 	&& [ "$(jqe ".entries[\"$idr\"].rc")" = true ] && ok "text in its prompt: nothing typed, the setting saved for the next start" || bad "text in its prompt: nothing typed, the setting saved for the next start" "typed prompt: $out / $(screen | tail -3)"
 tm send-keys -t "$pane" BSpace BSpace BSpace BSpace BSpace BSpace BSpace BSpace BSpace BSpace; sleep 0.5
-touch "$HOME/fake-busy"; sleep 0.6
+touch "$HOME/fake-busy"; flagged
 out=$(asctl rc "$idr" on); seen 'not changed now: claude is busy' <<<"$out" && [ -z "$(bridge)" ] && ok "busy: nothing typed" || bad "busy: nothing typed" "busy: $out"
-rm -f "$HOME/fake-busy"; sleep 0.6
+rm -f "$HOME/fake-busy"; flagged
 tm copy-mode -t "$pane"
 out=$(asctl rc "$idr" on); seen 'not changed now: its pane is in copy mode' <<<"$out" && [ -z "$(bridge)" ] && ok "copy mode: nothing typed" || bad "copy mode: nothing typed" "copy mode: $out"
 tm send-keys -t "$pane" -X cancel
@@ -794,11 +807,11 @@ echo "== a new name for a running claude: /rename when idle, or a restart"
 asctl on "$id2" >/dev/null
 c1=$(claude_in "chat-$id2") && ok "a new name: claude up after on" || bad "a new name: claude up after on" "no claude in chat-$id2"
 sname() { jq -r .name "$HOME/.claude/sessions/$1.json"; }
-touch "$HOME/fake-busy"; sleep 0.8
+touch "$HOME/fake-busy"; flagged
 out=$(asctl rename "$id2" talk 2>&1)
 seen "renamed to talk-$id2; claude's own name not changed now: claude is busy" <<<"$out" && [ "$(sname "$c1")" = "chat-$id2" ] && ! seen 'line: /rename' "$HOME/claude-args.log" \
 	&& ok "rename while claude works: the favorite renamed, nothing typed" || bad "rename while claude works: the favorite renamed, nothing typed" "rename while busy: $out"
-rm -f "$HOME/fake-busy"; sleep 0.8
+rm -f "$HOME/fake-busy"; flagged
 out=$(asctl rename "$id2" talk 2>&1)
 seen 'claude and its claude.ai title too' <<<"$out" && [ "$(claude_in "talk-$id2")" = "$c1" ] && [ "$(sname "$c1")" = "talk-$id2" ] && seen "line: /rename talk-$id2" "$HOME/claude-args.log" \
 	&& ok "rename of an idle claude: /rename typed, the same claude takes the name" || bad "rename of an idle claude: /rename typed, the same claude takes the name" "live rename: $out / $(sname "$c1")"
@@ -811,11 +824,11 @@ out=$(asctl rename "$id2" talk4 2>&1)
 seen "not changed now: typed, but claude did not record the new name" <<<"$out" && ok "rename: typed but not taken by claude: said so" || bad "rename: typed but not taken by claude: said so" "rename not taken: $out"
 rm -f "$HOME/fake-no-rename"
 asctl rename "$id2" talk >/dev/null
-touch "$HOME/fake-task"; sleep 0.8
+touch "$HOME/fake-task"; flagged
 out=$(asctl rename "$id2" talk2 --restart 2>&1)
 seen 'not restarted now: busy: .* runs a command' <<<"$out" && [ "$(claude_in "talk2-$id2")" = "$c1" ] && ok "rename --restart: not while claude runs a command (a background one too)" || bad "rename --restart: not while claude runs a command (a background one too)" "restart with a command running: $out"
 asctl off "$id2" >/dev/null 2>&1 && bad "off refused while claude runs a command" "off went ahead while claude runs a command" || ok "off refused while claude runs a command"
-rm -f "$HOME/fake-task"; sleep 0.8
+rm -f "$HOME/fake-task"; flagged
 AG="$HOME/.claude/projects/-x/$SID2/subagents"; mkdir -p "$AG"
 printf '{"type":"user","message":{"role":"user","content":"go"}}\n' > "$AG/agent-a1.jsonl"
 out=$(errof restart "$id2"); seen 'runs a subagent' <<<"$out" && ok "restart: not while a subagent runs" || bad "restart: not while a subagent runs" "restart with a subagent: $out"
@@ -830,7 +843,7 @@ c2=$(claude_in "talk2-$id2") && [ "$c2" != "$c1" ] && [ "$(jqe ".entries[\"$id2\
 grep "pid=$c2 " "$HOME/claude-args.log" | seen "line: /rename talk2-$id2" && ok "a start with rc sends its name to claude.ai (/rename, once rc is up)" || bad "a start with rc sends its name to claude.ai (/rename, once rc is up)" "no /rename after an rc start: $(grep "pid=$c2 " "$HOME/claude-args.log")"
 out=$(asctl rename "$id2" chat --restart 2>&1)
 c3=$(claude_in "chat-$id2") && [ "$c3" != "$c2" ] && lastargs | seen -- "--name chat-$id2" && ok "rename --restart of an idle claude: restarted with the new name" || bad "rename --restart of an idle claude: restarted with the new name" "rename --restart: $out"
-touch "$HOME/fake-wait"; sleep 0.8
+touch "$HOME/fake-wait"; flagged
 out=$(errof restart "$id2"); seen 'its claude is waiting' <<<"$out" && [ "$(claude_in "chat-$id2")" = "$c3" ] && ok "restart: not while claude waits (a question or dialog would be lost)" || bad "restart: not while claude waits (a question or dialog would be lost)" "restart while waiting: $out"
 rm -f "$HOME/fake-wait" "$AG"/*
 asctl rc "$id2" off --next-start >/dev/null; asctl off "$id2" --force >/dev/null
@@ -880,7 +893,7 @@ asctl off "$ido" >/dev/null; touch "$HOME/fake-busy"
 o=$(asctl on "$ido" 2>&1)
 pb=$(claude_in "outer-$ido") && seen "its name not sent to claude.ai: claude is busy" <<<"$o" && [ "$(jq -r --arg i "$ido" '.entries[$i] | "\(.rename_pending) \(.rename_title)"' "$REG")" = "outer-$ido true" ] \
 	&& ok "a start that cannot send its name to claude.ai (claude busy): owed to it, though claude has the name" || bad "a start that cannot send its name to claude.ai (claude busy): owed to it, though claude has the name" "title owed: $o / $(jq -c --arg i "$ido" '.entries[$i]' "$REG")"
-rm -f "$HOME/fake-busy"; sleep 0.8
+rm -f "$HOME/fake-busy"; flagged
 # the watcher's step for it alone (a whole watcher run here would start the watcher tests' state early)
 python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import cli, registry, watch
 e = registry.find(registry.load(), sys.argv[2])
@@ -968,12 +981,12 @@ mkdir -p "$T/moved"; echo "$T/moved" > "$HOME/fake-cd-$WS2"; sleep 0.8; watch
 echo /nonexistent > "$HOME/fake-cd-$WS2"; sleep 0.8; watch
 [ "$(jq -r ".entries[\"$idw\"].cwd" "$REG")" = "$T/moved" ] && ok "not followed: a folder that does not exist" || bad "not followed: a folder that does not exist" "followed a missing folder"
 rm -f "$HOME/fake-cd-$WS2"
-touch "$HOME/fake-busy"; sleep 0.6
+touch "$HOME/fake-busy"; flagged
 asctl rename "$idw" wat2 | seen 'The watcher sends it once claude is idle' && [ "$(jq -r ".entries[\"$idw\"].rename_pending" "$REG")" = "wat2-$idw" ] \
 	&& ok "rename while busy: pending" || bad "rename while busy: pending" "rename pending: $(jq -r ".entries[\"$idw\"].rename_pending" "$REG")"
 watch; watch; watch; watch; [ "$(jq -r .name "$HOME/.claude/sessions/$pw.json")" = "wat-$idw" ] && [ "$(jq -r ".entries[\"$idw\"].rename_pending" "$REG")" = "wat2-$idw" ] \
 	&& ok "watch: nothing typed while claude works, however long (the rename stays pending)" || bad "watch: nothing typed while claude works, however long (the rename stays pending)" "renamed while busy, or pending dropped"
-rm -f "$HOME/fake-busy"; sleep 0.6; watch
+rm -f "$HOME/fake-busy"; flagged; watch
 [ "$(jq -r .name "$HOME/.claude/sessions/$pw.json")" = "wat2-$idw" ] && [ "$(jq -r ".entries[\"$idw\"].rename_pending" "$REG")" = null ] && last rename | seen "took the name wat2-$idw" \
 	&& ok "watch: the pending rename sent once idle, then cleared" || bad "watch: the pending rename sent once idle, then cleared" "pending rename: $(jq -r .name "$HOME/.claude/sessions/$pw.json")"
 tm new-session -d -s twin -c "$W" -- "$ASC_CLAUDE" --resume "$WS2"
@@ -1159,7 +1172,7 @@ ph=$(claude_in "wat2-$idw") && ok "a claude started by hand in its pane: up" || 
 watch
 [ ! -e "$SD/exit/$idw" ] && ok "a claude started by hand after the end: the old exit record dropped" || bad "a claude started by hand after the end: the old exit record dropped" "stale exit record kept: $(cat "$SD/exit/$idw")"
 # A second claude in its session: nothing there is sure to be about it (no rename typed).
-touch "$HOME/fake-busy"; sleep 0.6; asctl rename "$idw" wat3 >/dev/null; rm -f "$HOME/fake-busy"
+touch "$HOME/fake-busy"; flagged; asctl rename "$idw" wat3 >/dev/null; rm -f "$HOME/fake-busy"
 [ "$(jq -r ".entries[\"$idw\"].rename_pending" "$REG")" = "wat3-$idw" ] && ok "a rename while claude works: kept pending" || bad "a rename while claude works: kept pending" "rename not pending: $(jq -r .name "$HOME/.claude/sessions/$ph.json")"
 cw=$(jq -r ".entries[\"$idw\"].cwd" "$REG")
 python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import registry

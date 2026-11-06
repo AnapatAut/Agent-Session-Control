@@ -63,6 +63,19 @@ poll()      { local _poll_i; for ((_poll_i = 0; _poll_i < $1 * 10; _poll_i++)); 
 poll_gone() { local _poll_i; for ((_poll_i = 0; _poll_i < $1 * 10; _poll_i++)); do "${@:2}" || return 0; sleep 0.1; done; ! "${@:2}"; }
 asctl() { "$REPO/bin/asctl" "$@"; }
 seen() { grep "$@" >/dev/null; }
+# flagged: after a fake claude flag file changed (fake-busy, fake-wait, ...), until each running
+# fake claude has written its session file since (it reads the flags as it writes it), at most 5 s:
+# never a fixed sleep, which a busy host outlasts
+flagged() { : > "$T/flag-mark"; poll 5 flag_seen || stop "each fake claude wrote the flag change"; }
+flag_seen() {
+	local f p
+	for f in "$HOME"/.claude/sessions/*.json; do
+		p=${f##*/}; p=${p%.json}
+		[[ $p =~ ^[0-9]+$ ]] && [ "$(cat "/proc/$p/comm" 2>/dev/null)" = claude ] && seen statusUpdatedAt "$f" || continue
+		[[ $(awk '{sub(/.*\) /, ""); print $1}' "/proc/$p/stat" 2>/dev/null) == [RSD] ]] || continue  # stopped: never writes
+		[ -n "$(find "$f" -newer "$T/flag-mark" 2>/dev/null)" ] || return 1
+	done
+}
 . "$REPO/tests/cases.sh"
 # Put together at run time, so the privacy check does not read them as real ones.
 E=@ N=.ts
@@ -411,19 +424,19 @@ state | jq -e '.favorites[0] | .mode_used == "acceptEdits" and .mode_next == "ac
 	&& ok "state: the mode claude switched to (the transcript read again when it changes)" || bad "state: the mode claude switched to (the transcript read again when it changes)" "state: mode stale: $(state | jq -c '.favorites[0] | {mode_used, mode_next}')"
 rm -f "$tr"
 jq -e --arg l "$LOGIN" --arg h "$HOME" '.login == $l and .home == $h and .favorites[0].rc_live == false' <<<"$s" >/dev/null && ok "state: the login, the home folder, remote control not live" || bad "state: the login, the home folder, remote control not live" "state: login, home or rc_live wrong: $(jq -c '{login, home, rc_live: .favorites[0].rc_live}' <<<"$s")"
-touch "$HOME/fake-rc" "$HOME/fake-wait"; sleep 0.6
+touch "$HOME/fake-rc" "$HOME/fake-wait"; flagged
 state | jq -e '.favorites[0] | .rc_live == true and .status == "waiting" and .busy == "" and .waiting_for == "dialog open" and (.status_at | type) == "number"' >/dev/null && ok "state: remote control live, waiting (not busy), why and since when" || bad "state: remote control live, waiting (not busy), why and since when" "state: rc_live/waiting wrong: $(state | jq -c '.favorites[0] | {rc_live, status, busy}')"
-rm -f "$HOME/fake-rc" "$HOME/fake-wait"; sleep 0.6
-touch "$HOME/fake-task"; sleep 0.8
+rm -f "$HOME/fake-rc" "$HOME/fake-wait"; flagged
+touch "$HOME/fake-task"; flagged
 state | jq -e '.favorites[0] | .status == "busy" and .task == "runs a command" and .status_at == null and (.busy | test("runs a command"))' >/dev/null \
 	&& ok "state: an idle claude that runs a command (a background one too) is working" || bad "state: an idle claude that runs a command (a background one too) is working" "state: task not shown: $(state | jq -c '.favorites[0] | {status, task, busy}')"
-rm -f "$HOME/fake-task"; sleep 0.8
+rm -f "$HOME/fake-task"; flagged
 state | jq -e '.favorites[0] | .status == "idle" and .task == ""' >/dev/null && ok "state: idle again once the command ended" || bad "state: idle again once the command ended" "state: still working after the command"
-touch "$HOME/fake-busy"; sleep 0.6
+touch "$HOME/fake-busy"; flagged
 out=$(post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'"}')
 [ "$(tail -1 <<<"$out")" = 409 ] && seen 'busy: claude is working' <<<"$out" && ok "off refused while busy, with the reason" || bad "off refused while busy, with the reason" "off while busy: $out"
 state | jq -e '.favorites[0].busy | test("is working")' >/dev/null && ok "state: busy reason shown" || bad "state: busy reason shown" "state: no busy reason"
-rm -f "$HOME/fake-busy"; sleep 0.6
+rm -f "$HOME/fake-busy"; flagged
 [ "$(post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] && ok "off" || bad "off" "off failed"
 state | jq -e '.favorites[0].state == "off"' >/dev/null && ok "state: off" || bad "state: off" "state: not off"
 [ "$(post '{"action":"mode","id":"'"$id"'","tmux":"'"$TM"'","mode":"skip"}' | tail -1)" = 400 ] && ok "mode skip from the page: refused" || bad "mode skip from the page: refused" "mode skip from the page accepted"
@@ -432,7 +445,7 @@ state | jq -e '.favorites[0].state == "off"' >/dev/null && ok "state: off" || ba
 asctl mode "$id" skip >/dev/null
 [ "$(post '{"action":"on","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] && ok "on (a favorite in skip still starts from the page)" || bad "on (a favorite in skip still starts from the page)" "on failed"
 lastargs | seen -- '--permission-mode bypassPermissions' && ok "started with its skip mode" || bad "started with its skip mode" "skip not passed: $(lastargs)"
-touch "$HOME/fake-busy"; sleep 0.6
+touch "$HOME/fake-busy"; flagged
 [ "$(post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'","force":"yes"}' | tail -1)" = 409 ] && ok "force only when it is true (\"yes\" is not)" || bad "force only when it is true (\"yes\" is not)" "force taken from a non-boolean"
 [ "$(post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'","force":true}' | tail -1)" = 200 ] && ok "off with force while busy" || bad "off with force while busy" "off --force failed"
 rm -f "$HOME/fake-busy"
@@ -440,18 +453,18 @@ rm -f "$HOME/fake-busy"
 asctl mode "$id" auto >/dev/null
 [ "$(post '{"action":"on","id":"'"$id"'","tmux":"'"$TM"'"}' | tail -1)" = 200 ] && ok "on from the page, before the renames" || bad "on from the page, before the renames" "on before the rename failed"
 state | jq -e --arg t "$TM" '.favorites[0] | .claude_name == $t and .claude_name_kept == false' >/dev/null && ok "state: the name its claude goes by" || bad "state: the name its claude goes by" "state: claude_name: $(state | jq -c '.favorites[0].claude_name')"
-touch "$HOME/fake-peer-name"; sleep 0.6
+touch "$HOME/fake-peer-name"; flagged
 state | jq -e '.favorites[0].claude_name_kept == true' >/dev/null && ok "state: a name claude keeps from its own job record (a restart does not change it)" || bad "state: a name claude keeps from its own job record (a restart does not change it)" "state: claude_name_kept not set"
-rm -f "$HOME/fake-peer-name"; sleep 0.6
+rm -f "$HOME/fake-peer-name"; flagged
 pid0=$(state | jq '.favorites[0].pid')
 out=$(post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"db"}')
 [ "$(tail -1 <<<"$out")" = 200 ] && seen 'claude and its claude.ai title too' <<<"$out" && state | jq -e --argjson p "$pid0" '.favorites[0] | (.tmux | startswith("db-")) and .claude_name == .tmux and .pid == $p' >/dev/null \
 	&& ok "rename from the page: the same claude takes the name (/rename)" || bad "rename from the page: the same claude takes the name (/rename)" "rename: $out / $(state | jq -c '.favorites[0] | {tmux, claude_name, pid}')"
 TM="db-$id"
-touch "$HOME/fake-busy"; sleep 0.6
+touch "$HOME/fake-busy"; flagged
 post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"db2"}' >/dev/null; TM="db2-$id"
 state | jq -e --arg t "db-$id" '.favorites[0].claude_name == $t' >/dev/null && ok "rename while busy: claude's name not changed" || bad "rename while busy: claude's name not changed" "rename while busy changed claude's name"
-rm -f "$HOME/fake-busy"; sleep 0.6
+rm -f "$HOME/fake-busy"; flagged
 out=$(post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"db2"}')
 seen 'claude and its claude.ai title too' <<<"$out" && state | jq -e --arg t "$TM" '.favorites[0].claude_name == $t' >/dev/null \
 	&& ok "rename to the same name sends it to a claude that goes by another (renamed while busy)" || bad "rename to the same name sends it to a claude that goes by another (renamed while busy)" "same-name rename: $out"
