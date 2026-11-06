@@ -28,33 +28,33 @@ asc/cli.py %%%     if not force_memory: %%%     if False: %%% on refused below 2
 asc/cli.py %%%             e["rc"] = True %%%             pass %%% resurrect on turns rc on %%% main
 asc/cli.py %%%  or (resurrect and e.get("resurrect")) %%%  or False %%% a resurrect start always has rc; a manual one follows the toggle %%% main
 asc/registry.py %%%     if not t or t.startswith("-"): %%%     if not t: %%% a title starting with - refused (claude would read an option) %%% main
-asc/rclive.py %%%     if now["status"] != "idle": %%%     if now["status"] == "busy" and False: %%% busy: nothing typed %%% main
-asc/rclive.py %%%         return "its pane is in copy mode" %%%         pass %%% copy mode: nothing typed %%% main
-asc/rclive.py %%%     if t: %%%     if False: %%% text in its prompt: nothing typed, the setting saved for the next start %%% main
-asc/rclive.py %%% plain(DIM.sub("", lines[i])) %%% plain(lines[i]) %%% a dim placeholder counts as an empty prompt %%% main
-asc/rclive.py %%% why = enter(s, f"{CMD} {title}" if on else CMD, %%% why = enter(s, CMD, %%% rc on: /remote-control with its title typed, confirmed from the session file %%% main
-asc/rclive.py %%%  and RULE.fullmatch(p[i + 1]): %%% : %%% rc off: the dialog, Disconnect selected and confirmed %%% main
-asc/cli.py %%%         s = None if args.next_start else live_in(e) %%%         s = live_in(e) %%% --next-start: only the setting %%% main
-asc/cli.py %%%         elif s["rc"] == on: %%%         elif False: %%% rc on while live: nothing typed %%% main
-asc/rclive.py %%%     if prompt_text(scr) != cmd: %%%     if False: %%% the prompt not showing the command as typed: Enter not pressed, text not ours left alone %%% main
-asc/rclive.py %%% if entries(scr, before) else None %%% if False else None %%% on: a menu above the box: Enter not pressed %%% main
-asc/rclive.py %%% if entries(scr, before) else None %%% if changed(scr, before) else None %%% rc on: /remote-control with its title typed, confirmed from the session file %%% main
-asc/rclive.py %%%     if wait_for(lambda: offers_cmd(screen(pane), before), timeout): %%%     if True: %%% off: another command marked first in the menu: Enter not pressed, the prompt cleared, what it offered named %%% main
-asc/rclive.py %%% ENTRY = re.compile(r"\s+(?:(❯)\s*)? %%% ENTRY = re.compile(r"\s*(?:(❯)\s*)? %%% menu detection: a prompt in the transcript (not indented) is not a menu entry %%% main
-asc/rclive.py %%% return marked[0] if len(marked) == 1 else %%% return marked[0] if marked else %%% menu detection: two entries marked (one a quote in claude's answer): asctl cannot tell %%% main
-asc/rclive.py %%% else e[0] if not marked and len(e) == 1 else () %%% else e[0] %%% off: several entries, none marked: Enter not pressed %%% main
-asc/rclive.py %%%             if j != i and (j >= len(b) %%%             if (j >= len(b) %%% menu detection: claude's own input line, even indented, is not a menu entry %%% main
-asc/rclive.py %%%         if p[i].startswith("❯") and RULE.fullmatch(p[i - 1]) %%%         if RULE.fullmatch(p[i - 1]) %%% off: the menu above the box, plugin lines around it: the entry Enter takes found %%% main
-asc/rclive.py %%% |\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)") %%% ") %%% menu detection: a link (OSC 8) is read as its text %%% main
-asc/rclive.py %%%     return bool(t) and t[1] == CMD %%%     return bool(t) %%% off: another command marked first in the menu: Enter not pressed, the prompt cleared, what it offered named %%% main
+asc/rclive.py %%%     if now["status"] != "idle": %%%     if now["status"] == "busy" and False: %%% busy: nothing typed %%% rc_now
+asc/rclive.py %%%         return "its pane is in copy mode" %%%         pass %%% copy mode: nothing typed %%% rc_now
+asc/rclive.py %%%     if t: %%%     if False: %%% text in its prompt: nothing typed, the setting saved for the next start %%% rc_now
+asc/rclive.py %%% plain(DIM.sub("", lines[i])) %%% plain(lines[i]) %%% a dim placeholder counts as an empty prompt %%% rc_now
+asc/rclive.py %%% why = enter(s, f"{CMD} {title}" if on else CMD, %%% why = enter(s, CMD, %%% rc on: /remote-control with its title typed, confirmed from the session file %%% rc_now
+asc/rclive.py %%%  and RULE.fullmatch(p[i + 1]): %%% : %%% rc off: the dialog, Disconnect selected and confirmed %%% rc_now
+asc/cli.py %%%         s = None if args.next_start else live_in(e) %%%         s = live_in(e) %%% --next-start: only the setting %%% rc_now
+asc/cli.py %%%         elif s["rc"] == on: %%%         elif False: %%% rc on while live: nothing typed %%% rc_now
+asc/rclive.py %%%     if prompt_text(scr) != cmd: %%%     if False: %%% the prompt not showing the command as typed: Enter not pressed, text not ours left alone %%% rc_now
+asc/rclive.py %%% if entries(scr, before) else None %%% if False else None %%% on: a menu above the box: Enter not pressed %%% rc_now
+asc/rclive.py %%% if entries(scr, before) else None %%% if changed(scr, before) else None %%% rc on: /remote-control with its title typed, confirmed from the session file %%% rc_now
+asc/rclive.py %%%     if wait_for(lambda: offers_cmd(screen(pane), before), timeout): %%%     if True: %%% off: another command marked first in the menu: Enter not pressed, the prompt cleared, what it offered named %%% rc_now
+asc/rclive.py %%% ENTRY = re.compile(r"\s+(?:(❯)\s*)? %%% ENTRY = re.compile(r"\s*(?:(❯)\s*)? %%% menu detection: a prompt in the transcript (not indented) is not a menu entry %%% rc_now
+asc/rclive.py %%% return marked[0] if len(marked) == 1 else %%% return marked[0] if marked else %%% menu detection: two entries marked (one a quote in claude's answer): asctl cannot tell %%% rc_now
+asc/rclive.py %%% else e[0] if not marked and len(e) == 1 else () %%% else e[0] %%% off: several entries, none marked: Enter not pressed %%% rc_now
+asc/rclive.py %%%             if j != i and (j >= len(b) %%%             if (j >= len(b) %%% menu detection: claude's own input line, even indented, is not a menu entry %%% rc_now
+asc/rclive.py %%%         if p[i].startswith("❯") and RULE.fullmatch(p[i - 1]) %%%         if RULE.fullmatch(p[i - 1]) %%% off: the menu above the box, plugin lines around it: the entry Enter takes found %%% rc_now
+asc/rclive.py %%% |\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)") %%% ") %%% menu detection: a link (OSC 8) is read as its text %%% rc_now
+asc/rclive.py %%%     return bool(t) and t[1] == CMD %%%     return bool(t) %%% off: another command marked first in the menu: Enter not pressed, the prompt cleared, what it offered named %%% rc_now
 asc/rclive.py %%%     if not wait_for(lambda: seen() > n and (session(s["pid"]) or {}).get("name") == name, confirm): %%%     if False: %%% rename: typed but not taken by claude: said so %%% new_name
 asc/rclive.py %%%             n += f.read(tail).count(text) %%%             n = 1 %%% rename of an idle claude: /rename typed, the same claude takes the name %%% new_name
-asc/cli.py %%%             why = rclive.rename(s, new) %%%             why = None %%% rename: not when a menu above the box would take Enter %%% main
+asc/cli.py %%%             why = rclive.rename(s, new) %%%             why = None %%% rename: not when a menu above the box would take Enter %%% rc_now
 asc/cli.py %%%     if "--remote-control" in argv and %%%     if False and %%% a start with rc sends its name to claude.ai (/rename, once rc is up) %%% new_name
-asc/rclive.py %%%     if t is not None and cmd.startswith(t): %%%     if t is not None: %%% the prompt not showing the command as typed: Enter not pressed, text not ours left alone %%% main
-asc/rclive.py %%%             if not dialog_open(pid, scr) or selected(scr, DISCONNECT): %%%             if not dialog_open(pid, scr): %%% rc off: the dialog, Disconnect selected and confirmed %%% main
-asc/rclive.py %%%     l = next((l for l in reversed(bottom(scr)) if label in l), "") %%%     l = next((l for l in bottom(scr) if "❯" in l and label in l), "") %%% off: a slow dialog, its lines quoted in the transcript: waited for the dialog itself %%% main
-asc/rclive.py %%%     return status(pid) == "waiting" and prompt_text(scr) is None and %%%     return %%% off: a slow dialog, its lines quoted in the transcript: waited for the dialog itself %%% main
+asc/rclive.py %%%     if t is not None and cmd.startswith(t): %%%     if t is not None: %%% the prompt not showing the command as typed: Enter not pressed, text not ours left alone %%% rc_now
+asc/rclive.py %%%             if not dialog_open(pid, scr) or selected(scr, DISCONNECT): %%%             if not dialog_open(pid, scr): %%% rc off: the dialog, Disconnect selected and confirmed %%% rc_now
+asc/rclive.py %%%     l = next((l for l in reversed(bottom(scr)) if label in l), "") %%%     l = next((l for l in bottom(scr) if "❯" in l and label in l), "") %%% off: a slow dialog, its lines quoted in the transcript: waited for the dialog itself %%% rc_now
+asc/rclive.py %%%     return status(pid) == "waiting" and prompt_text(scr) is None and %%%     return %%% off: a slow dialog, its lines quoted in the transcript: waited for the dialog itself %%% rc_now
 asc/cli.py %%%     return FOLLOW.get(m) or own %%%     return m or own %%% mode: default (manual's old name) starts as manual %%% main
 asc/cli.py %%%         for line in reversed(lines[1:] if st.st_size > tail else lines): %%%         for line in lines: %%% mode: last ran in skip, the favorite set to skip: skip %%% main
 asc/live.py %%%         if name in SHELLS and snap in _cmdline(pid): %%%         if False: %%% rename --restart: not while claude runs a command (a background one too) %%% new_name
@@ -70,14 +70,14 @@ asc/live.py %%%                                 and _cmdline(pid).split(" ", 1)[
 asc/cli.py %%%         job, s = (s, s["host"]) if s.get("host") else (None, s) %%%         job = None %%% off with a job: one off event, the job named in it %%% main
 asc/cli.py %%%     if s.get("host"): %%%     if False: %%% restart refused: its pane shows a background job %%% main
 asc/cli.py %%%     if m is None or (at is not None and s.get("started_at") and at < s["started_at"]): %%%     if m is None: %%% mode now: a record from before the start: the start's mode %%% main
-asc/cli.py %%%         if not s or s["name"] == new: %%%         if True: %%% rename: not when a menu above the box would take Enter %%% main
-asc/events.py %%%     ok = isinstance(t, (int, float)) and not isinstance(t, bool) and math.isfinite(t) %%%     ok = isinstance(t, (int, float)) %%% a lone surrogate and bidi controls become spaces; limit 0 is none; a time is a finite number %%% main
-asc/events.py %%%             drop = True  # too old %%%             pass %%% kept: a favorite's last 200 however old; others 7 days; before a forget is an earlier favorite's %%% main
-asc/events.py %%%         while n_other and total() > MAX_BYTES // 2: %%%         while False: %%% pruned past 2 MB to under 1 MB, the newest kept %%% main
-asc/events.py %%%     fd = os.open(p, flags | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, 0o600) %%%     fd = os.open(p, flags | os.O_CLOEXEC, 0o600) %%% a symlinked events.jsonl is not written through; the action goes on %%% main
-asc/events.py %%%     if not stat.S_ISREG(os.fstat(fd).st_mode): %%%     if False: %%% a FIFO as events.jsonl: refused at once, the action goes on %%% main
-asc/events.py %%%     return ok and 0 < t <= time.time() + 86400 %%%     return ok %%% asctl events reads past odd lines %%% main
-asc/cli.py %%%         events.log("failed", e, f"{what}: {x}") %%%         events.log("refused", e, f"{what}: {x}") %%% an error after a change is logged as failed %%% main
+asc/cli.py %%%         if not s or s["name"] == new: %%%         if True: %%% rename: not when a menu above the box would take Enter %%% rc_now
+asc/events.py %%%     ok = isinstance(t, (int, float)) and not isinstance(t, bool) and math.isfinite(t) %%%     ok = isinstance(t, (int, float)) %%% a lone surrogate and bidi controls become spaces; limit 0 is none; a time is a finite number %%% events
+asc/events.py %%%             drop = True  # too old %%%             pass %%% kept: a favorite's last 200 however old; others 7 days; before a forget is an earlier favorite's %%% events
+asc/events.py %%%         while n_other and total() > MAX_BYTES // 2: %%%         while False: %%% pruned past 2 MB to under 1 MB, the newest kept %%% events
+asc/events.py %%%     fd = os.open(p, flags | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, 0o600) %%%     fd = os.open(p, flags | os.O_CLOEXEC, 0o600) %%% a symlinked events.jsonl is not written through; the action goes on %%% events
+asc/events.py %%%     if not stat.S_ISREG(os.fstat(fd).st_mode): %%%     if False: %%% a FIFO as events.jsonl: refused at once, the action goes on %%% events
+asc/events.py %%%     return ok and 0 < t <= time.time() + 86400 %%%     return ok %%% asctl events reads past odd lines %%% events
+asc/cli.py %%%         events.log("failed", e, f"{what}: {x}") %%%         events.log("refused", e, f"{what}: {x}") %%% an error after a change is logged as failed %%% events
 asc/cli.py %%%             out(ended) %%%             say("off", e, ended) %%% off with a job: one off event, the job named in it %%% main
 asc/cli.py %%%                 pending(id4, new) %%%                 pass %%% rename while busy: pending %%% watcher_memory
 asc/watch.py %%%             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB) %%%             pass %%% watch: a run while another holds the lock does nothing %%% watcher_memory
@@ -116,10 +116,10 @@ asc/memory.py %%%     b = next((s for s in xs if s["t"] > t_end), None) %%%     
 asc/memory.py %%%             if x["boot"] == s["boot"] and s["t"] - KEEP_S <= x["t"] <= s["t"]][-(MAX_SAMPLES - 1):] + [s] %%%             if True][-(MAX_SAMPLES - 1):] + [s] %%% watch: samples kept 8 min, this boot's only, none from the future %%% watcher_memory
 asc/memory.py %%%             and all(s.get(k) is None or type(s.get(k)) is int %%%             and all(True %%% steady and evidence: gaps, a dip, another boot, each kind of pressure, samples too far apart %%% watcher_memory
 asc/live.py %%%         return "tmux did not list its panes" %%%         pane_list = [] %%% busy: tmux not answering counts as busy %%% watcher_memory
-asc/events.py %%%     return b if b in BY else "cli" %%%     return b or "cli" %%% who: ASC_BY page kept, anything else is cli %%% main
-asc/events.py %%%     return "".join(" " if unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp", "Cs") else c %%%     return "".join(" " if unicodedata.category(c) in ("Cc",) else c %%% a lone surrogate and bidi controls become spaces; limit 0 is none; a time is a finite number %%% main
-asc/cli.py %%%         events.log("refused", e, f"{what}: {x}") %%%         pass %%% a refused on is logged with why %%% main
-asc/cli.py %%%         elif not args.restart: %%%         elif False: %%% rename: not when a menu above the box would take Enter %%% main
+asc/events.py %%%     return b if b in BY else "cli" %%%     return b or "cli" %%% who: ASC_BY page kept, anything else is cli %%% events
+asc/events.py %%%     return "".join(" " if unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp", "Cs") else c %%%     return "".join(" " if unicodedata.category(c) in ("Cc",) else c %%% a lone surrogate and bidi controls become spaces; limit 0 is none; a time is a finite number %%% events
+asc/cli.py %%%         events.log("refused", e, f"{what}: {x}") %%%         pass %%% a refused on is logged with why %%% events
+asc/cli.py %%%         elif not args.restart: %%%         elif False: %%% rename: not when a menu above the box would take Enter %%% rc_now
 asc/cli.py %%%     if pid is not None: %%%     if False: %%% tmux-server with a server up: left as it is %%% boot
 asc/cli.py %%%     if pid is None:⏎        raise RegistryError("no tmux server is running %%%     if False:⏎        raise RegistryError("no tmux server is running %%% on, no server and no unit: refused, no server started by asctl itself %%% boot
 asc/cli.py %%%         server = ensure_server() %%%         server = tmuxctl.server_pid() %%% on, no server and no unit: refused, no server started by asctl itself %%% boot
@@ -176,7 +176,7 @@ asc/cli.py %%%     if outside: %%%     if False: %%% restart --outside (the page
 asc/cli.py %%%         raise ActionFailed(f"claude stop {now['job']}: {(r.stderr or r.stdout).strip()[:200] or 'failed'}") %%%         pass %%% off: claude stop failing is said, and the session still runs %%% outside
 asc/cli.py %%%             x["rename_title"] = True if title else None %%%             x["rename_title"] = None %%% a start that cannot send its name to claude.ai (claude busy): owed to it, though claude has the name %%% outside
 asc/watch.py %%%     if pend != e["tmux"] or (s["name"] == pend and not e.get("rename_title")): %%%     if pend != e["tmux"] or s["name"] == pend: %%% the watcher sends it once claude is idle (/rename, though claude has the name), and it is no longer owed %%% outside
-asc/rclive.py %%%     if wait_for(lambda: offers_cmd(screen(pane), before), timeout): %%%     if offers_cmd(steady(pane), before): %%% off: a menu drawn a moment after the typed text is waited for %%% main
+asc/rclive.py %%%     if wait_for(lambda: offers_cmd(screen(pane), before), timeout): %%%     if offers_cmd(steady(pane), before): %%% off: a menu drawn a moment after the typed text is waited for %%% rc_now
 asc/rclive.py %%%         settled(pane, typed=cmd, timeout=10)  # a slow claude still drawing it: until all of it shows or stops %%%         pass %%% rc on, a slow claude: waited until its prompt stopped changing, then live %%% rc_slow
 asc/rclive.py %%%     while (time.monotonic() - since < quiet or part(t)) and %%%     while (time.monotonic() - since < quiet) and %%% rc on, a slow claude: waited until its prompt stopped changing, then live %%% rc_slow
 asc/rclive.py %%% t is not None and t != typed and %%% t is not None and %%% settled: all of what was typed, or other text, is taken once it stops changing %%% rc_slow
@@ -188,24 +188,24 @@ asc/rclive.py %%%     why = typed_in(s, since)⏎    if why:⏎        return wh
 asc/rclive.py %%%     if any(a >= since for a in acts): %%%     if False: %%% rc on: not when someone at its tmux session typed just now %%% rc_slow
 asc/rclive.py %%% why = check(scr, before) or typed_in(s, since) %%% why = check(scr, before) %%% someone typed while asctl typed: no Enter, its prompt left as it is %%% rc_slow
 asc/rclive.py %%%         if meanwhile(): %%%         if False: %%% someone typed while asctl typed: no Enter, its prompt left as it is %%% rc_slow
-asc/events.py %%% [i for r, i in mine if r < per] %%% [i for r, i in mine] %%% kept: a favorite's last 200 however old; others 7 days; before a forget is an earlier favorite's %%% main
-asc/events.py %%%         elif t >= cut: %%%         elif True: %%% pruned: an event past 7 days and a broken line %%% main
-asc/events.py %%%         if fav and kind == "forget": %%%         if False: %%% kept: a favorite's last 200 however old; others 7 days; before a forget is an earlier favorite's %%% main
-asc/events.py %%%     if size <= CHECK_BYTES and _time(first) >= cut: %%%     if _time(first) >= cut: %%% pruned past 2 MB to under 1 MB, the newest kept %%% main
-asc/events.py %%%         return set(registry.load(d)["entries"]) %%%         return None %%% kept: a favorite's last 200 however old; others 7 days; before a forget is an earlier favorite's %%% main
-asc/events.py %%%     if not drop: %%%     if False: %%% kept: a favorite's last 200 however old; others 7 days; before a forget is an earlier favorite's %%% main
-asc/events.py %%%         if id4 is not None and r["kind"] == "forget": %%%         if False: %%% kept: a favorite's last 200 however old; others 7 days; before a forget is an earlier favorite's %%% main
-asc/past.py %%%             if c is None or c["ino"] != st.st_ino or c["size"] > st.st_size: %%%             if c is None: %%% lengths: counted on from where the last count stopped; a replaced, shrunk or symlinked transcript handled %%% main
-asc/past.py %%%             f.seek(start) %%%             f.seek(0) %%% lengths: counted on from where the last count stopped; a replaced, shrunk or symlinked transcript handled %%% main
-asc/past.py %%%                 budget -= len(b) %%%                 pass %%% lengths: counted on from where the last count stopped; a replaced, shrunk or symlinked transcript handled %%% main
-asc/past.py %%%         f = live.open_regular(p) if p else None %%%         f = open(p, "rb") if p else None %%% lengths: counted on from where the last count stopped; a replaced, shrunk or symlinked transcript handled %%% main
+asc/events.py %%% [i for r, i in mine if r < per] %%% [i for r, i in mine] %%% kept: a favorite's last 200 however old; others 7 days; before a forget is an earlier favorite's %%% events
+asc/events.py %%%         elif t >= cut: %%%         elif True: %%% pruned: an event past 7 days and a broken line %%% events
+asc/events.py %%%         if fav and kind == "forget": %%%         if False: %%% kept: a favorite's last 200 however old; others 7 days; before a forget is an earlier favorite's %%% events
+asc/events.py %%%     if size <= CHECK_BYTES and _time(first) >= cut: %%%     if _time(first) >= cut: %%% pruned past 2 MB to under 1 MB, the newest kept %%% events
+asc/events.py %%%         return set(registry.load(d)["entries"]) %%%         return None %%% kept: a favorite's last 200 however old; others 7 days; before a forget is an earlier favorite's %%% events
+asc/events.py %%%     if not drop: %%%     if False: %%% kept: a favorite's last 200 however old; others 7 days; before a forget is an earlier favorite's %%% events
+asc/events.py %%%         if id4 is not None and r["kind"] == "forget": %%%         if False: %%% kept: a favorite's last 200 however old; others 7 days; before a forget is an earlier favorite's %%% events
+asc/past.py %%%             if c is None or c["ino"] != st.st_ino or c["size"] > st.st_size: %%%             if c is None: %%% lengths: counted on from where the last count stopped; a replaced, shrunk or symlinked transcript handled %%% events
+asc/past.py %%%             f.seek(start) %%%             f.seek(0) %%% lengths: counted on from where the last count stopped; a replaced, shrunk or symlinked transcript handled %%% events
+asc/past.py %%%                 budget -= len(b) %%%                 pass %%% lengths: counted on from where the last count stopped; a replaced, shrunk or symlinked transcript handled %%% events
+asc/past.py %%%         f = live.open_regular(p) if p else None %%%         f = open(p, "rb") if p else None %%% lengths: counted on from where the last count stopped; a replaced, shrunk or symlinked transcript handled %%% events
 asc/watch.py %%%         st["at"] = int(time.time()) %%%         pass %%% watch: when its run began, for the dashboard %%% watcher_memory
 asc/watch.py %%%         past.update_lengths( %%%         (lambda *a: None)( %%% watch: a favorite's conversation length counted (lengths.json, 0600) %%% watcher_memory
 asc/boot.py %%%         signal.signal(signal.SIGTERM, lambda *_: sys.exit(143)) %%%         pass %%% boot stopped (SIGTERM): exit 143, boot.json done %%% boot
 asc/boot.py %%%             todo = [i for i in todo if es.get(i, {}).get("resurrect") is True and es[i].get("want_on") is True] %%%             pass %%% boot.json leaves out a favorite turned off, resurrect off or forgotten since %%% boot
-asc/events.py %%%             drop |= rank[id4] + 1 >= KEEP_PER + KEEP_SLACK %%%             drop = True %%% kept: a favorite's last 200 however old; others 7 days; before a forget is an earlier favorite's %%% main
-asc/events.py %%%         while per > 1 and total() > MAX_BYTES // 2: %%%         while False: %%% kept: a favorite's last 200 however old; others 7 days; before a forget is an earlier favorite's %%% main
-asc/past.py %%%     return max(sorted(paths), key=mtime) if paths else None %%%     return sorted(paths)[0] if paths else None %%% lengths: counted on from where the last count stopped; a replaced, shrunk or symlinked transcript handled %%% main
-asc/past.py %%%             if isinstance(k, str) and _entry(v) and v["size"] == v["seen"]} %%%             if isinstance(k, str) and _entry(v)} %%% lengths: counted on from where the last count stopped; a replaced, shrunk or symlinked transcript handled %%% main
+asc/events.py %%%             drop |= rank[id4] + 1 >= KEEP_PER + KEEP_SLACK %%%             drop = True %%% kept: a favorite's last 200 however old; others 7 days; before a forget is an earlier favorite's %%% events
+asc/events.py %%%         while per > 1 and total() > MAX_BYTES // 2: %%%         while False: %%% kept: a favorite's last 200 however old; others 7 days; before a forget is an earlier favorite's %%% events
+asc/past.py %%%     return max(sorted(paths), key=mtime) if paths else None %%%     return sorted(paths)[0] if paths else None %%% lengths: counted on from where the last count stopped; a replaced, shrunk or symlinked transcript handled %%% events
+asc/past.py %%%             if isinstance(k, str) and _entry(v) and v["size"] == v["seen"]} %%%             if isinstance(k, str) and _entry(v)} %%% lengths: counted on from where the last count stopped; a replaced, shrunk or symlinked transcript handled %%% events
 asc/boot.py %%%             _status([], "", done=True) %%%             pass %%% boot.json once boot ends: done %%% boot
 asc/boot.py %%%         _status(todo, why) %%%         pass %%% boot.json while boot runs (its lock held): what it still brings back, and why it waits (0600) %%% boot

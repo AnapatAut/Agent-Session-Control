@@ -358,62 +358,87 @@ asctl on "$id2" >/dev/null; lastargs | seen -- '--remote-control My chat' && ok 
 asctl off "$id2" --force >/dev/null
 asctl rc "$id2" off >/dev/null; asctl on "$id2" >/dev/null
 lastargs | seen -- '--remote-control' && bad "rc off: no --remote-control" "rc off still passed --remote-control" || ok "rc off: no --remote-control"
+asctl rc "$id2" off --next-start >/dev/null  # the tests below start from rc off
+asctl off "$id2" --force >/dev/null
+asctl rc "$id2" on --title=-x >/dev/null 2>&1 && bad "a title starting with - refused (claude would read an option)" "a title starting with - accepted" || ok "a title starting with - refused (claude would read an option)"
+asctl rc "$id2" on --title "$(printf 'a\tb')" >/dev/null 2>&1 && bad "a title with a control character refused" "a title with a control character accepted" || ok "a title with a control character refused"
+asctl resurrect "$id2" on >/dev/null && [ "$(jqe ".entries[\"$id2\"].resurrect")" = true ] && [ "$(jqe ".entries[\"$id2\"].rc")" = true ] && ok "resurrect on turns rc on" || bad "resurrect on turns rc on" "resurrect on did not turn rc on"
+asctl rc "$id2" off >/dev/null && [ "$(jqe ".entries[\"$id2\"].resurrect")" = true ] && ok "rc can still be turned off by hand" || bad "rc can still be turned off by hand" "rc off changed resurrect"
+arg=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import cli, registry; e = registry.find(registry.load(), sys.argv[2]); print(" ".join(cli.claude_argv(e, resurrect=True)), "|", " ".join(cli.claude_argv(e)))' "$REPO" "$id2")
+[[ ${arg%%|*} == *--remote-control* && ${arg#*|} != *--remote-control* ]] && ok "a resurrect start always has rc; a manual one follows the toggle" || bad "a resurrect start always has rc; a manual one follows the toggle" "resurrect rc rule: $arg"
+asctl note "$id2" "talks to the API" >/dev/null && [ "$(jqe ".entries[\"$id2\"].note")" = "talks to the API" ] && ok "note" || bad "note" "note failed"
+asctl note "$id2" "$(head -c 501 /dev/zero | tr '\0' x)" >/dev/null 2>&1 && bad "a note over 500 characters refused" "a note over 500 characters accepted" || ok "a note over 500 characters refused"
+asctl note "$id2" -- "-starts with a dash" >/dev/null && ok "a note may start with -" || bad "a note may start with -" "a note starting with - refused"
+}
+
+case_rc_now() {
+# Setup: a favorite of a past conversation, rc off with the title "My chat" saved, its claude on
+# and idle; the claude log from here on.
+server_up
+: > "$HOME/claude-args.log"
+SR=22222222-3333-4444-8555-000000000033
+mkdir -p "$HOME/.claude/projects/-x"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SR" > "$HOME/.claude/projects/-x/$SR.jsonl"
+asctl fav "$SR" --name rcnow >/dev/null || stop "a favorite for rc now"
+idr=$(jq -r --arg s "$SR" '.entries[] | select(.session_id == $s) | .id4' "$REG")
+{ asctl rc "$idr" on --title "My chat" && asctl rc "$idr" off; } >/dev/null || stop "rc off, the title My chat saved"
+asctl on "$idr" >/dev/null && claude_in "rcnow-$idr" >/dev/null || stop "a claude for rc now"
 echo "== rc now: typed into an idle claude (asc/rclive.py)"
-pane=$(tm list-panes -t "=chat-$id2:" -F '#{pane_id}')
-bridge() { jq -r 'select(.name == "chat-'"$id2"'") | .bridgeSessionId // ""' "$HOME"/.claude/sessions/*.json; }
+pane=$(tm list-panes -t "=rcnow-$idr:" -F '#{pane_id}')
+bridge() { jq -r 'select(.name == "rcnow-'"$idr"'") | .bridgeSessionId // ""' "$HOME"/.claude/sessions/*.json; }
 screen() { tm capture-pane -p -t "$pane"; }
-out=$(asctl rc "$id2" on); seen 'live now' <<<"$out" && [ -n "$(bridge)" ] && seen -x "pid=[0-9]* line: /remote-control My chat" "$HOME/claude-args.log" \
+out=$(asctl rc "$idr" on); seen 'live now' <<<"$out" && [ -n "$(bridge)" ] && seen -x "pid=[0-9]* line: /remote-control My chat" "$HOME/claude-args.log" \
 	&& ok "rc on: /remote-control with its title typed, confirmed from the session file" || bad "rc on: /remote-control with its title typed, confirmed from the session file" "rc on live: $out / $(bridge) / $(screen | tail -6 | tr "\n" "|")"
-out=$(asctl rc "$id2" on); seen 'live already' <<<"$out" && [ "$(grep -c 'line: /remote-control' "$HOME/claude-args.log")" = 1 ] && ok "rc on while live: nothing typed" || bad "rc on while live: nothing typed" "rc on again: $out"
-out=$(asctl rc "$id2" off); seen 'off now' <<<"$out" && [ -z "$(bridge)" ] && seen 'rc: disconnected' "$HOME/claude-args.log" && [ "$(jqe ".entries[\"$id2\"].rc")" = false ] \
+out=$(asctl rc "$idr" on); seen 'live already' <<<"$out" && [ "$(grep -c 'line: /remote-control' "$HOME/claude-args.log")" = 1 ] && ok "rc on while live: nothing typed" || bad "rc on while live: nothing typed" "rc on again: $out"
+out=$(asctl rc "$idr" off); seen 'off now' <<<"$out" && [ -z "$(bridge)" ] && seen 'rc: disconnected' "$HOME/claude-args.log" && [ "$(jqe ".entries[\"$idr\"].rc")" = false ] \
 	&& ok "rc off: the dialog, Disconnect selected and confirmed" || bad "rc off: the dialog, Disconnect selected and confirmed" "rc off live: $out / $(bridge)"
 tm send-keys -t "$pane" -l "half typed"; sleep 0.5
-out=$(asctl rc "$id2" on); seen 'not changed now: something is typed in its prompt' <<<"$out" && [ -z "$(bridge)" ] && screen | seen 'half typed' \
-	&& [ "$(jqe ".entries[\"$id2\"].rc")" = true ] && ok "text in its prompt: nothing typed, the setting saved for the next start" || bad "text in its prompt: nothing typed, the setting saved for the next start" "typed prompt: $out / $(screen | tail -3)"
+out=$(asctl rc "$idr" on); seen 'not changed now: something is typed in its prompt' <<<"$out" && [ -z "$(bridge)" ] && screen | seen 'half typed' \
+	&& [ "$(jqe ".entries[\"$idr\"].rc")" = true ] && ok "text in its prompt: nothing typed, the setting saved for the next start" || bad "text in its prompt: nothing typed, the setting saved for the next start" "typed prompt: $out / $(screen | tail -3)"
 tm send-keys -t "$pane" BSpace BSpace BSpace BSpace BSpace BSpace BSpace BSpace BSpace BSpace; sleep 0.5
 touch "$HOME/fake-busy"; sleep 0.6
-out=$(asctl rc "$id2" on); seen 'not changed now: claude is busy' <<<"$out" && [ -z "$(bridge)" ] && ok "busy: nothing typed" || bad "busy: nothing typed" "busy: $out"
+out=$(asctl rc "$idr" on); seen 'not changed now: claude is busy' <<<"$out" && [ -z "$(bridge)" ] && ok "busy: nothing typed" || bad "busy: nothing typed" "busy: $out"
 rm -f "$HOME/fake-busy"; sleep 0.6
 tm copy-mode -t "$pane"
-out=$(asctl rc "$id2" on); seen 'not changed now: its pane is in copy mode' <<<"$out" && [ -z "$(bridge)" ] && ok "copy mode: nothing typed" || bad "copy mode: nothing typed" "copy mode: $out"
+out=$(asctl rc "$idr" on); seen 'not changed now: its pane is in copy mode' <<<"$out" && [ -z "$(bridge)" ] && ok "copy mode: nothing typed" || bad "copy mode: nothing typed" "copy mode: $out"
 tm send-keys -t "$pane" -X cancel
-out=$(asctl rc "$id2" on --next-start); seen 'from its next start$' <<<"$out" && [ -z "$(bridge)" ] && ok "--next-start: only the setting" || bad "--next-start: only the setting" "--next-start: $out"
+out=$(asctl rc "$idr" on --next-start); seen 'from its next start$' <<<"$out" && [ -z "$(bridge)" ] && ok "--next-start: only the setting" || bad "--next-start: only the setting" "--next-start: $out"
 touch "$HOME/fake-hint"; tm send-keys -t "$pane" x BSpace; sleep 0.5
-screen | seen 'Try "fix lint"' && out=$(asctl rc "$id2" on) && seen 'live now' <<<"$out" && [ -n "$(bridge)" ] && ok "a dim placeholder counts as an empty prompt" || bad "a dim placeholder counts as an empty prompt" "placeholder: $out"
+screen | seen 'Try "fix lint"' && out=$(asctl rc "$idr" on) && seen 'live now' <<<"$out" && [ -n "$(bridge)" ] && ok "a dim placeholder counts as an empty prompt" || bad "a dim placeholder counts as an empty prompt" "placeholder: $out"
 rm -f "$HOME/fake-hint"
 empty() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import rclive; sys.exit(rclive.prompt_text(rclive.screen(sys.argv[2])) != "")' "$REPO" "$pane"; }
 touch "$HOME/fake-menu-first"
-out=$(asctl rc "$id2" off); seen "not changed now: its command menu did not offer /remote-control for Enter (it offered: ❯ /remote-controller   a plugin's command); nothing was sent" <<<"$out" && [ -n "$(bridge)" ] && empty \
+out=$(asctl rc "$idr" off); seen "not changed now: its command menu did not offer /remote-control for Enter (it offered: ❯ /remote-controller   a plugin's command); nothing was sent" <<<"$out" && [ -n "$(bridge)" ] && empty \
 	&& ! seen 'remote-controller' "$HOME/claude-args.log" && ok "off: another command marked first in the menu: Enter not pressed, the prompt cleared, what it offered named" || bad "off: another command marked first in the menu: Enter not pressed, the prompt cleared, what it offered named" "menu first: $out"
 rm -f "$HOME/fake-menu-first"
 touch "$HOME/fake-menu-slow"
-out=$(asctl rc "$id2" off); rm -f "$HOME/fake-menu-slow"
+out=$(asctl rc "$idr" off); rm -f "$HOME/fake-menu-slow"
 seen 'live now\|off now' <<<"$out" && [ -z "$(bridge)" ] && ok "off: a menu drawn a moment after the typed text is waited for" || bad "off: a menu drawn a moment after the typed text is waited for" "slow menu: $out"
-asctl rc "$id2" on >/dev/null
+asctl rc "$idr" on >/dev/null
 # Claude 2.1.318 draws the menu above the box; a status line and plugins draw any number of lines
 # on both sides, one changing on its own, rules among them.
 touch "$HOME/fake-menu-above" "$HOME/fake-plugins"; tm send-keys -t "$pane" x BSpace; sleep 0.5
-out=$(asctl rc "$id2" off); seen 'off now' <<<"$out" && [ -z "$(bridge)" ] && empty \
+out=$(asctl rc "$idr" off); seen 'off now' <<<"$out" && [ -z "$(bridge)" ] && empty \
 	&& ok "off: the menu above the box, plugin lines around it: the entry Enter takes found" || bad "off: the menu above the box, plugin lines around it: the entry Enter takes found" "menu above: $out / $(screen | tail -12)"
-out=$(asctl rc "$id2" on); seen 'live now' <<<"$out" && [ -n "$(bridge)" ] \
+out=$(asctl rc "$idr" on); seen 'live now' <<<"$out" && [ -n "$(bridge)" ] \
 	&& ok "on: plugin lines around the box (one changing, rules among them) are not a menu" || bad "on: plugin lines around the box (one changing, rules among them) are not a menu" "on with plugins: $out"
 touch "$HOME/fake-menu-first"
-out=$(asctl rc "$id2" off); seen "not changed now: its command menu did not offer /remote-control for Enter (it offered: ❯ /remote-controller   a plugin's command); nothing was sent" <<<"$out" && [ -n "$(bridge)" ] && empty \
+out=$(asctl rc "$idr" off); seen "not changed now: its command menu did not offer /remote-control for Enter (it offered: ❯ /remote-controller   a plugin's command); nothing was sent" <<<"$out" && [ -n "$(bridge)" ] && empty \
 	&& ok "off: the menu above the box, another command marked: Enter not pressed" || bad "off: the menu above the box, another command marked: Enter not pressed" "menu above, another first: $out"
 rm -f "$HOME/fake-menu-first"; touch "$HOME/fake-menu-unmarked"
-out=$(asctl rc "$id2" off); seen "not changed now: its command menu did not offer /remote-control for Enter (asctl cannot tell which entry Enter takes); nothing was sent" <<<"$out" && [ -n "$(bridge)" ] && empty \
+out=$(asctl rc "$idr" off); seen "not changed now: its command menu did not offer /remote-control for Enter (asctl cannot tell which entry Enter takes); nothing was sent" <<<"$out" && [ -n "$(bridge)" ] && empty \
 	&& ok "off: several entries, none marked: Enter not pressed" || bad "off: several entries, none marked: Enter not pressed" "unmarked: $out"
 touch "$HOME/fake-menu-one"
-out=$(asctl rc "$id2" off); seen 'off now' <<<"$out" && [ -z "$(bridge)" ] && ok "off: one entry, none marked: the one Enter takes" || bad "off: one entry, none marked: the one Enter takes" "one unmarked: $out"
+out=$(asctl rc "$idr" off); seen 'off now' <<<"$out" && [ -z "$(bridge)" ] && ok "off: one entry, none marked: the one Enter takes" || bad "off: one entry, none marked: the one Enter takes" "one unmarked: $out"
 rm -f "$HOME/fake-menu-unmarked" "$HOME/fake-menu-one"; touch "$HOME/fake-menu-on"
-out=$(asctl rc "$id2" on); seen 'not changed now: a command menu opened at its prompt; nothing was sent' <<<"$out" && [ -z "$(bridge)" ] && empty \
+out=$(asctl rc "$idr" on); seen 'not changed now: a command menu opened at its prompt; nothing was sent' <<<"$out" && [ -z "$(bridge)" ] && empty \
 	&& ok "on: a menu above the box: Enter not pressed" || bad "on: a menu above the box: Enter not pressed" "menu above, on: $out"
-nm=$(jqe ".entries[\"$id2\"].name")
-out=$(asctl rename "$id2" talkx 2>&1); seen 'a command menu opened at its prompt; nothing was sent' <<<"$out" && ! seen 'line: /rename talkx' "$HOME/claude-args.log" \
+nm=$(jqe ".entries[\"$idr\"].name")
+out=$(asctl rename "$idr" talkx 2>&1); seen 'a command menu opened at its prompt; nothing was sent' <<<"$out" && ! seen 'line: /rename talkx' "$HOME/claude-args.log" \
 	&& ok "rename: not when a menu above the box would take Enter" || bad "rename: not when a menu above the box would take Enter" "rename, menu above: $out"
 rm -f "$HOME/fake-menu-on" "$HOME/fake-menu-above" "$HOME/fake-plugins"; tm send-keys -t "$pane" x BSpace; sleep 0.5
-asctl rename "$id2" "$nm" >/dev/null 2>&1  # the favorite's name as before (a refused live rename still renames it)
-asctl rc "$id2" on >/dev/null
+asctl rename "$idr" "$nm" >/dev/null 2>&1  # the favorite's name as before (a refused live rename still renames it)
+asctl rc "$idr" on >/dev/null
 # The menu by its shape and mark, on screens drawn by hand (each its own check).
 mt=$(python3 -I - "$REPO" <<'EOF'
 import sys; sys.path.insert(0, sys.argv[1]); from asc import rclive as r
@@ -451,79 +476,83 @@ grep -qx box <<<"$rs" && ok "a real 2.1.318 screen: its input box found, empty b
 grep -qx offers <<<"$rs" && ok "a real 2.1.318 screen: the menu above the box takes /remote-control on Enter" || bad "a real 2.1.318 screen: the menu above the box takes /remote-control on Enter" "2.1.318 screen: the menu above the box"
 grep -qx seen <<<"$rs" && ok "a real 2.1.318 screen: on and rename see that menu, and nothing on the screen before" || bad "a real 2.1.318 screen: on and rename see that menu, and nothing on the screen before" "2.1.318 screen: no_menu"
 touch "$HOME/fake-slow-dialog"
-out=$(asctl rc "$id2" off); seen 'off now' <<<"$out" && [ -z "$(bridge)" ] && empty \
+out=$(asctl rc "$idr" off); seen 'off now' <<<"$out" && [ -z "$(bridge)" ] && empty \
 	&& ok "off: a slow dialog, its lines quoted in the transcript: waited for the dialog itself" || bad "off: a slow dialog, its lines quoted in the transcript: waited for the dialog itself" "slow dialog: $out / $(screen | tail -4)"
 rm -f "$HOME/fake-slow-dialog"
-out=$(asctl rc "$id2" on --title "a@b"); seen 'not changed now: its title has characters asctl does not type' <<<"$out" && [ -z "$(bridge)" ] && ok "a title with @ (a file menu) is not typed" || bad "a title with @ (a file menu) is not typed" "title @: $out"
-asctl rc "$id2" on --title "x;" >/dev/null 2>&1 && bad "a title ending with ; refused (tmux would drop it)" "a title ending with ; accepted" || ok "a title ending with ; refused (tmux would drop it)"
-asctl rc "$id2" on --title "My chat" --next-start >/dev/null
+out=$(asctl rc "$idr" on --title "a@b"); seen 'not changed now: its title has characters asctl does not type' <<<"$out" && [ -z "$(bridge)" ] && ok "a title with @ (a file menu) is not typed" || bad "a title with @ (a file menu) is not typed" "title @: $out"
+asctl rc "$idr" on --title "x;" >/dev/null 2>&1 && bad "a title ending with ; refused (tmux would drop it)" "a title ending with ; accepted" || ok "a title ending with ; refused (tmux would drop it)"
+asctl rc "$idr" on --title "My chat" --next-start >/dev/null
 touch "$HOME/fake-menu-on"
-out=$(asctl rc "$id2" on); seen 'not changed now: a command menu opened at its prompt; nothing was sent' <<<"$out" && [ -z "$(bridge)" ] && empty \
+out=$(asctl rc "$idr" on); seen 'not changed now: a command menu opened at its prompt; nothing was sent' <<<"$out" && [ -z "$(bridge)" ] && empty \
 	&& ok "on: a menu under the prompt: Enter not pressed, the prompt cleared" || bad "on: a menu under the prompt: Enter not pressed, the prompt cleared" "menu on: $out"
 rm -f "$HOME/fake-menu-on"
 touch "$HOME/fake-mangle"
-out=$(asctl rc "$id2" on); seen "its prompt now holds 'x/remote-control My chat'; check it" <<<"$out" && [ -z "$(bridge)" ] && screen | seen 'x/remote-control My chat' \
+out=$(asctl rc "$idr" on); seen "its prompt now holds 'x/remote-control My chat'; check it" <<<"$out" && [ -z "$(bridge)" ] && screen | seen 'x/remote-control My chat' \
 	&& ok "the prompt not showing the command as typed: Enter not pressed, text not ours left alone" || bad "the prompt not showing the command as typed: Enter not pressed, text not ours left alone" "mangle: $out"
 rm -f "$HOME/fake-mangle"
 # shellcheck disable=SC2046  # one key name per word, on purpose
 tm send-keys -t "$pane" $(printf 'BSpace %.0s' $(seq 1 30)); sleep 0.5
 touch "$HOME/fake-two-lines"; tm send-keys -t "$pane" x BSpace; sleep 0.5
-out=$(asctl rc "$id2" on); seen "not changed now: its screen does not show claude's prompt" <<<"$out" && [ -z "$(bridge)" ] \
+out=$(asctl rc "$idr" on); seen "not changed now: its screen does not show claude's prompt" <<<"$out" && [ -z "$(bridge)" ] \
 	&& ok "a prompt of two lines (the first empty) is not empty" || bad "a prompt of two lines (the first empty) is not empty" "two lines: $out"
 rm -f "$HOME/fake-two-lines"; tm send-keys -t "$pane" x BSpace; sleep 0.5
 [ "$(grep 'line: ' "$HOME/claude-args.log" | grep -vc 'line: /rename ')" = 10 ] && ok "nothing else ever reached its prompt (ten rc lines, besides /rename)" || bad "nothing else ever reached its prompt (ten rc lines, besides /rename)" "lines entered: $(grep 'line: ' "$HOME/claude-args.log")"
-asctl rc "$id2" off --next-start >/dev/null  # the tests below start from rc off
-asctl off "$id2" --force >/dev/null
-asctl rc "$id2" on --title=-x >/dev/null 2>&1 && bad "a title starting with - refused (claude would read an option)" "a title starting with - accepted" || ok "a title starting with - refused (claude would read an option)"
-asctl rc "$id2" on --title "$(printf 'a\tb')" >/dev/null 2>&1 && bad "a title with a control character refused" "a title with a control character accepted" || ok "a title with a control character refused"
-asctl resurrect "$id2" on >/dev/null && [ "$(jqe ".entries[\"$id2\"].resurrect")" = true ] && [ "$(jqe ".entries[\"$id2\"].rc")" = true ] && ok "resurrect on turns rc on" || bad "resurrect on turns rc on" "resurrect on did not turn rc on"
-asctl rc "$id2" off >/dev/null && [ "$(jqe ".entries[\"$id2\"].resurrect")" = true ] && ok "rc can still be turned off by hand" || bad "rc can still be turned off by hand" "rc off changed resurrect"
-arg=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import cli, registry; e = registry.find(registry.load(), sys.argv[2]); print(" ".join(cli.claude_argv(e, resurrect=True)), "|", " ".join(cli.claude_argv(e)))' "$REPO" "$id2")
-[[ ${arg%%|*} == *--remote-control* && ${arg#*|} != *--remote-control* ]] && ok "a resurrect start always has rc; a manual one follows the toggle" || bad "a resurrect start always has rc; a manual one follows the toggle" "resurrect rc rule: $arg"
-asctl note "$id2" "talks to the API" >/dev/null && [ "$(jqe ".entries[\"$id2\"].note")" = "talks to the API" ] && ok "note" || bad "note" "note failed"
-asctl note "$id2" "$(head -c 501 /dev/zero | tr '\0' x)" >/dev/null 2>&1 && bad "a note over 500 characters refused" "a note over 500 characters accepted" || ok "a note over 500 characters refused"
-asctl note "$id2" -- "-starts with a dash" >/dev/null && ok "a note may start with -" || bad "a note may start with -" "a note starting with - refused"
+}
 
-
+case_events() {
+# Setup: a favorite of a past conversation with an event of each kind: fav, a refused on (memory),
+# an on past the memory gate, off, rename, mode, resurrect, rc (its last); its claude off.
+server_up
+SE=22222222-3333-4444-8555-000000000032
+mkdir -p "$HOME/.claude/projects/-x"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SE" > "$HOME/.claude/projects/-x/$SE.jsonl"
+asctl fav "$SE" --name evx >/dev/null || stop "a favorite for the event log"
+ide=$(jq -r --arg s "$SE" '.entries[] | select(.session_id == $s) | .id4' "$REG")
+mem 32000000 1600000
+asctl on "$ide" >/dev/null 2>&1 && stop "on refused below 20% available"
+asctl on "$ide" --force-memory >/dev/null || stop "on --force-memory"
+mem 32000000 16000000
+{ asctl off "$ide" --force && asctl rename "$ide" evlog && asctl mode "$ide" skip && asctl resurrect "$ide" on \
+	&& asctl rc "$ide" off; } >/dev/null || stop "off, rename, mode, resurrect, rc"
 echo "== event log"
 EV="$HOME/.local/state/agent-session-control/events.jsonl"
 [ "$(stat -c %a "$EV")" = 600 ] && ok "events.jsonl mode 0600" || bad "events.jsonl mode 0600" "events.jsonl mode $(stat -c %a "$EV")"
 jq -e -s 'all(.t > 0 and (.kind | type) == "string" and .by == "cli")' "$EV" >/dev/null && ok "every line is JSON with a time, a kind and who (cli)" || bad "every line is JSON with a time, a kind and who (cli)" "bad event lines"
 miss=; for k in fav on off rename mode rc resurrect; do jq -e -s --arg k "$k" 'any(.kind == $k)' "$EV" >/dev/null || miss="$miss $k"; done
 [ -z "$miss" ] && ok "every kind logged: fav, on, off, rename, mode, rc, resurrect" || bad "every kind logged: fav, on, off, rename, mode, rc, resurrect" "not logged:$miss"
-jq -e -s --arg i "$id2" 'any(.kind == "refused" and .id4 == $i and (.text | test("^on: memory: 5.0% available")))' "$EV" >/dev/null \
+jq -e -s --arg i "$ide" 'any(.kind == "refused" and .id4 == $i and (.text | test("^on: memory: 5.0% available")))' "$EV" >/dev/null \
 	&& ok "a refused on is logged with why" || bad "a refused on is logged with why" "refused on not logged"
-jq -e -s --arg i "$id2" 'any(.kind == "on" and .id4 == $i and (.text | test("past the memory gate")))' "$EV" >/dev/null \
+jq -e -s --arg i "$ide" 'any(.kind == "on" and .id4 == $i and (.text | test("past the memory gate")))' "$EV" >/dev/null \
 	&& ok "an on past the memory gate says so" || bad "an on past the memory gate says so" "forced on not marked"
-asctl events "$id2" | tail -1 | seen -E "^[0-9-]{10} [0-9:]{8}  cli +(off|rc|resurrect|mode|rename) +chat-$id2 " && ok "asctl events ID: its events, oldest first" || bad "asctl events ID: its events, oldest first" "asctl events: $(asctl events "$id2" | tail -2)"
-ASC_BY=page asctl mode "$id2" auto >/dev/null; ASC_BY='x"y' asctl mode "$id2" auto >/dev/null
+asctl events "$ide" | tail -1 | seen -E "^[0-9-]{10} [0-9:]{8}  cli +(off|rc|resurrect|mode|rename) +evlog-$ide " && ok "asctl events ID: its events, oldest first" || bad "asctl events ID: its events, oldest first" "asctl events: $(asctl events "$ide" | tail -2)"
+ASC_BY=page asctl mode "$ide" auto >/dev/null; ASC_BY='x"y' asctl mode "$ide" auto >/dev/null
 tail -2 "$EV" | jq -s -e '.[0].by == "page" and .[1].by == "cli"' >/dev/null && ok "who: ASC_BY page kept, anything else is cli" || bad "who: ASC_BY page kept, anything else is cli" "who wrong: $(tail -2 "$EV")"
 # Pruned: lines past 7 days and broken lines go; past 2 MB the oldest half goes.
 { printf '{"t": 1000, "kind": "on", "by": "cli", "text": "ancient"}\nnot json\n'; cat "$EV"; } > "$EV.x" && mv "$EV.x" "$EV"
-asctl mode "$id2" auto >/dev/null
+asctl mode "$ide" auto >/dev/null
 ! seen -e ancient -e 'not json' "$EV" && seen '"mode"' "$EV" && ok "pruned: an event past 7 days and a broken line" || bad "pruned: an event past 7 days and a broken line" "not pruned: $(head -2 "$EV")"
 n=$(wc -l < "$EV")
 python3 -c 'import json,sys,time; t=int(time.time()); sys.stdout.writelines(json.dumps({"t": t, "kind": "on", "by": "cli", "text": "x" * 200}) + "\n" for _ in range(11000))' >> "$EV"
-asctl mode "$id2" auto >/dev/null
+asctl mode "$ide" auto >/dev/null
 sz=$(stat -c %s "$EV"); [ "$sz" -le 1100000 ] && [ "$(stat -c %a "$EV")" = 600 ] && tail -1 "$EV" | seen '"mode"' && ok "pruned past 2 MB to under 1 MB, the newest kept" || bad "pruned past 2 MB to under 1 MB, the newest kept" "size not bounded: $sz"
 asctl events | wc -l | seen -x 50 && ok "asctl events: the latest 50" || bad "asctl events: the latest 50" "events limit"
 # A symlink in its place is not followed; the action still works.
 mv "$EV" "$EV.keep"; ln -s "$T/elsewhere" "$EV"
-out=$( { asctl mode "$id2" auto >/dev/null; } 2>&1 ); r=$?
+out=$( { asctl mode "$ide" auto >/dev/null; } 2>&1 ); r=$?
 [ $r = 0 ] && [ ! -e "$T/elsewhere" ] && seen 'event not logged' <<<"$out" && ok "a symlinked events.jsonl is not written through; the action goes on" || bad "a symlinked events.jsonl is not written through; the action goes on" "symlink: rc=$r $out"
 rm -f "$EV"; mv "$EV.keep" "$EV"
 # A FIFO in its place: refused at once, never waited on.
 mv "$EV" "$EV.keep"; mkfifo "$EV"
-out=$( { timeout 10 "$REPO/bin/asctl" mode "$id2" auto >/dev/null; } 2>&1 ); r=$?
+out=$( { timeout 10 "$REPO/bin/asctl" mode "$ide" auto >/dev/null; } 2>&1 ); r=$?
 [ $r = 0 ] && seen 'not a regular file' <<<"$out" && ok "a FIFO as events.jsonl: refused at once, the action goes on" || bad "a FIFO as events.jsonl: refused at once, the action goes on" "FIFO: rc=$r $out"
 rm -f "$EV"; mv "$EV.keep" "$EV"
 # One event per off; a refusal of any action is logged, an error after a change as failed.
-c0=$(jq -s '[.[] | select(.kind == "off")] | length' "$EV"); asctl off "$id2" >/dev/null
+c0=$(jq -s '[.[] | select(.kind == "off")] | length' "$EV"); asctl off "$ide" >/dev/null
 [ "$(jq -s '[.[] | select(.kind == "off")] | length' "$EV")" = $((c0 + 1)) ] && ok "one off, one off event" || bad "one off, one off event" "off events: $c0 then $(jq -s '[.[] | select(.kind == "off")] | length' "$EV")"
-tm new-session -d -s "taken-$id2" -- sleep 300
-asctl rename "$id2" taken >/dev/null 2>&1
-tail -1 "$EV" | jq -e --arg i "$id2" '.kind == "refused" and .id4 == $i and (.text | startswith("rename: tmux session"))' >/dev/null && ok "a refused rename is logged" || bad "a refused rename is logged" "refused rename: $(tail -1 "$EV")"
-tm kill-session -t "=taken-$id2"
+tm new-session -d -s "taken-$ide" -- sleep 300
+asctl rename "$ide" taken >/dev/null 2>&1
+tail -1 "$EV" | jq -e --arg i "$ide" '.kind == "refused" and .id4 == $i and (.text | startswith("rename: tmux session"))' >/dev/null && ok "a refused rename is logged" || bad "a refused rename is logged" "refused rename: $(tail -1 "$EV")"
+tm kill-session -t "=taken-$ide"
 asctl on 9999 >/dev/null 2>&1; tail -1 "$EV" | jq -e '.kind == "refused" and (.text | startswith("on 9999: no favorite"))' >/dev/null && ok "an action on an unknown id: refused, logged" || bad "an action on an unknown id: refused, logged" "unknown id: $(tail -1 "$EV")"
 python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import cli, events
 e = {"id4": "0000", "tmux": "x-0000"}
@@ -1381,7 +1410,7 @@ ud() { HOME="$H2" XDG_CONFIG_HOME="$1" python3 -I -c 'import sys; sys.path.inser
 rm "$F2/environment"
 }
 
-run_cases asc no_tmux_server main rc_slow new_name outside watcher_memory watcher_ended boot asctl_setup
+run_cases asc no_tmux_server main rc_now events rc_slow new_name outside watcher_memory watcher_ended boot asctl_setup
 
 echo "asc: $pass passed, $fail failed"
 [ "$fail" = 0 ]
