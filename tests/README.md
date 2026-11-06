@@ -57,15 +57,17 @@ not, a line given twice, a change that no longer parses (a mutant that breaks th
 every check, a catch that tests nothing), and a check or case that is not the suite's. A mutant
 must never take a suite off its fakes onto the real machine: a change to a line marked
 `# isolation:` (where asctl picks the test's tmux socket, `systemctl` or `claude`) is refused, as
-is a new text naming `systemctl` or `"claude"` more often than the old one.
+is a new text naming `systemctl`, `claude`, `env -i`, or an `env=` not built from `os.environ`,
+more often than the old one. A mutant whose module then fails at import (imported apart, in a
+bare environment) is BROKEN.
 `tests/mutate.sh` copies the tracked files to `/tmp/asc-mut.<run id>` and first runs every case
 alone as the baseline: all `ok`, no `skip`, each case done, exactly the source's checks (else
 exit 2, no verdicts). Then each mutant, `MUTANT_JOBS` (default 3) at a time, in a copy of its
 own: its case alone, stopped at its check (`TEST_STOP_AT`); that check failing twice is CAUGHT.
 Else the whole suite (`(full)`): failing twice, CAUGHT; the check `ok`, every case done and the
 baseline's checks, SURVIVED; anything else (a FAIL elsewhere only, flaky, its case failing it
-once, its case run cut short before its check) UNCLEAR. A mutant whose module then fails at
-import is BROKEN. A run over its time limit, or with memory pressure from a second before it to
+once, its case run cut short before its check) UNCLEAR. A run over its time limit, or with memory
+pressure from a second before it to
 a second after (available memory under 15%, tasks stalled on memory 0.1 s or more (PSI "full"),
 a kernel OOM kill, a line in earlyoom's kill file if it can be read, the sampler stalled, the
 clock set back, PSI or the OOM count no longer readable), never gives a verdict: UNCLEAR; and

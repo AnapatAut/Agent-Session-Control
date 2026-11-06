@@ -131,7 +131,7 @@ if [ "$PROC" = /proc ]; then
 	# an earlier run killed (SIGKILL: no cleanup): its jobs may run on, and its folder stays (a
 	# toy run of tests/mutate-test.sh, ASC_MUT_PROC, reaches nothing real: not counted)
 	old=$(for f in $(grep -lzE '^ASC_MUT_RUN=' /proc/[0-9]*/environ 2>/dev/null); do
-		e=$(tr '\0' '\n' 2>/dev/null < "$f") && [ -n "$e" ] || continue  # ended meanwhile
+		e=$(tr '\0' '\n' 2>/dev/null < "$f") && grep -q '^ASC_MUT_RUN=' <<<"$e" || continue  # ended meanwhile
 		grep -qxF -- "ASC_MUT_RUN=$RID" <<<"$e" || grep -q '^ASC_MUT_PROC=' <<<"$e" || { f=${f#/proc/}; echo -n "${f%/environ} "; }
 	done)
 	[ -z "$old" ] || die "processes of an earlier mutant run still run (pids $old): end them first"
@@ -169,7 +169,7 @@ sampler() {
 		[ -n "$f" ] || [ -z "$f0" ] || echo "$p $t PSI no longer readable" >> "$W/pressure"
 		[ -z "$f" ] || [ -z "$f0" ] || [ $((f - f0)) -lt 100000 ] || echo "$p $t tasks stalled on memory for $(((f - f0) / 1000)) ms (PSI full)" >> "$W/pressure"
 		[ -z "$f" ] || f0=$f
-		o=$(oom)
+		o=$(oom); [ -n "$o0" ] || o0=$o  # readable only now: watched from now on
 		[ -n "$o" ] || [ -z "$o0" ] || echo "$p $t the OOM kill count no longer readable" >> "$W/pressure"
 		[ -z "$o0" ] || [ -z "$o" ] || [ "$o" = "$o0" ] || { echo "$p $t a kernel OOM kill (oom_kill $o0 -> $o)" >> "$W/pressure"; o0=$o; }
 		k=$(klines); [ "$k" = "$k0" ] || { echo "$p $t a line in earlyoom's kill file" >> "$W/pressure"; k0=$k; }
@@ -321,7 +321,7 @@ mutant() {
 			FAIL) once=1; [ "$n" = 1 ] || v="CAUGHT	$k ($c)" ;;
 			"other: printed twice"*) v="UNCLEAR	its case run ${r#other: }"; break ;;
 			ok) break ;;
-			*) cut=${r#other: }; break ;;
+			*) cut=${r#other: } cut=${cut:-no verdict on it}; break ;;
 			esac
 		done
 	fi

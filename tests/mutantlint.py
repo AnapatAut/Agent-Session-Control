@@ -15,8 +15,9 @@ in its file (never "the first one"), a line given twice in a list, a change that
 that breaks the syntax fails every check, so it would be a catch that tests nothing), and a check
 or case that is not the suite's. Refused too, as a mutant must never take a suite off its fakes
 onto the real machine: a change to a line marked "# isolation:" (where asctl picks the test's tmux
-socket, systemctl or claude), and a new text naming systemctl or "claude" more often than the old
-one (tmux needs no such rule: tests/mutate.sh gives the suites a tmux folder of its own); and a
+socket, systemctl or claude), and a new text naming systemctl, claude, `env -i` or an env= not
+built from os.environ more often than the old one (tmux needs no such rule: tests/mutate.sh gives
+the suites a tmux folder of its own); and a
 file that is not text with one newline at its end and no CR (a mutant writes the file back: it
 would change more than its own text). A file's text is taken without that newline.
   python3 -I tests/mutantlint.py <list or suite>...   prints each fault; exit 1 if any
@@ -28,7 +29,9 @@ would change more than its own text). A file's text is taken without that newlin
   python3 -I tests/mutantlint.py --self-test          each form it must refuse, refused
 """
 import os
+import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -43,7 +46,11 @@ ROOTS = {'privacy.sh': ('tools/', '.githooks/')}  # else asc/ and bin/: product 
 SUITES = {'mutants-asc.txt': 'asc.sh', 'mutants-dash.txt': 'dash.sh'}
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ISOLATION = '# isolation:'
-REAL = ('systemctl', '"claude"')
+# a new text that names one of these more often than the old one: refused (the real command, or a
+# child's environment not built from this one: the suites' fakes, socket and home lost; an env=
+# dropped is fine, the child then has this whole environment)
+MORE = (('systemctl', r'\bsystemctl\b'), ('claude', r'\bclaude\b'), ('env -i', r'\benv\s+-i\b'),
+        ('env= not from os.environ', r'\benv\s*=\s*(?!dict\(\s*os\.environ\b|\{\s*\*\*\s*os\.environ\b|os\.environ\b)'))
 
 
 def lists(text):
@@ -147,9 +154,9 @@ def change(f, old, new, read, roots):
     j = body.find('\n', i + len(old))
     if ISOLATION in body[body.rfind('\n', 0, i) + 1:j if j >= 0 else len(body)]:
         return None, f'it changes a line marked "{ISOLATION}" (it keeps the suites off the real machine)'
-    for w in REAL:
-        if new.count(w) > old.count(w):
-            return None, f'its new text names {w} (only the suites\' fakes may run)'
+    for w, rx in MORE:
+        if len(re.findall(rx, new)) > len(re.findall(rx, old)):
+            return None, f'its new text names {w} more often (only the suites\' fakes may run, in their environment)'
     why = parses(f, body + '\n')
     if why:
         return None, f'{f} does not parse even unchanged: {why}'
@@ -161,19 +168,38 @@ def change(f, old, new, read, roots):
 
 
 def imports(f):
-    """'' if module f (asc/<name>.py) of this repo imports, else why not; in a bare environment
-    with a home of its own (a mutated module never sees the real one)."""
+    """'' if module f (asc/<name>.py) of this repo imports, else why not. In a bare environment
+    with a home and tmux folder of its own, systemctl and claude a command that fails, the run id
+    passed on (tests/mutate.sh's cleanup sees what it starts), in a process group of its own that
+    is ended after it, whatever it started too."""
     if not (f.startswith('asc/') and f.endswith('.py')):
         return ''
     with tempfile.TemporaryDirectory() as h:
-        try:
-            r = subprocess.run([sys.executable, '-I', '-B', '-c', 'import importlib, sys; sys.path.insert(0, sys.argv[1]); '
-                                'importlib.import_module(sys.argv[2])', ROOT, f[:-3].replace('/', '.')],
-                               capture_output=True, text=True, timeout=30, cwd=h, stdin=subprocess.DEVNULL,
-                               env={'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'HOME': h, 'LANG': 'C.UTF-8'})
-        except subprocess.TimeoutExpired:
-            return 'its import did not end in 30 s'
-    return '' if r.returncode == 0 else 'it fails at import: ' + (r.stderr.strip().splitlines() or [f'exit {r.returncode}'])[-1]
+        env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'HOME': h, 'LANG': 'C.UTF-8', 'TMUX_TMPDIR': h,
+               'ASC_TMUX_SOCKET': 'asc-import', 'ASC_SYSTEMCTL': '/bin/false', 'ASC_CLAUDE': '/bin/false'}
+        if 'ASC_MUT_RUN' in os.environ:
+            env['ASC_MUT_RUN'] = os.environ['ASC_MUT_RUN']
+        # stderr to a file, not a pipe: a child the module leaves running would hold a pipe open
+        with open(os.path.join(h, 'err'), 'w+', encoding='utf-8', errors='replace') as ef:
+            p = subprocess.Popen([sys.executable, '-I', '-B', '-c', 'import importlib, sys; '
+                                  'sys.path.insert(0, sys.argv[1]); importlib.import_module(sys.argv[2])',
+                                  ROOT, f[:-3].replace('/', '.')], stdout=subprocess.DEVNULL, stderr=ef,
+                                 stdin=subprocess.DEVNULL, cwd=h, env=env, start_new_session=True)
+            timed = False
+            try:
+                p.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                timed = True
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            p.wait()
+            if timed:
+                return 'its import did not end in 30 s'
+            ef.seek(0)
+            err = ef.read()
+    return '' if p.returncode == 0 else 'it fails at import: ' + (err.strip().splitlines() or [f'exit {p.returncode}'])[-1]
 
 
 def check_list(path, text, read, roots=('',)):
@@ -276,7 +302,8 @@ def read_file(root, list_path, only=None):
 
 FILES = {'a.py': 'x = 1\nif x:\n    y = 2\nif x:\n    y = 2\n', 'b.sh': 'echo hi\n',
          'i.py': 'c = [e.get("S", "systemctl")]  # isolation: no mutant\nx = 1\ny = 2\n',
-         'cr.py': 'x = 1\r\n', 'nn.py': 'x = 1\n\n', 'nonl.py': 'x = 1'}
+         'cr.py': 'x = 1\r\n', 'nn.py': 'x = 1\n\n', 'nonl.py': 'x = 1',
+         'e.py': 'r = run(["x"], env=dict(os.environ, A="b"))\n'}
 OK = "run <<'MUTANTS'\n{}\nMUTANTS\n"
 REFUSED = [
     ('a.py %%% if x: %%% if False:', 'times, not once'),
@@ -294,8 +321,14 @@ REFUSED = [
     ('i.py %%% "systemctl")] %%% "x")]', 'a line marked "# isolation:"'),
     ('i.py %%% x = 1⏎y %%% x = 1⏎y', 'the new text is the old one'),
     ('i.py %%% ⏎x = 1 %%% ⏎x = 2', 'a line marked "# isolation:"'),
-    ('i.py %%% x = 1 %%% x = ["systemctl"]', 'names systemctl'),
-    ('i.py %%% x = 1 %%% x = "claude"', 'names "claude"'),
+    ('i.py %%% x = 1 %%% x = ["systemctl"]', 'names systemctl more often'),
+    ('i.py %%% x = 1 %%% x = "claude"', 'names claude more often'),
+    ("i.py %%% x = 1 %%% x = 'claude'", 'names claude more often'),
+    ('b.sh %%% echo hi %%% exec claude', 'names claude more often'),
+    ('e.py %%% env=dict(os.environ, A="b") %%% env={"A": "b"}', 'names env= not from os.environ more often'),
+    ('e.py %%% env=dict(os.environ, A="b") %%% env=dict(A="b")', 'names env= not from os.environ more often'),
+    ('i.py %%% x = 1 %%% x = run(env={})', 'names env= not from os.environ more often'),
+    ('b.sh %%% echo hi %%% env -i echo hi', 'names env -i more often'),
     ('cr.py %%% x = 1 %%% x = 2', 'no CR'),
     ('nn.py %%% x = 1 %%% x = 2', 'one newline at its end'),
     ('nonl.py %%% x = 1 %%% x = 2', 'one newline at its end'),
@@ -304,6 +337,9 @@ PASSED = [
     'a.py %%% x = 1 %%% x = 2',
     'i.py %%% x = 1⏎y = 2 %%% x = 1⏎y = 3',
     'i.py %%% y = 2 %%% y = e["tmux"]',
+    'e.py %%% A="b" %%% A="c"',
+    'e.py %%% , env=dict(os.environ, A="b")) %%% )',
+    'e.py %%% env=dict(os.environ, A="b") %%% env={**os.environ, "A": "c"}',
     'a.py %%% x = 1⏎if x: %%% x = 1⏎if False:',
     'a.py %%% 2⏎if x:⏎    y = 2 %%% 2⏎if x:⏎    y = 3',
     'b.sh %%% echo hi %%% ',
