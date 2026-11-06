@@ -41,7 +41,8 @@ if [ -z "${ASC_MUT_RUN-}" ]; then
 	# own through it, which tests/asc.sh checks: without it that check is a skip, and the baseline
 	# refused); and, for tests/mutate-test.sh only and said in the first line: ASC_MUT_PROC, a
 	# folder that stands in for /proc's meminfo and vmstat, holds the earlyoom kill file and the
-	# lock; ASC_MUT_MINLIMIT, the least time limit of a case (else 120 s; a whole suite: 5 times it)
+	# lock; ASC_MUT_MINLIMIT, the least time limit of a case (else 240 s: a mutant may make asctl
+	# wait its longest, boot's 120 s for claude.ai, twice before its check; a whole suite: 5 times it)
 	keep=()
 	for v in XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS; do [ -z "${!v-}" ] || keep+=("$v=${!v}"); done
 	if [ -n "${ASC_MUT_PROC-}" ]; then
@@ -58,7 +59,7 @@ RID=$ASC_MUT_RUN JOBS=${MUTANT_JOBS-} FULL=${MUTANTS_FULL-}
 [[ $RID =~ ^[0-9]+-[0-9]+-[a-z0-9]{8}$ && $RID == "$$-$(started $$)-"* ]] || die "ASC_MUT_RUN is set, but not by this run"
 [[ $JOBS =~ ^[1-9][0-9]?$ ]] || die "MUTANT_JOBS must be 1 to 99"
 [[ $FULL =~ ^[01]$ ]] || die "MUTANTS_FULL must be 0 or 1"
-PROC=${ASC_MUT_PROC:-/proc} MIN=${ASC_MUT_MINLIMIT:-120}
+PROC=${ASC_MUT_PROC:-/proc} MIN=${ASC_MUT_MINLIMIT:-240}
 [ "$PROC" = /proc ] || [ -d "$PROC" ] || die "ASC_MUT_PROC is not a folder"
 [[ $MIN =~ ^[1-9][0-9]*$ ]] || die "ASC_MUT_MINLIMIT must be a whole number of seconds"
 KILLS=$PROC/earlyoom-kills; [ "$PROC" != /proc ] || KILLS=/run/earlyoom/kills

@@ -122,6 +122,7 @@ asc/cli.py %%%         events.log("refused", e, f"{what}: {x}") %%%         pass
 asc/cli.py %%%         elif not args.restart: %%%         elif False: %%% rename: not when a menu above the box would take Enter %%% rc_now
 asc/cli.py %%%     if pid is not None: %%%     if False: %%% on with a server up: asctl-tmux.service not started %%% boot
 asc/cli.py %%%     if pid is None:⏎        raise RegistryError("no tmux server is running %%%     if False:⏎        raise RegistryError("no tmux server is running %%% on, no server and no unit: refused, no server started by asctl itself %%% boot
+asc/cli.py %%%     end = time.time() + timeout %%%     return {"pid": 0, "session_id": e["session_id"]} %%% on returns only once its claude is up %%% main
 asc/cli.py %%%         server = ensure_server() %%%         server = tmuxctl.server_pid() %%% on, no server and no unit: refused, no server started by asctl itself %%% boot
 asc/cli.py %%%         argv = claude_argv(e, resurrect) %%%         argv = claude_argv(e) %%% with rc (resurrect), rc being off %%% boot
 asc/cli.py %%%     if running is not None: %%%     if False: %%% tmux-server with a server up: left as it is %%% boot

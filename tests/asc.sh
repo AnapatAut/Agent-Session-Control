@@ -98,15 +98,23 @@ flag_seen() {
 	done
 }
 . "$REPO/tests/cases.sh"
-# The pid of the live fake claude in a tmux session, waiting up to 10 s.
+# The pid of the live fake claude in a tmux session, now (one look, no wait).
+claude_now() {
+	local pp c
+	for pp in $(tm list-panes -s -t "=$1" -F '#{pane_pid}' 2>/dev/null); do
+		c=$pp
+		[ "$(cat /proc/"$pp"/comm 2>/dev/null)" = claude ] || c=$(pgrep -P "$pp" -x claude | head -1)
+		[ -n "$c" ] && [ -f "$HOME/.claude/sessions/$c.json" ] && { echo "$c"; return 0; }
+	done
+	return 1
+}
+# The same, waiting up to 10 s. A check that no claude was started looks once, with claude_now,
+# right after the asctl command returned: every start waits for its claude's session file before
+# it returns (asc/cli.py wait_started; checked by "on returns only once its claude is up").
 claude_in() {
-	local i pp
+	local i
 	for i in $(seq 1 50); do
-		for pp in $(tm list-panes -s -t "=$1" -F '#{pane_pid}' 2>/dev/null); do
-			local c=$pp
-			[ "$(cat /proc/"$pp"/comm 2>/dev/null)" = claude ] || c=$(pgrep -P "$pp" -x claude | head -1)
-			[ -n "$c" ] && [ -f "$HOME/.claude/sessions/$c.json" ] && { echo "$c"; return 0; }
-		done
+		claude_now "$1" && return 0
 		sleep 0.2
 	done
 	return 1
@@ -165,6 +173,7 @@ asctl list | seen "^$id .* off " && ok "list: off" || bad "list: off" "list: not
 
 echo "== on"
 asctl on "$id" >/dev/null && ok "on" || bad "on" "on failed"
+claude_now "das-$id" >/dev/null && ok "on returns only once its claude is up" || bad "on returns only once its claude is up" "no claude in das-$id as on returned"
 pid=$(claude_in "das-$id") && ok "claude up in das-<id>" || bad "claude up in das-<id>" "no claude in das-$id"
 # tmux with systemd moves each pane into a scope of its own just after starting it; claude must
 # be forked after that, in the wrapper's scope, not left in the server's cgroup.
@@ -1084,7 +1093,7 @@ ended | seen 'started again under 30 min ago' && ok "not again within 30 min" ||
 python3 -I -c 'import sys, json; sys.path.insert(0, sys.argv[1]); from asc import registry
 with registry.changing() as d: d["entries"][sys.argv[2]]["auto_restarted"] = 1' "$REPO" "$idw"
 tm send-keys -t "=wat2-$idw:" 'sleep 300' Enter; sleep 0.8; seed; watch
-last waiting | jq -r .text | seen "its pane's shell runs something" && ! claude_in "wat2-$idw" >/dev/null 2>&1 && ok "its pane runs something: not started" || bad "its pane runs something: not started" "busy pane: $(last waiting)"
+last waiting | jq -r .text | seen "its pane's shell runs something" && ! claude_now "wat2-$idw" >/dev/null 2>&1 && ok "its pane runs something: not started" || bad "its pane runs something: not started" "busy pane: $(last waiting)"
 tm send-keys -t "=wat2-$idw:" C-c; sleep 0.5; mem 32000000 4800000; watch
 last waiting | jq -r .text | seen 'memory: ' && ok "memory short: waiting" || bad "memory short: waiting" "memory gate: $(last waiting)"
 mem 32000000 16000000; watch
@@ -1092,7 +1101,7 @@ last waiting | jq -r .text | seen 'memory: down to 15.0% available in the last 5
 rk() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import registry
 with registry.changing() as d: d["entries"][sys.argv[2]]["rss_kb"] = int(sys.argv[3])' "$REPO" "$idw" "$1"; }
 rk 13000000; seed; watch
-last waiting | jq -r .text | seen 'would leave' && ! claude_in "wat2-$idw" >/dev/null 2>&1 && ok "steady, but no room for its size: waiting" || bad "steady, but no room for its size: waiting" "room check: $(last waiting)"
+last waiting | jq -r .text | seen 'would leave' && ! claude_now "wat2-$idw" >/dev/null 2>&1 && ok "steady, but no room for its size: waiting" || bad "steady, but no room for its size: waiting" "room check: $(last waiting)"
 rk 400000
 seed; bump; watch; pn=$(claude_in "wat2-$idw") && ok "steady again: started" || bad "steady again: started" "not started when steady: $(last waiting)"
 # An end with no sample after it yet: told by the next run, not taken as "no pressure". (The end is
@@ -1174,7 +1183,7 @@ w1=$(evn waiting); mem 32000000 4800000; watch; mem 32000000 4700000; watch
 mem 32000000 16000000
 # Its lock held by an action: the watcher leaves it to the next run.
 flock "$SD/locks/$idw" sleep 3 & fl=$!; sleep 0.3; seed; watch
-claude_in "wat2-$idw" >/dev/null 2>&1 && bad "an entry an action holds: left alone" "started while an action held it" || ok "an entry an action holds: left alone"
+claude_now "wat2-$idw" >/dev/null 2>&1 && bad "an entry an action holds: left alone" "started while an action held it" || ok "an entry an action holds: left alone"
 wait $fl; seed; watch; pw=$(claude_in "wat2-$idw") && ok "and started once the action is done" || bad "and started once the action is done" "not started after the lock: $(last waiting)"
 # A claude started by hand in the pane after an end: that end is never acted on again.
 python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import registry
@@ -1207,7 +1216,7 @@ watch && jq -e '.ended | type == "object"' "$SD/watch.json" >/dev/null && jq -e 
 	&& ok "broken watch.json and memory.json: the run goes on, odd samples dropped" || bad "broken watch.json and memory.json: the run goes on, odd samples dropped" "broken state: $(cat "$SD/watch.json")"
 tm kill-session -t "=wat3-$idw"; idw_t=wat3
 asctl off "$idw" --force >/dev/null; watch
-claude_in "wat3-$idw" >/dev/null 2>&1 && bad "off: the watcher leaves it off" "off, and started anyway" || ok "off: the watcher leaves it off"
+claude_now "wat3-$idw" >/dev/null 2>&1 && bad "off: the watcher leaves it off" "off, and started anyway" || ok "off: the watcher leaves it off"
 [ "$(jq -r ".entries[\"$idw\"].want_on" "$REG")" = false ] && ok "want_on only changed by off" || bad "want_on only changed by off" "want_on changed"
 asctl auto-restart off >/dev/null
 }
@@ -1265,11 +1274,11 @@ grep -qx -- '--user start asctl-tmux.service' "$SC" && [ "$(tm show -gv exit-emp
 wait $fl
 mem 32000000 4000000; seed
 ASC_NET=127.0.0.1:$up_port boot --wait 0 >/dev/null 2>&1; rc=$?
-[ "$rc" = 1 ] && last waiting | seen 'boot: not started yet: memory' && ! claude_in "wat3-$idw" >/dev/null 2>&1 \
+[ "$rc" = 1 ] && last waiting | seen 'boot: not started yet: memory' && ! claude_now "wat3-$idw" >/dev/null 2>&1 \
 	&& ok "boot, memory short: waits, then left" || bad "boot, memory short: waits, then left" "boot, memory: rc $rc $(last waiting)"
 mem 32000000 16000000; rm -f "$SD/memory.json"
 ASC_NET=127.0.0.1:$up_port boot --wait 0 >/dev/null 2>&1; rc=$?
-[ "$rc" = 1 ] && last waiting | seen 'boot: not started yet: memory: watched for under 5 min' && ! claude_in "wat3-$idw" >/dev/null 2>&1 \
+[ "$rc" = 1 ] && last waiting | seen 'boot: not started yet: memory: watched for under 5 min' && ! claude_now "wat3-$idw" >/dev/null 2>&1 \
 	&& ok "boot, memory fine but not watched 5 min: waits" || bad "boot, memory fine but not watched 5 min: waits" "boot, steady: rc $rc $(last waiting)"
 # Resurrect turned off while boot waits: left, with nothing said.
 seed; flock "$SD/locks/$idw" sleep 1.5 & fl=$!; sleep 0.3
@@ -1285,7 +1294,7 @@ python3 -I -c 'import json, sys; sys.path.insert(0, sys.argv[1]); from asc impor
 boot._status([sys.argv[2], "9999"], "x")
 assert json.load(open(registry.state_dir() + "/boot.json"))["todo"] == [], "kept"' "$REPO" "$idw" \
 	&& ok "boot.json leaves out a favorite turned off, resurrect off or forgotten since" || bad "boot.json leaves out a favorite turned off, resurrect off or forgotten since" "boot.json kept one no longer wanted"
-seen -x 'boot: 0 started' "$T/boot.out" && seen -x 0 "$T/boot.out" && ! claude_in "wat3-$idw" >/dev/null 2>&1 \
+seen -x 'boot: 0 started' "$T/boot.out" && seen -x 0 "$T/boot.out" && ! claude_now "wat3-$idw" >/dev/null 2>&1 \
 	&& ok "resurrect off while boot waits: left" || bad "resurrect off while boot waits: left" "resurrect off mid-boot: $(cat "$T/boot.out")"
 asctl resurrect "$idw" on >/dev/null; asctl rc "$idw" off --next-start >/dev/null
 # Stopped while it waits (memory short): a SIGTERM ends it as an exit, so boot.json says done.
