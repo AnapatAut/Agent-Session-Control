@@ -1232,6 +1232,7 @@ asctl tmux-server | seen 'already runs' && [ ! -e "$SC" ] && ok "tmux-server wit
 # one with resurrect on that was off, the rest on with resurrect off.
 asctl resurrect "$idw" on >/dev/null; asctl rc "$idw" off --next-start >/dev/null; asctl on "$idw" >/dev/null
 claude_in "wat3-$idw" >/dev/null && ok "on before the reboot" || bad "on before the reboot" "no claude in wat3-$idw"
+[ ! -e "$SC" ] && ok "on with a server up: asctl-tmux.service not started" || bad "on with a server up: asctl-tmux.service not started" "systemctl called: $(cat "$SC")"
 python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import registry
 with registry.changing() as d:
     others = sorted(i for i in d["entries"] if i != sys.argv[2])

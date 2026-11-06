@@ -120,7 +120,7 @@ asc/events.py %%%     return b if b in BY else "cli" %%%     return b or "cli" %
 asc/events.py %%%     return "".join(" " if unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp", "Cs") else c %%%     return "".join(" " if unicodedata.category(c) in ("Cc",) else c %%% a lone surrogate and bidi controls become spaces; limit 0 is none; a time is a finite number %%% events
 asc/cli.py %%%         events.log("refused", e, f"{what}: {x}") %%%         pass %%% a refused on is logged with why %%% events
 asc/cli.py %%%         elif not args.restart: %%%         elif False: %%% rename: not when a menu above the box would take Enter %%% rc_now
-asc/cli.py %%%     if pid is not None: %%%     if False: %%% tmux-server with a server up: left as it is %%% boot
+asc/cli.py %%%     if pid is not None: %%%     if False: %%% on with a server up: asctl-tmux.service not started %%% boot
 asc/cli.py %%%     if pid is None:⏎        raise RegistryError("no tmux server is running %%%     if False:⏎        raise RegistryError("no tmux server is running %%% on, no server and no unit: refused, no server started by asctl itself %%% boot
 asc/cli.py %%%         server = ensure_server() %%%         server = tmuxctl.server_pid() %%% on, no server and no unit: refused, no server started by asctl itself %%% boot
 asc/cli.py %%%         argv = claude_argv(e, resurrect) %%%         argv = claude_argv(e) %%% with rc (resurrect), rc being off %%% boot
