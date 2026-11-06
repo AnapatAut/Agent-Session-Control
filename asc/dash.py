@@ -303,7 +303,7 @@ def set_up():
     ok = True
     for unit in ("asctl-boot.service", "asctl-watch.timer"):
         try:
-            r = subprocess.run([os.environ.get("ASC_SYSTEMCTL", "systemctl"), "--user", "is-enabled", unit],
+            r = subprocess.run([os.environ.get("ASC_SYSTEMCTL", "systemctl"), "--user", "is-enabled", unit],  # isolation: no mutant may change this line
                                capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL)
             word = r.stdout.strip()
         except (OSError, subprocess.SubprocessError):

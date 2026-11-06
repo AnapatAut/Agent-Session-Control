@@ -9,8 +9,8 @@ import subprocess
 
 
 def _base():
-    sock = os.environ.get("ASC_TMUX_SOCKET")
-    return ["tmux", "-L", sock] if sock else ["tmux"]
+    sock = os.environ.get("ASC_TMUX_SOCKET")  # isolation: no mutant may change this line
+    return ["tmux", "-L", sock] if sock else ["tmux"]  # isolation: no mutant may change this line
 
 
 def run(*args, check=False, timeout=5):

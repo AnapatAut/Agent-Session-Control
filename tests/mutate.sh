@@ -10,18 +10,21 @@
 # baseline). Then each mutant: its case alone, stopped at its check (TEST_STOP_AT). A FAIL of
 # that check, twice: CAUGHT. Else the whole suite, "(full)": a FAIL of it twice: CAUGHT (full);
 # the check ok, every case done, the baseline's checks: SURVIVED (UNCLEAR if its case run had it
-# FAIL once); anything else UNCLEAR. A change not found exactly once, or that no longer parses:
-# BROKEN. A run counts only when trusted: under its time limit, no memory pressure from a second
-# before it to a second after (a sampler, each second: available memory under 15%, tasks stalled
-# on memory for 0.1 s or more (PSI "full", as asc/memory.py counts it), a kernel OOM kill, a line
-# in earlyoom's kill file if one is readable, a stall of more than 3 s between its samples), no
-# check name printed twice; an untrusted run makes the mutant UNCLEAR, never a verdict (each
-# mutant's runs are checked at the end, one wait for the sampler for all). Memory pressure, or
-# the sampler gone, and no more runs start: the rest are UNCLEAR.
+# FAIL once, or its case run was cut short: a setup stop, its check not reached); anything else
+# UNCLEAR. A change not found exactly once, that no longer parses, or whose module then fails at
+# import (tests/mutantlint.py): BROKEN. A run counts only when trusted: under its time limit, no
+# memory pressure from a second before it to a second after (a sampler, each second: available
+# memory under 15%, tasks stalled on memory for 0.1 s or more (PSI "full", as asc/memory.py
+# counts it), a kernel OOM kill, a line in earlyoom's kill file if one is readable, a stall of
+# more than 3 s between its samples, the clock set back, PSI or the OOM count readable at the
+# start and no longer), no check name printed twice; an untrusted run makes the mutant UNCLEAR,
+# never a verdict (each mutant's runs are checked at the end, one wait for the sampler for all).
+# Memory pressure, or the sampler gone, and no more runs start: the rest are UNCLEAR.
 # The run restarts itself with a clean environment, holds a lock (one mutant run at a time), works
-# in /tmp/asc-mut.<run id> (a copy of the tracked files; the suites' own folders in it too), and on
-# any exit, Ctrl-C too, ends every process it started (each carries the run id in its
-# environment) and removes that folder.
+# in /tmp/asc-mut.<run id> (a copy of the tracked files; the suites' own folders and tmux sockets
+# in it too: TMPDIR and TMUX_TMPDIR, so a tmux the suites start never reaches the user's server),
+# and on any exit, Ctrl-C too, ends every process it started (each carries the run id in its
+# environment) and removes that folder. Refused while a process of an earlier run still runs.
 # Exit 0 all CAUGHT, 1 not, 2 refused (bad settings, lists or baseline).
 set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -107,9 +110,9 @@ cleanup() {
 		[ -n "$(mine)" ] || break
 		sleep 0.5
 	done
-	ps=$(mine)
-	# shellcheck disable=SC2086
-	[ -z "$ps" ] || { kill -KILL $ps 2>/dev/null; sleep 0.5; }
+	# each checked again just before: a pid of this run that ended meanwhile may be another's now
+	for p in $(mine); do grep -qzxF -- "ASC_MUT_RUN=$RID" "/proc/$p/environ" 2>/dev/null && kill -KILL "$p" 2>/dev/null; done
+	sleep 0.5
 	[ "$LOCKED" = 1 ] && rm -rf "$W"
 	ps=$(mine)
 	[ -z "$ps" ] || echo "mutate: left running: $ps" >&2
@@ -124,6 +127,20 @@ LOCKDIR=/run/user/$(id -u)
 [ -d "$LOCKDIR" ] && [ -O "$LOCKDIR" ] || die "no runtime folder of yours at $LOCKDIR for the lock"
 exec 9>"$LOCKDIR/asc-mut.lock" || die "cannot open the lock"
 flock -n 9 || die "another mutant run is going"
+if [ "$PROC" = /proc ]; then
+	# an earlier run killed (SIGKILL: no cleanup): its jobs may run on, and its folder stays (a
+	# toy run of tests/mutate-test.sh, ASC_MUT_PROC, reaches nothing real: not counted)
+	old=$(for f in $(grep -lzE '^ASC_MUT_RUN=' /proc/[0-9]*/environ 2>/dev/null); do
+		e=$(tr '\0' '\n' 2>/dev/null < "$f") && [ -n "$e" ] || continue  # ended meanwhile
+		grep -qxF -- "ASC_MUT_RUN=$RID" <<<"$e" || grep -q '^ASC_MUT_PROC=' <<<"$e" || { f=${f#/proc/}; echo -n "${f%/environ} "; }
+	done)
+	[ -z "$old" ] || die "processes of an earlier mutant run still run (pids $old): end them first"
+	for d in /tmp/asc-mut.*; do  # a run's own pid and start time still alive: it still goes
+		r=${d#/tmp/asc-mut.}
+		[[ $r =~ ^([0-9]+)-([0-9]+)-[a-z0-9]{8}$ ]] && [ -O "$d" ] && [ "$(started "${BASH_REMATCH[1]}")" != "${BASH_REMATCH[2]}" ] \
+			&& echo "mutate: left by an earlier run (remove it): $d" >&2
+	done
+fi
 mkdir -m 700 "$W" || die "cannot make $W"
 LOCKED=1
 mkdir "$W/base" "$W/out" "$W/res" "$W/t" "$W/lim" || die "work folder"
@@ -145,12 +162,16 @@ sampler() {
 	while :; do
 		t=$(now)
 		[ $((t - p)) -le 3000 ] || echo "$p $t no sample for $(((t - p) / 1000)) s (the machine stalled)" >> "$W/pressure"
+		[ "$t" -ge "$p" ] || echo "$t $p the clock was set back" >> "$W/pressure"
 		read -r a m < <(awk '$1 == "MemAvailable:" {a = $2} $1 == "MemTotal:" {m = $2} END {print a + 0, m + 0}' "$PROC/meminfo" 2>/dev/null)
 		[ "${m:-0}" -gt 0 ] && [ $((a * 100)) -ge $((m * 15)) ] || echo "$t $t memory: ${a:-?} of ${m:-?} kB available" >> "$W/pressure"
 		f=$(psi)
+		[ -n "$f" ] || [ -z "$f0" ] || echo "$p $t PSI no longer readable" >> "$W/pressure"
 		[ -z "$f" ] || [ -z "$f0" ] || [ $((f - f0)) -lt 100000 ] || echo "$p $t tasks stalled on memory for $(((f - f0) / 1000)) ms (PSI full)" >> "$W/pressure"
-		f0=$f
-		o=$(oom); [ "$o" = "$o0" ] || { echo "$p $t a kernel OOM kill (oom_kill $o0 -> $o)" >> "$W/pressure"; o0=$o; }
+		[ -z "$f" ] || f0=$f
+		o=$(oom)
+		[ -n "$o" ] || [ -z "$o0" ] || echo "$p $t the OOM kill count no longer readable" >> "$W/pressure"
+		[ -z "$o0" ] || [ -z "$o" ] || [ "$o" = "$o0" ] || { echo "$p $t a kernel OOM kill (oom_kill $o0 -> $o)" >> "$W/pressure"; o0=$o; }
 		k=$(klines); [ "$k" = "$k0" ] || { echo "$p $t a line in earlyoom's kill file" >> "$W/pressure"; k0=$k; }
 		echo "$t" > "$W/beat.new" && mv -f "$W/beat.new" "$W/beat"
 		p=$t
@@ -159,6 +180,8 @@ sampler() {
 }
 earlyoom=none
 pgrep -x earlyoom >/dev/null && { [ -r "$KILLS" ] && earlyoom="earlyoom kills read from $KILLS" || earlyoom="earlyoom runs, its kills not seen"; }
+[ -n "$(psi)" ] || earlyoom+="; PSI not readable"
+[ -n "$(oom)" ] || earlyoom+="; the OOM kill count not readable"
 [ "$PROC" = /proc ] || earlyoom+=" (TEST: $PROC, least time limit $MIN s)"
 : > "$W/pressure"; now > "$W/beat"
 sampler 9>&- & SAMPLER=$!
@@ -211,8 +234,9 @@ run1() {
 	t0=$(now)
 	(
 		cd "$d" || exit 2
-		# the suite's own folders in the work folder: gone with it, even after a SIGKILL
-		export TMPDIR="$W/t"
+		# the suite's own folders and tmux sockets in the work folder: gone with it, even after a
+		# SIGKILL; and a tmux started without the suite's socket never reaches the user's server
+		export TMPDIR="$W/t" TMUX_TMPDIR="$W/t"
 		[ -z "$c" ] || export ASC_ONLY="$c"
 		[ -z "$stop" ] || export TEST_STOP_AT="$stop"
 		: > "$W/lim/$BASHPID"; echo "$BASHPID" > "$out.pid"  # this process: the time limit
@@ -278,7 +302,7 @@ rm -rf "$W/bl"
 # One mutant, in its own copy: writes "<verdict>\t<what>\t<t0:t1 of each run>" to $W/res/<i> (its
 # runs' trust is checked at the end).
 mutant() {
-	local i=$1 s=${MS[$1]} c=${MC[$1]} k=${MK[$1]} d=$W/m$1 o=$W/out/m$1 r rc t0 t1 why v n once='' wins=''
+	local i=$1 s=${MS[$1]} c=${MC[$1]} k=${MK[$1]} d=$W/m$1 o=$W/out/m$1 r rc t0 t1 why v n once='' cut='' wins=''
 	# no bytecode from the baseline's runs: each copy compiles its own code
 	cp -a "$B" "$d" && find "$d" -type d -name __pycache__ -prune -exec rm -rf {} + \
 		|| { printf 'UNCLEAR\tno copy\n' > "$W/res/$i"; return; }
@@ -296,7 +320,8 @@ mutant() {
 			case $r in
 			FAIL) once=1; [ "$n" = 1 ] || v="CAUGHT	$k ($c)" ;;
 			"other: printed twice"*) v="UNCLEAR	its case run ${r#other: }"; break ;;
-			*) break ;;
+			ok) break ;;
+			*) cut=${r#other: }; break ;;
 			esac
 		done
 	fi
@@ -311,6 +336,7 @@ mutant() {
 			FAIL) [ "$n" = 1 ] || v="CAUGHT	$k ($c, full)" ;;
 			same) if [ "$n" = 2 ]; then v="UNCLEAR	(full) flaky: $k failed once, then passed"
 				elif [ -n "$once" ]; then v="UNCLEAR	flaky: $k failed in its case once, then passed; the whole suite as its baseline"
+				elif [ -n "$cut" ]; then v="UNCLEAR	its case run cut short ($cut); the whole suite as its baseline"
 				else v="SURVIVED	$k ok, the whole suite as its baseline"; fi; break ;;
 			*) v="UNCLEAR	(full) ${r#other: }$([ "$n" = 2 ] && echo " (its first run had it FAIL: flaky)")"; break ;;
 			esac

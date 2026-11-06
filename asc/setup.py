@@ -51,7 +51,7 @@ CONTINUUM = re.compile(r"""^\s*set(?:-option)?\s+(?:-[A-Za-z]+\s+)*@continuum-(r
 
 
 def _sc(*args, timeout=SYSTEMCTL_S):
-    cmd = [os.environ.get("ASC_SYSTEMCTL", "systemctl"), "--user", *args]
+    cmd = [os.environ.get("ASC_SYSTEMCTL", "systemctl"), "--user", *args]  # isolation: no mutant may change this line
     try:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired:

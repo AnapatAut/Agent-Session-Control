@@ -13,13 +13,18 @@ plain file of the repo in the folders its runner copies (asc/ or bin/; for priva
 in its file (never "the first one"), a line given twice in a list, a change that no longer parses
 (Python by compile() in memory, bash by `bash -n`, JS by `node --check` if node is here: a mutant
 that breaks the syntax fails every check, so it would be a catch that tests nothing), and a check
-or case that is not the suite's. A file's text is taken as the runners take it, without its
-trailing newlines; a mutant writes it back with one.
+or case that is not the suite's. Refused too, as a mutant must never take a suite off its fakes
+onto the real machine: a change to a line marked "# isolation:" (where asctl picks the test's tmux
+socket, systemctl or claude), and a new text naming systemctl or "claude" more often than the old
+one (tmux needs no such rule: tests/mutate.sh gives the suites a tmux folder of its own); and a
+file that is not text with one newline at its end and no CR (a mutant writes the file back: it
+would change more than its own text). A file's text is taken without that newline.
   python3 -I tests/mutantlint.py <list or suite>...   prints each fault; exit 1 if any
   python3 -I tests/mutantlint.py --table <list>       (tests/mutate.sh) each mutant of a sound
       list, NUL-separated: its line number, case, check, name; on a fault exit 2, faults on stderr
   python3 -I tests/mutantlint.py --apply <list> <line number>   (tests/mutate.sh, in a copy of
-      the repo) make that change in this repo's file; exit 3 with why when it cannot (BROKEN)
+      the repo) make that change in this repo's file; exit 3 with why when it cannot, or when
+      its module (asc/*.py) then fails at import, a catch that tests nothing (BROKEN)
   python3 -I tests/mutantlint.py --self-test          each form it must refuse, refused
 """
 import os
@@ -37,6 +42,8 @@ NL = '⏎'
 ROOTS = {'privacy.sh': ('tools/', '.githooks/')}  # else asc/ and bin/: product code only
 SUITES = {'mutants-asc.txt': 'asc.sh', 'mutants-dash.txt': 'dash.sh'}
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ISOLATION = '# isolation:'
+REAL = ('systemctl', '"claude"')
 
 
 def lists(text):
@@ -127,13 +134,22 @@ def change(f, old, new, read, roots):
     body = None if f.startswith('/') or '..' in f.split('/') or not f.startswith(roots) else read(f)
     if body is None:
         return None, f'{f} is not a plain file of the repo under {" or ".join(roots)}'
-    body = body.rstrip('\n')
+    if '\r' in body or not body.endswith('\n') or body.endswith('\n\n'):
+        return None, f'{f} is not text with one newline at its end and no CR'
+    body = body[:-1]
     if not old:
         return None, 'an empty old text'
     if old == new:
         return None, 'the new text is the old one'
     if body.count(old) != 1:
         return None, f'the old text is in {f} {body.count(old)} times, not once'
+    i = body.index(old)
+    j = body.find('\n', i + len(old))
+    if ISOLATION in body[body.rfind('\n', 0, i) + 1:j if j >= 0 else len(body)]:
+        return None, f'it changes a line marked "{ISOLATION}" (it keeps the suites off the real machine)'
+    for w in REAL:
+        if new.count(w) > old.count(w):
+            return None, f'its new text names {w} (only the suites\' fakes may run)'
     why = parses(f, body + '\n')
     if why:
         return None, f'{f} does not parse even unchanged: {why}'
@@ -142,6 +158,22 @@ def change(f, old, new, read, roots):
     if why:
         return None, f'{f} no longer parses with it: {why}'
     return out, ''
+
+
+def imports(f):
+    """'' if module f (asc/<name>.py) of this repo imports, else why not; in a bare environment
+    with a home of its own (a mutated module never sees the real one)."""
+    if not (f.startswith('asc/') and f.endswith('.py')):
+        return ''
+    with tempfile.TemporaryDirectory() as h:
+        try:
+            r = subprocess.run([sys.executable, '-I', '-B', '-c', 'import importlib, sys; sys.path.insert(0, sys.argv[1]); '
+                                'importlib.import_module(sys.argv[2])', ROOT, f[:-3].replace('/', '.')],
+                               capture_output=True, text=True, timeout=30, cwd=h, stdin=subprocess.DEVNULL,
+                               env={'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'HOME': h, 'LANG': 'C.UTF-8'})
+        except subprocess.TimeoutExpired:
+            return 'its import did not end in 30 s'
+    return '' if r.returncode == 0 else 'it fails at import: ' + (r.stderr.strip().splitlines() or [f'exit {r.returncode}'])[-1]
 
 
 def check_list(path, text, read, roots=('',)):
@@ -209,7 +241,7 @@ def repo_file(root):
         p = os.path.join(root, f)
         if os.path.realpath(p) != os.path.join(os.path.realpath(root), os.path.normpath(f)) or not os.path.isfile(p):
             return None
-        with open(p, encoding='utf-8') as fh:
+        with open(p, encoding='utf-8', newline='') as fh:  # a CR kept, to be refused
             return fh.read()
     return read
 
@@ -242,7 +274,9 @@ def read_file(root, list_path, only=None):
     return check_file(list_path, data, repo_file(root), owners, only)
 
 
-FILES = {'a.py': 'x = 1\nif x:\n    y = 2\nif x:\n    y = 2\n', 'b.sh': 'echo hi\n'}
+FILES = {'a.py': 'x = 1\nif x:\n    y = 2\nif x:\n    y = 2\n', 'b.sh': 'echo hi\n',
+         'i.py': 'c = [e.get("S", "systemctl")]  # isolation: no mutant\nx = 1\ny = 2\n',
+         'cr.py': 'x = 1\r\n', 'nn.py': 'x = 1\n\n', 'nonl.py': 'x = 1'}
 OK = "run <<'MUTANTS'\n{}\nMUTANTS\n"
 REFUSED = [
     ('a.py %%% if x: %%% if False:', 'times, not once'),
@@ -257,9 +291,19 @@ REFUSED = [
     ('/a.py %%% x = 1 %%% x = 2', 'not a plain file'),
     ('a.py %%% x = 1⏎if x: %%% x = 1⏎if x', 'no longer parses'),
     ('b.sh %%% echo hi %%% if', 'no longer parses'),
+    ('i.py %%% "systemctl")] %%% "x")]', 'a line marked "# isolation:"'),
+    ('i.py %%% x = 1⏎y %%% x = 1⏎y', 'the new text is the old one'),
+    ('i.py %%% ⏎x = 1 %%% ⏎x = 2', 'a line marked "# isolation:"'),
+    ('i.py %%% x = 1 %%% x = ["systemctl"]', 'names systemctl'),
+    ('i.py %%% x = 1 %%% x = "claude"', 'names "claude"'),
+    ('cr.py %%% x = 1 %%% x = 2', 'no CR'),
+    ('nn.py %%% x = 1 %%% x = 2', 'one newline at its end'),
+    ('nonl.py %%% x = 1 %%% x = 2', 'one newline at its end'),
 ]
 PASSED = [
     'a.py %%% x = 1 %%% x = 2',
+    'i.py %%% x = 1⏎y = 2 %%% x = 1⏎y = 3',
+    'i.py %%% y = 2 %%% y = e["tmux"]',
     'a.py %%% x = 1⏎if x: %%% x = 1⏎if False:',
     'a.py %%% 2⏎if x:⏎    y = 2 %%% 2⏎if x:⏎    y = 3',
     'b.sh %%% echo hi %%% ',
@@ -367,6 +411,10 @@ def main(args):
             return 3
         with open(os.path.join(ROOT, f), 'w', encoding='utf-8') as fh:
             fh.write(out)
+        why = imports(f)
+        if why:
+            print(why)
+            return 3
         return 0
     faults, n = [], 0
     for path in args:

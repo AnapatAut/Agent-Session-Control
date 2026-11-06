@@ -146,7 +146,7 @@ def pane_free(e, pane, pane_pid):
 
 
 def claude_argv(e, resurrect=False):
-    a = [os.environ.get("ASC_CLAUDE", "claude")]
+    a = [os.environ.get("ASC_CLAUDE", "claude")]  # isolation: no mutant may change this line
     a += ["--resume", e["session_id"]] if e.get("started") else ["--session-id", e["session_id"]]
     a += ["--name", e["tmux"], "--permission-mode", start_mode(e)]
     if e.get("rc") or (resurrect and e.get("resurrect")):
@@ -417,7 +417,7 @@ def ensure_server():
     pid = tmuxctl.server_pid()
     if pid is not None:
         return pid
-    cmd = [os.environ.get("ASC_SYSTEMCTL", "systemctl"), "--user", "start", "asctl-tmux.service"]
+    cmd = [os.environ.get("ASC_SYSTEMCTL", "systemctl"), "--user", "start", "asctl-tmux.service"]  # isolation: no mutant may change this line
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=SYSTEMCTL_S, stdin=subprocess.DEVNULL)
         why = (r.stderr or r.stdout).strip() if r.returncode != 0 else ""
@@ -659,7 +659,7 @@ def end_outside(e, s, wait_s=15):
     w = live.where(now)
     if w["how"] == "background" and now["job"]:
         try:
-            r = subprocess.run([os.environ.get("ASC_CLAUDE", "claude"), "stop", now["job"]], capture_output=True,
+            r = subprocess.run([os.environ.get("ASC_CLAUDE", "claude"), "stop", now["job"]], capture_output=True,  # isolation: no mutant may change this line
                                text=True, timeout=30, stdin=subprocess.DEVNULL)
         except OSError as x:  # no claude to run: nothing done
             raise RegistryError(f"claude stop {now['job']}: {x}")
