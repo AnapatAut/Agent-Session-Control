@@ -144,6 +144,12 @@ def selected(scr, label):
     return "❯" in l and l.split("❯", 1)[1].strip().lstrip("0123456789. ").startswith(label)
 
 
+def marked(scr):
+    """The line near the bottom that carries the selection mark ❯ (the dialog's, below any quote of
+    it in the transcript), or None."""
+    return next((l for l in reversed(bottom(scr)) if "❯" in l), None)
+
+
 def session(pid):
     return next((s for s in live.read_sessions() if s["pid"] == pid and s["live"]), None)
 
@@ -316,8 +322,13 @@ def switch(s, on, title, confirm=10):
             scr = steady(pane)
             if not dialog_open(pid, scr) or selected(scr, DISCONNECT):
                 break
+            was = marked(scr)
             tmuxctl.send_pane(pane, "Up")
-            time.sleep(0.3)
+            # a slow claude redraws late: the next look only once the mark has moved, never one Up
+            # more from a screen that does not show the last one yet (Enter could take another)
+            if not wait_for(lambda: marked(steady(pane)) != was, 5):
+                tmuxctl.send_pane(pane, "Escape")
+                return "its dialog did not show the selection move; closed it"
         scr = steady(pane)
         if not dialog_open(pid, scr):
             return "its dialog closed before Disconnect was chosen; check the session"

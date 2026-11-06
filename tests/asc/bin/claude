@@ -23,6 +23,7 @@
 # stays open under the box after a space too. $HOME/fake-slow-dialog: the dialog opens after
 # 1.5 s, and the transcript quotes its lines. $HOME/fake-mangle: an x shows before typed text.
 # $HOME/fake-two-lines: the prompt has a second line (text after an empty first line).
+# $HOME/fake-slow-keys: in the dialog, an arrow key redrawn 0.7 s late (a busy host).
 # $HOME/fake-echo-stall, its text "AT SECONDS" or "AT hold": once AT characters are typed, the
 # last of them and any after are not drawn for that long (the flag is removed as it starts), or
 # while the flag is there (at most 30 s): a busy host. AT 1: nothing drawn yet.
@@ -185,6 +186,7 @@ while :; do
 		read -rsn2 -t 0.05 k2
 		if [ $dialog = 1 ]; then
 			case "$k2" in "[A") sel=$(((sel + 2) % 3)) ;; "[B") sel=$(((sel + 1) % 3)) ;; "") dialog=0 ;; esac
+			[ -n "$k2" ] && [ -e "$HOME/fake-slow-keys" ] && sleep 0.7
 		elif [ "$k2" = "[A" ] && [ -z "$buf" ]; then buf=$last
 		fi
 	elif [ -z "$k" ]; then

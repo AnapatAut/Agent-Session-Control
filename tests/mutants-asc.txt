@@ -183,6 +183,7 @@ asc/rclive.py %%% t is not None and t != typed and %%% t is not None and %%% set
 asc/rclive.py %%% and t != typed and typed.startswith(t) %%% and t != typed %%% settled: all of what was typed, or other text, is taken once it stops changing %%% rc_slow
 asc/rclive.py %%% *["BSpace"] * len(cmd)) %%% *["BSpace"] * len(t)) %%% take back, a slow claude: the whole command removed once its prompt stopped changing %%% rc_slow
 asc/rclive.py %%% else settled(pane) %%% else prompt_text(screen(pane)) %%% take back, a slow claude: the whole command removed once its prompt stopped changing %%% rc_slow
+asc/rclive.py %%%             if not wait_for(lambda: marked(steady(pane)) != was, 5):⏎                tmuxctl.send_pane(pane, "Escape")⏎                return "its dialog did not show the selection move; closed it"⏎ %%%             time.sleep(0.3)⏎ %%% rc off, a dialog redrawn late: Disconnect chosen, one Up at a time %%% rc_slow
 asc/rclive.py %%% if t is not None and cmd.startswith(t): %%% if t and cmd.startswith(t): %%% take back, nothing drawn yet: removed as it shows %%% rc_slow
 asc/rclive.py %%%     why = typed_in(s, since)⏎    if why:⏎        return why⏎ %%%     why = None⏎ %%% rc on: not when someone at its tmux session typed just now %%% rc_slow
 asc/rclive.py %%%     if any(a >= since for a in acts): %%%     if False: %%% rc on: not when someone at its tmux session typed just now %%% rc_slow

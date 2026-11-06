@@ -753,7 +753,8 @@ exec {kfd}>"$T/slow-keys"  # the client's keyboard, held by the suite itself (no
 attached() { [ "$(tm list-clients -t "=slow-$ids" -F x | wc -l)" = 1 ]; }
 poll 5 attached || stop "a client attached to the slow claude's session"
 printf 'x\177' >&"$kfd"; poll 5 slow_empty || stop "the client's keys reached the slow claude"
-out=$(asctl rc "$ids" on --title "Slow chat"); seen 'not changed now: someone typed in its tmux session just now' <<<"$out" && [ "$(lines)" = "$n0" ] && slow_empty \
+# its message ends there: nothing typed and taken back (asctl looks before typing, not only after)
+out=$(asctl rc "$ids" on --title "Slow chat"); seen -x '.*; not changed now: someone typed in its tmux session just now' <<<"$out" && [ "$(lines)" = "$n0" ] && slow_empty \
 	&& ok "rc on: not when someone at its tmux session typed just now" || bad "rc on: not when someone at its tmux session typed just now" "client typed: $out / $(slow_prompt)"
 exec {kfd}>&-; kill "$ks" 2>/dev/null; wait "$ks" 2>/dev/null; poll_gone 5 attached || stop "the client gone"; rm -f "$T/slow-keys"
 # someone typed while asctl typed (tmux reports a client key after the first look): no Enter,
@@ -768,6 +769,13 @@ sleep 0.5
 	&& [ "$(slow_prompt)" = "/remote-control Slow chat" ] && [ "$(lines)" = "$n0" ] \
 	&& ok "someone typed while asctl typed: no Enter, its prompt left as it is" || bad "someone typed while asctl typed: no Enter, its prompt left as it is" "typed meanwhile: $out / $(slow_prompt)"
 slow_clear
+# its dialog redrawn late after each arrow key (a busy host): each Up seen to take effect before
+# the next, so Enter takes Disconnect
+asctl rc "$ids" on --title "Slow chat" | seen 'live now' || stop "rc on in the slow claude, for its dialog"
+touch "$HOME/fake-slow-keys"
+out=$(asctl rc "$ids" off); rm -f "$HOME/fake-slow-keys"
+seen 'off now' <<<"$out" && [ -z "$(slow_bridge)" ] \
+	&& ok "rc off, a dialog redrawn late: Disconnect chosen, one Up at a time" || bad "rc off, a dialog redrawn late: Disconnect chosen, one Up at a time" "slow dialog: $out / $(tm capture-pane -p -t "$spane" | tail -6 | tr "\n" "|")"
 asctl off "$ids" --force >/dev/null; asctl forget "$ids" >/dev/null
 }
 
