@@ -11,14 +11,15 @@
 # that check, twice: CAUGHT. Else the whole suite, "(full)": a FAIL of it twice: CAUGHT (full);
 # the check ok, every case done, the baseline's checks: SURVIVED (UNCLEAR if its case run had it
 # FAIL once, or its case run was cut short: a setup stop, its check not reached); anything else
-# UNCLEAR. A change not found exactly once, that no longer parses, or whose module then fails at
-# import (tests/mutantlint.py): BROKEN. A run counts only when trusted: under its time limit, no
-# memory pressure from a second before it to a second after (a sampler, each second: available
-# memory under 15%, tasks stalled on memory for 0.1 s or more (PSI "full", as asc/memory.py
-# counts it), a kernel OOM kill, a line in earlyoom's kill file if one is readable, a stall of
-# more than 3 s between its samples, the clock set back, PSI or the OOM count readable at the
-# start and no longer), no check name printed twice; an untrusted run makes the mutant UNCLEAR,
-# never a verdict (each mutant's runs are checked at the end, one wait for the sampler for all).
+# UNCLEAR; each verdict is followed by its runs' times. A change not found exactly once, that no
+# longer parses, or whose module then fails at import (tests/mutantlint.py): BROKEN. A run counts
+# only when trusted: under its time limit, no memory pressure from a second before it to a second
+# after (a sampler, each second: available memory under 15%, tasks stalled on memory for 0.1 s or
+# more (PSI "full", as asc/memory.py counts it), a kernel OOM kill, a line in earlyoom's kill file
+# if one is readable, a stall of more than 3 s between its samples, the clock set back, PSI or the
+# OOM count readable at the start and no longer), no check name printed twice; an untrusted run
+# makes the mutant UNCLEAR, never a verdict (each mutant's runs are checked at the end, one wait
+# for the sampler for all).
 # Memory pressure, or the sampler gone, and no more runs start: the rest are UNCLEAR.
 # The run restarts itself with a clean environment, holds a lock (one mutant run at a time), works
 # in /tmp/asc-mut.<run id> (a copy of the tracked files; the suites' own folders and tmux sockets
@@ -67,6 +68,8 @@ W=/tmp/asc-mut.$RID SAMPLER='' LOCKED=0
 START=$(now)
 # took <since>: the time from then, as "12m05s"
 took() { local s=$((($(now) - $1) / 1000)); printf '%dm%02ds' $((s / 60)) $((s % 60)); }
+# secs <ms>: as "8.1 s"
+secs() { printf '%d.%d s' $(($1 / 1000)) $(($1 % 1000 / 100)); }
 
 # Every process of this run but this shell and the one asking: they carry the run id in their
 # environment (one grep over every process's; others' are unreadable and skipped).
@@ -387,6 +390,10 @@ for ((i = 0; i < N; i++)); do
 	else
 		echo "  FAIL  ${MN[$i]}"; echo "        $v: $what"
 	fi
+	# each run's time, in order (its case, then the whole suite if that ran): where the time goes
+	spent=''
+	for w in $wins; do [[ ${w%:*} =~ ^[0-9]+$ && ${w#*:} =~ ^[0-9]+$ ]] && spent+="${spent:+, }$(secs $((${w#*:} - ${w%:*})))"; done
+	[ -z "$spent" ] || echo "        runs: $spent"
 done
 [ "$FULL" = 1 ] && full="each on the whole suite" || full="$full only by the whole suite"
 echo "mutate: $N mutants: ${COUNT[CAUGHT]} caught ($full), ${COUNT[SURVIVED]} survived, ${COUNT[UNCLEAR]} unclear, ${COUNT[BROKEN]} broken; $(took "$START") in all"

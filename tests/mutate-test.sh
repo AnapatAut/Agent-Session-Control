@@ -144,8 +144,8 @@ judge() {
 }
 
 toy caught; run caught
-result "a mutant its check fails in its case, twice: CAUGHT, exit 0" 0 "caught by: a is 1 (one)" "caught by: b is 2 here (only)" \
-	"2 mutants: 2 caught (0 only by the whole suite)" "baseline asc: 3 checks, all ok"
+result "a mutant its check fails in its case, twice: CAUGHT, exit 0, its two runs' times" 0 "caught by: a is 1 (one)" "caught by: b is 2 here (only)" \
+	"2 mutants: 2 caught (0 only by the whole suite)" "baseline asc: 3 checks, all ok" "        runs: " " s, "
 toy caughtfull; run caughtfull MUTANTS_FULL=1
 result "MUTANTS_FULL=1: every mutant on its whole suite" 0 "caught by: a is 1 (one, full)" "caught by: b is 2 here (only, full)"
 

@@ -72,7 +72,9 @@ pressure from a second before it to
 a second after (available memory under 15%, tasks stalled on memory 0.1 s or more (PSI "full"),
 a kernel OOM kill, a line in earlyoom's kill file if it can be read, the sampler stalled, the
 clock set back, PSI or the OOM count no longer readable), never gives a verdict: UNCLEAR; and
-once there is pressure no more mutants start (the rest UNCLEAR). The suites' own folders and
+once there is pressure no more mutants start (the rest UNCLEAR). Each mutant's verdict is followed
+by its runs' times (`runs: 8.1 s, 8.3 s`; its case's runs, then the whole suite's), to see
+where the time goes. The suites' own folders and
 tmux sockets (`TMPDIR`, `TMUX_TMPDIR`) are in its folder. It holds a lock (one mutant run at a
 time), is refused while a process of an earlier run still runs (one killed with no cleanup), and
 on any exit ends every process it started and removes its folder. Do not edit a test script while it runs: bash reads a script
