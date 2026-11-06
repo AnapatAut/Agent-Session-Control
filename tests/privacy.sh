@@ -2,13 +2,14 @@
 # Self-test of tools/privacy-check.sh and the hooks in .githooks, in throwaway git repos.
 # Each leak below is put together at run time, so this file does not hold one itself.
 #   tests/privacy.sh          prints ok/FAIL per check; exit 0 = all passed. Seconds, no network.
+#   PRIVACY_STOP_AT_FAIL=1 tests/privacy.sh   exits 1 right after the first FAIL (a mutant's run)
 set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 T=$(mktemp -d) || exit 2
 trap 'rm -rf "$T"' EXIT
 pass=0 fail=0
 ok()  { echo "  ok    $1"; pass=$((pass + 1)); }
-bad() { echo "  FAIL  $1"; [ -z "${2-}" ] || printf '        %s\n' "${2//$'\n'/$'\n'        }"; fail=$((fail + 1)); }  # $2: details, indented
+bad() { echo "  FAIL  $1"; [ -z "${2-}" ] || printf '        %s\n' "${2//$'\n'/$'\n'        }"; fail=$((fail + 1)); [ "${PRIVACY_STOP_AT_FAIL-}" != 1 ] || exit 1; }  # $2: details, indented
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=1+t@users.noreply.github.com
 export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=1+t@users.noreply.github.com
@@ -222,8 +223,9 @@ newrepo; printf '(unclosed\n' >> "$T/r/tools/privacy-rules"; printf 'x\n' > "$T/
 chk --staged; [ $? = 2 ] && ok "a broken rule stops the check (exit 2), never passes" || bad "a broken rule lets the check pass"
 
 # PRIVACY_MUTANTS=1: break the checker or a hook one way at a time, in a copy; each must make
-# this test fail. About 7 min (38 mutants). As in tests/mutate.sh: the old text must be found
-# exactly once in its file, a ⏎ stands for a newline, and a line given twice fails.
+# this test fail (its run stops at its first FAIL). About 7 min (38 mutants). As in
+# tests/mutate.sh: the old text must be found exactly once in its file, a ⏎ stands for a newline,
+# and a line given twice fails.
 if [ "${PRIVACY_MUTANTS:-}" = 1 ]; then
 	echo "== mutants"
 	declare -A had=()
@@ -241,7 +243,7 @@ if [ "${PRIVACY_MUTANTS:-}" = 1 ]; then
 		[ -z "$old" ] || { left=${body//"$old"}; n=$(( (${#body} - ${#left}) / ${#old} )); }
 		[ "$n" = 1 ] || { bad "$name" "does not apply: the old text is in $f $n times, not once"; rm -rf "$d"; continue; }
 		printf '%s\n' "${body/"$old"/"$new"}" > "$d/$f"
-		out=$(cd "$d" && git init -q -b main && PRIVACY_MUTANTS='' bash tests/privacy.sh 2>&1)
+		out=$(cd "$d" && git init -q -b main && PRIVACY_MUTANTS='' PRIVACY_STOP_AT_FAIL=1 bash tests/privacy.sh 2>&1)
 		grep -q '^  FAIL  ' <<<"$out" && ok "$name" || bad "$name" "missed: the suite passed with it"
 		rm -rf "$d"
 	done <<'MUTANTS'
