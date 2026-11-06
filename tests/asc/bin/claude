@@ -24,6 +24,8 @@
 # 1.5 s, and the transcript quotes its lines. $HOME/fake-mangle: an x shows before typed text.
 # $HOME/fake-two-lines: the prompt has a second line (text after an empty first line).
 # $HOME/fake-slow-keys: in the dialog, an arrow key redrawn 0.7 s late (a busy host).
+# ASC_TRACE set: each key read, each frame drawn and each status change, with its time in ms,
+# appended to $HOME/fake-trace.log (tests/asc.sh prints its end on a FAIL).
 # $HOME/fake-echo-stall, its text "AT SECONDS" or "AT hold": once AT characters are typed, the
 # last of them and any after are not drawn for that long (the flag is removed as it starts), or
 # while the flag is there (at most 30 s): a busy host. AT 1: nothing drawn yet.
@@ -104,7 +106,7 @@ write() {
 	if [ -e "$HOME/fake-task" ] && [ -z "$task" ]; then
 		bash -c "source $HOME/.claude/shell-snapshots/fake.sh 2>/dev/null || true && sleep 120 && pwd >/dev/null" & task=$!
 	elif [ ! -e "$HOME/fake-task" ] && [ -n "$task" ]; then kill "$task" 2>/dev/null; task=""; fi
-	[ "$status" != "$was" ] && { was=$status; at=$(now_ms); }  # statusUpdatedAt: when it changed
+	[ "$status" != "$was" ] && { was=$status; at=$(now_ms); trace "status $status"; }  # statusUpdatedAt: when it changed
 	bridge+=',"statusUpdatedAt":'$at; [ $status = waiting ] && bridge+=',"waitingFor":"dialog open"'
 	printf '{"pid":%s,"sessionId":"%s","cwd":"%s","kind":"interactive","name":"%s","status":"%s","procStart":"%s"%s}\n' \
 		$$ "$sid" "$cwd" "$name" "$status" "$st" "$bridge" > "$f.tmp" && mv -f "$f.tmp" "$f"
@@ -156,6 +158,7 @@ stall() {
 	else rm -f "$HOME/fake-echo-stall"; sleep "$n"; fi
 }
 now_ms() { local t=${EPOCHREALTIME/./}; echo $((t / 1000)); }
+trace() { [ -z "${ASC_TRACE-}" ] || printf '%s %s %s\n' "$(now_ms)" "$$" "$*" >> "$HOME/fake-trace.log"; }
 menu_at=0
 said=""
 enter() {
@@ -177,11 +180,15 @@ draw
 while :; do
 	write
 	if [ -e "$HOME/fake-hog" ]; then rm -f "$HOME/fake-hog"; hog=$(head -c 400000000 /dev/zero | tr '\0' x); fi
-	IFS= read -rsn1 -t 0.3 k; r=$?
+	IFS= read -rsN1 -t 0.3 k; r=$?
 	if [ $pend != 0 ] && [ "$(now_ms)" -ge $pend ]; then pend=0; dialog=1; sel=2; draw; fi
 	if [ $menu_at != 0 ] && [ "$(now_ms)" -ge $menu_at ]; then menu_at=0; draw; fi
-	[ $r -gt 128 ] && continue        # timeout: write the session file again
-	[ $r != 0 ] && [ -z "$k" ] && { sleep 0.3; continue; }  # no terminal input
+	# nothing read: a timeout (write the session file again) or no terminal input. A key is kept,
+	# even one read as the read timed out (in k then); read -N: Enter is a character of its own,
+	# never an empty read that a timeout could be taken for
+	if [ -z "$k" ]; then [ $r -gt 128 ] || sleep 0.3; continue; fi
+	case $k in $'\r' | $'\n') k='' ;; esac  # Enter
+	trace "key $(printf %q "$k")"
 	if [ "$k" = $'\e' ]; then
 		read -rsn2 -t 0.05 k2
 		if [ $dialog = 1 ]; then
@@ -205,4 +212,5 @@ while :; do
 	fi
 	[ -e "$HOME/fake-menu-slow" ] && [ $dialog = 0 ] && [ -n "$k" ] && menu_at=$(($(now_ms) + 1000))
 	draw
+	trace "drawn dialog=$dialog sel=$sel buf=$(printf %q "$buf")"
 done

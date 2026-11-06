@@ -14,6 +14,13 @@ export HOME="$T/home" XDG_STATE_HOME="" XDG_CONFIG_HOME="" SHELL=/bin/bash
 unset TMUX
 mkdir -p "$HOME" "$T/fakebash"
 cp "$(command -v bash)" "$T/fakebash/claude"
+if [ -n "${ASC_TRACE-}" ]; then  # each tmux send-keys (asctl's and the suite's) in the fake claudes' trace
+	mkdir "$T/tracebin"
+	printf '%s\n' '#!/usr/bin/env bash' 't0=${EPOCHREALTIME/./}' "$(printf '%q' "$(command -v tmux)")"' "$@"; r=$?' \
+		'case " $* " in *" send-keys "*) printf "%s tmux %s -> %s in %s ms\n" $((t0 / 1000)) "$*" $r $(((${EPOCHREALTIME/./} - t0) / 1000)) >> "$HOME/fake-trace.log" ;; esac' \
+		'exit $r' > "$T/tracebin/tmux"
+	chmod +x "$T/tracebin/tmux"; export PATH="$T/tracebin:$PATH"
+fi
 export FAKE_BASH="$T/fakebash/claude"
 # Memory as asctl sees it (asc/memory.py): plenty, unless a test says otherwise.
 mem() { printf 'MemTotal: %s kB\nMemAvailable: %s kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n' "$1" "$2" > "$T/meminfo"; }
@@ -49,13 +56,15 @@ pass=0 fail=0
 # tests/lint.sh). DETAILS, what was seen, go on the lines after the FAIL, each indented.
 # `skip NAME WHY` for a check that cannot run here.
 ok()   { echo "  ok    $1"; pass=$((pass + 1)); }
-bad()  { echo "  FAIL  $1"; [ -z "${2-}" ] || printf '        %s\n' "${2//$'\n'/$'\n'        }"; fail=$((fail + 1)); [ "${TEST_STOP_AT-}" != "$1" ] || exit 1; }
+bad()  { echo "  FAIL  $1"; [ -z "${2-}" ] || printf '        %s\n' "${2//$'\n'/$'\n'        }"; trace_end; fail=$((fail + 1)); [ "${TEST_STOP_AT-}" != "$1" ] || exit 1; }
+# ASC_TRACE set: the end of the fake claudes' trace (tests/asc/bin/claude), after a FAIL or stop
+trace_end() { [ -z "${ASC_TRACE-}" ] || [ ! -f "$HOME/fake-trace.log" ] || { echo "        trace, now $(date +%s%3N):"; tail -30 "$HOME/fake-trace.log" | sed 's/^/          /'; }; }
 skip() { echo "  skip  $1"; [ -z "${2-}" ] || printf '        %s\n' "${2//$'\n'/$'\n'        }"; }
 # A setup step that did not come (what the test itself started: a claude in a session it made, a
 # process of its own): one FAIL, "setup: NAME" (NAME fixed, as a check's), and the suite ends there,
 # as each check after it would test nothing. Its exit must end the suite: never inside ( ), $( ),
 # <( ), a pipeline or an & job.
-stop() { echo "  FAIL  setup: $1"; [ -z "${2-}" ] || printf '        %s\n' "${2//$'\n'/$'\n'        }"; fail=$((fail + 1)); echo "asc: $pass passed, $fail failed (stopped at a setup step)"; exit 1; }
+stop() { echo "  FAIL  setup: $1"; [ -z "${2-}" ] || printf '        %s\n' "${2//$'\n'/$'\n'        }"; trace_end; fail=$((fail + 1)); echo "asc: $pass passed, $fail failed (stopped at a setup step)"; exit 1; }
 # Waits: CMD... (run in this shell, so a function may set variables) every 0.1 s until it succeeds
 # (poll) or fails (poll_gone), at most LIMIT whole seconds of pauses, then once more; non-zero at
 # the limit. Each wait's status must be used: a check, `|| stop`, or `|| return 1` in a helper
@@ -713,7 +722,10 @@ spane=$(tm list-panes -t "=slow-$ids:" -F '#{pane_id}')
 slow_bridge() { jq -r 'select(.name == "slow-'"$ids"'") | .bridgeSessionId // ""' "$HOME"/.claude/sessions/*.json; }
 slow_prompt() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import rclive; print(rclive.prompt_text(rclive.screen(sys.argv[2])))' "$REPO" "$spane"; }
 slow_empty() { [ -z "$(slow_prompt)" ]; }
-slow_clear() { tm send-keys -t "$spane" -N 40 BSpace; poll 10 slow_empty || stop "the slow claude's prompt emptied"; }
+# its prompt emptied and its screen still for 0.5 s: every BSpace drawn (an empty prompt alone can
+# come while the rest still redraw, and asctl then sees a half-drawn screen)
+slow_clear() { tm send-keys -t "$spane" -N 40 BSpace; poll 10 slow_quiet || stop "the slow claude's prompt emptied"; }
+slow_quiet() { local a; a=$(tm capture-pane -p -t "$spane"); sleep 0.5; [ "$a" = "$(tm capture-pane -p -t "$spane")" ] && slow_empty; }
 lines() { grep -c 'line: ' "$HOME/claude-args.log"; }
 # take_back of the command, called at once; the stall flag removed 4.5 s after it starts (when
 # take_back has waited for the prompt to stop changing, sent its BSpaces and waited 2 s for them)
@@ -758,7 +770,7 @@ out=$(take_back_held); sleep 2  # it shows once the flag is gone, then its BSpac
 	&& ok "take back, nothing drawn yet: removed as it shows" || bad "take back, nothing drawn yet: removed as it shows" "none drawn: $out / $(slow_prompt)"
 rm -f "$HOME/fake-echo-stall"; slow_clear
 # someone at its tmux session (a client attached, a key from it just now): nothing typed
-asctl rc "$ids" off | seen 'off now\|not live already' || stop "rc off in the slow claude"
+out=$(asctl rc "$ids" off); seen 'off now\|not live already' <<<"$out" || stop "rc off in the slow claude" "$out / $(tm capture-pane -p -t "$spane" | tail -8 | tr "\n" "|")"
 n0=$(lines)  # that off typed one
 mkfifo "$T/slow-keys"
 TERM=xterm script -qfc "tmux -L $ASC_TMUX_SOCKET -f /dev/null attach -t =slow-$ids" /dev/null < "$T/slow-keys" >/dev/null 2>&1 & ks=$!
@@ -784,7 +796,7 @@ sleep 0.5
 slow_clear
 # its dialog redrawn late after each arrow key (a busy host): each Up seen to take effect before
 # the next, so Enter takes Disconnect
-asctl rc "$ids" on --title "Slow chat" | seen 'live now' || stop "rc on in the slow claude, for its dialog"
+out=$(asctl rc "$ids" on --title "Slow chat"); seen 'live now' <<<"$out" || stop "rc on in the slow claude, for its dialog" "$out"
 touch "$HOME/fake-slow-keys"
 out=$(asctl rc "$ids" off); rm -f "$HOME/fake-slow-keys"
 seen 'off now' <<<"$out" && [ -z "$(slow_bridge)" ] \
