@@ -289,6 +289,18 @@ cp "$HOME/.claude/sessions/$p5.json" "$HOME/.claude/sessions/1.json"
 asctl live | grep -c "^ *$p5 " | grep -qx 1 && ok "a copied session file (wrong file name) is not a second live claude" || bad "a copied session file (wrong file name) is not a second live claude" "a copied session file counted"
 rm -f "$HOME/.claude/sessions/1.json"
 tm kill-session -t =userwork
+}
+
+# shellcheck disable=SC2329  # helpers run only through poll
+case_guards() {
+# Setup: as main has it at this point, a favorite of a past conversation (SID2, id2), off, named
+# chat, in a trusted folder.
+server_up
+SID2=22222222-3333-4444-8555-000000000035
+mkdir -p "$HOME/.claude/projects/-x"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SID2" > "$HOME/.claude/projects/-x/$SID2.jsonl"
+asctl fav "$SID2" --name chat >/dev/null || stop "a favorite for the guards"
+id2=$(jq -r --arg s "$SID2" '.entries[] | select(.session_id == $s) | .id4' "$REG")
 echo "== busy: a second claude in the session"
 tm new-session -d -s duo -c "$W" -- "$ASC_CLAUDE" --session-id 77777777-8888-4999-8aaa-bbbbbbbbbbbb
 p6=$(claude_in duo) || stop "a claude in duo"
@@ -406,6 +418,43 @@ asctl note "$id2" -- "-starts with a dash" >/dev/null && ok "a note may start wi
 }
 
 case_rc_now() {
+echo "== rc now: the menu and the input box on screens drawn by hand (asc/rclive.py)"
+# The menu by its shape and mark, on screens drawn by hand (each its own check).
+mt=$(python3 -I - "$REPO" <<'EOF'
+import sys; sys.path.insert(0, sys.argv[1]); from asc import rclive as r
+R = "─" * 40
+def scr(*rows): return "\n".join(rows) + "\n"
+box = [R, "❯\xa0/remote-control", R, "  [ status ]"]
+menu = "  \x1b[38;5;153m❯ /\x1b[1mremote-control\x1b[0m      Disconnect Remote Control"
+before = scr("hello", "  notice", R, "❯\xa0", R, "  [ status ]")
+print("found" if r.offers_cmd(scr("hello", menu, *box), before) else "-")
+print("history" if r.takes(scr("❯ /remote-control", "  notice", *box), before) is None else "-")
+print("two" if r.takes(scr(menu, menu.replace("Disconnect", "Quoted"), *box), before) == () else "-")
+print("indented" if r.takes(scr("hello", "  notice", R, "  ❯ /remote-control", R, "  [ status ]"), before) is None else "-")
+print("path" if r.entries(scr("hello", "  /srv/x/proj  main", *box), before) == [] else "-")
+print("link" if r.plain("at \x1b]8;id=a;https://x.example/\x1b\\https://x.example/\x1b]8;;\x1b\\ now") == "at https://x.example/ now" else "-")
+EOF
+)
+grep -qx found <<<"$mt" && ok "menu detection: the entry marked ❯ above the box is the one Enter takes" || bad "menu detection: the entry marked ❯ above the box is the one Enter takes"
+grep -qx history <<<"$mt" && ok "menu detection: a prompt in the transcript (not indented) is not a menu entry" || bad "menu detection: a prompt in the transcript (not indented) is not a menu entry"
+grep -qx two <<<"$mt" && ok "menu detection: two entries marked (one a quote in claude's answer): asctl cannot tell" || bad "menu detection: two entries marked (one a quote in claude's answer): asctl cannot tell"
+grep -qx indented <<<"$mt" && ok "menu detection: claude's own input line, even indented, is not a menu entry" || bad "menu detection: claude's own input line, even indented, is not a menu entry"
+grep -qx path <<<"$mt" && ok "menu detection: a plugin's line starting with a path is not a menu entry" || bad "menu detection: a plugin's line starting with a path is not a menu entry"
+grep -qx link <<<"$mt" && ok "menu detection: a link (OSC 8) is read as its text" || bad "menu detection: a link (OSC 8) is read as its text"
+# A real 2.1.318 screen (tests/asc/screens: a capture's last rows, names and links rewritten): the
+# menu above the box, a status line under it, a plugin's band, prompts in the transcript.
+rs=$(python3 -I - "$REPO" <<'EOF'
+import os, sys; sys.path.insert(0, sys.argv[1]); from asc import rclive as r
+d = os.path.join(sys.argv[1], "tests", "asc", "screens")
+b, m = (open(os.path.join(d, f"2.1.318-{n}.txt"), encoding="utf-8").read() for n in ("before", "menu"))
+print("box" if r.prompt_text(b) == "" and r.prompt_text(m) == "/remote-control" else "-")
+print("offers" if r.offers_cmd(m, b) else "-")
+print("seen" if r.no_menu(b, b) is None and r.no_menu(m, b) else "-")
+EOF
+)
+grep -qx box <<<"$rs" && ok "a real 2.1.318 screen: its input box found, empty before, the command after" || bad "a real 2.1.318 screen: its input box found, empty before, the command after" "2.1.318 screen: the input box"
+grep -qx offers <<<"$rs" && ok "a real 2.1.318 screen: the menu above the box takes /remote-control on Enter" || bad "a real 2.1.318 screen: the menu above the box takes /remote-control on Enter" "2.1.318 screen: the menu above the box"
+grep -qx seen <<<"$rs" && ok "a real 2.1.318 screen: on and rename see that menu, and nothing on the screen before" || bad "a real 2.1.318 screen: on and rename see that menu, and nothing on the screen before" "2.1.318 screen: no_menu"
 # Setup: a favorite of a past conversation, rc off with the title "My chat" saved, its claude on
 # and idle; the claude log from here on.
 server_up
@@ -464,7 +513,29 @@ out=$(asctl rc "$idr" off); seen "not changed now: its command menu did not offe
 	&& ok "off: several entries, none marked: Enter not pressed" || bad "off: several entries, none marked: Enter not pressed" "unmarked: $out"
 touch "$HOME/fake-menu-one"
 out=$(asctl rc "$idr" off); seen 'off now' <<<"$out" && [ -z "$(bridge)" ] && ok "off: one entry, none marked: the one Enter takes" || bad "off: one entry, none marked: the one Enter takes" "one unmarked: $out"
-rm -f "$HOME/fake-menu-unmarked" "$HOME/fake-menu-one"; touch "$HOME/fake-menu-on"
+rm -f "$HOME/fake-menu-unmarked" "$HOME/fake-menu-one" "$HOME/fake-menu-above" "$HOME/fake-plugins"
+[ "$(grep 'line: ' "$HOME/claude-args.log" | grep -vc 'line: /rename ')" = 8 ] && ok "nothing else ever reached its prompt (eight rc lines, besides /rename)" || bad "nothing else ever reached its prompt (eight rc lines, besides /rename)" "lines entered: $(grep 'line: ' "$HOME/claude-args.log")"
+}
+
+case_rc_menu() {
+# Setup, as rc_now has it at this point: a favorite of a past conversation, rc off with the title
+# "My chat" saved, its claude on and idle; the menu above the box with plugin lines around it, and
+# a menu that stays open after a space; the claude log from here on.
+server_up
+: > "$HOME/claude-args.log"
+SM=22222222-3333-4444-8555-000000000034
+mkdir -p "$HOME/.claude/projects/-x"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SM" > "$HOME/.claude/projects/-x/$SM.jsonl"
+asctl fav "$SM" --name rcmenu >/dev/null || stop "a favorite for rc menus"
+idr=$(jq -r --arg s "$SM" '.entries[] | select(.session_id == $s) | .id4' "$REG")
+{ asctl rc "$idr" on --title "My chat" && asctl rc "$idr" off; } >/dev/null || stop "rc off for rc menus, the title My chat saved"
+asctl on "$idr" >/dev/null && claude_in "rcmenu-$idr" >/dev/null || stop "a claude for rc menus"
+echo "== rc now: a menu above the box, a slow dialog, a prompt not as typed (asc/rclive.py)"
+pane=$(tm list-panes -t "=rcmenu-$idr:" -F '#{pane_id}')
+bridge() { jq -r 'select(.name == "rcmenu-'"$idr"'") | .bridgeSessionId // ""' "$HOME"/.claude/sessions/*.json; }
+screen() { tm capture-pane -p -t "$pane"; }
+empty() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import rclive; sys.exit(rclive.prompt_text(rclive.screen(sys.argv[2])) != "")' "$REPO" "$pane"; }
+touch "$HOME/fake-menu-above" "$HOME/fake-plugins" "$HOME/fake-menu-on"; tm send-keys -t "$pane" x BSpace; sleep 0.5
 out=$(asctl rc "$idr" on); seen 'not changed now: a command menu opened at its prompt; nothing was sent' <<<"$out" && [ -z "$(bridge)" ] && empty \
 	&& ok "on: a menu above the box: Enter not pressed" || bad "on: a menu above the box: Enter not pressed" "menu above, on: $out"
 nm=$(jqe ".entries[\"$idr\"].name")
@@ -473,42 +544,6 @@ out=$(asctl rename "$idr" talkx 2>&1); seen 'a command menu opened at its prompt
 rm -f "$HOME/fake-menu-on" "$HOME/fake-menu-above" "$HOME/fake-plugins"; tm send-keys -t "$pane" x BSpace; sleep 0.5
 asctl rename "$idr" "$nm" >/dev/null 2>&1  # the favorite's name as before (a refused live rename still renames it)
 asctl rc "$idr" on >/dev/null
-# The menu by its shape and mark, on screens drawn by hand (each its own check).
-mt=$(python3 -I - "$REPO" <<'EOF'
-import sys; sys.path.insert(0, sys.argv[1]); from asc import rclive as r
-R = "─" * 40
-def scr(*rows): return "\n".join(rows) + "\n"
-box = [R, "❯\xa0/remote-control", R, "  [ status ]"]
-menu = "  \x1b[38;5;153m❯ /\x1b[1mremote-control\x1b[0m      Disconnect Remote Control"
-before = scr("hello", "  notice", R, "❯\xa0", R, "  [ status ]")
-print("found" if r.offers_cmd(scr("hello", menu, *box), before) else "-")
-print("history" if r.takes(scr("❯ /remote-control", "  notice", *box), before) is None else "-")
-print("two" if r.takes(scr(menu, menu.replace("Disconnect", "Quoted"), *box), before) == () else "-")
-print("indented" if r.takes(scr("hello", "  notice", R, "  ❯ /remote-control", R, "  [ status ]"), before) is None else "-")
-print("path" if r.entries(scr("hello", "  /srv/x/proj  main", *box), before) == [] else "-")
-print("link" if r.plain("at \x1b]8;id=a;https://x.example/\x1b\\https://x.example/\x1b]8;;\x1b\\ now") == "at https://x.example/ now" else "-")
-EOF
-)
-grep -qx found <<<"$mt" && ok "menu detection: the entry marked ❯ above the box is the one Enter takes" || bad "menu detection: the entry marked ❯ above the box is the one Enter takes"
-grep -qx history <<<"$mt" && ok "menu detection: a prompt in the transcript (not indented) is not a menu entry" || bad "menu detection: a prompt in the transcript (not indented) is not a menu entry"
-grep -qx two <<<"$mt" && ok "menu detection: two entries marked (one a quote in claude's answer): asctl cannot tell" || bad "menu detection: two entries marked (one a quote in claude's answer): asctl cannot tell"
-grep -qx indented <<<"$mt" && ok "menu detection: claude's own input line, even indented, is not a menu entry" || bad "menu detection: claude's own input line, even indented, is not a menu entry"
-grep -qx path <<<"$mt" && ok "menu detection: a plugin's line starting with a path is not a menu entry" || bad "menu detection: a plugin's line starting with a path is not a menu entry"
-grep -qx link <<<"$mt" && ok "menu detection: a link (OSC 8) is read as its text" || bad "menu detection: a link (OSC 8) is read as its text"
-# A real 2.1.318 screen (tests/asc/screens: a capture's last rows, names and links rewritten): the
-# menu above the box, a status line under it, a plugin's band, prompts in the transcript.
-rs=$(python3 -I - "$REPO" <<'EOF'
-import os, sys; sys.path.insert(0, sys.argv[1]); from asc import rclive as r
-d = os.path.join(sys.argv[1], "tests", "asc", "screens")
-b, m = (open(os.path.join(d, f"2.1.318-{n}.txt"), encoding="utf-8").read() for n in ("before", "menu"))
-print("box" if r.prompt_text(b) == "" and r.prompt_text(m) == "/remote-control" else "-")
-print("offers" if r.offers_cmd(m, b) else "-")
-print("seen" if r.no_menu(b, b) is None and r.no_menu(m, b) else "-")
-EOF
-)
-grep -qx box <<<"$rs" && ok "a real 2.1.318 screen: its input box found, empty before, the command after" || bad "a real 2.1.318 screen: its input box found, empty before, the command after" "2.1.318 screen: the input box"
-grep -qx offers <<<"$rs" && ok "a real 2.1.318 screen: the menu above the box takes /remote-control on Enter" || bad "a real 2.1.318 screen: the menu above the box takes /remote-control on Enter" "2.1.318 screen: the menu above the box"
-grep -qx seen <<<"$rs" && ok "a real 2.1.318 screen: on and rename see that menu, and nothing on the screen before" || bad "a real 2.1.318 screen: on and rename see that menu, and nothing on the screen before" "2.1.318 screen: no_menu"
 touch "$HOME/fake-slow-dialog"
 out=$(asctl rc "$idr" off); seen 'off now' <<<"$out" && [ -z "$(bridge)" ] && empty \
 	&& ok "off: a slow dialog, its lines quoted in the transcript: waited for the dialog itself" || bad "off: a slow dialog, its lines quoted in the transcript: waited for the dialog itself" "slow dialog: $out / $(screen | tail -4)"
@@ -530,7 +565,7 @@ touch "$HOME/fake-two-lines"; tm send-keys -t "$pane" x BSpace; sleep 0.5
 out=$(asctl rc "$idr" on); seen "not changed now: its screen does not show claude's prompt" <<<"$out" && [ -z "$(bridge)" ] \
 	&& ok "a prompt of two lines (the first empty) is not empty" || bad "a prompt of two lines (the first empty) is not empty" "two lines: $out"
 rm -f "$HOME/fake-two-lines"; tm send-keys -t "$pane" x BSpace; sleep 0.5
-[ "$(grep 'line: ' "$HOME/claude-args.log" | grep -vc 'line: /rename ')" = 10 ] && ok "nothing else ever reached its prompt (ten rc lines, besides /rename)" || bad "nothing else ever reached its prompt (ten rc lines, besides /rename)" "lines entered: $(grep 'line: ' "$HOME/claude-args.log")"
+[ "$(grep 'line: ' "$HOME/claude-args.log" | grep -vc 'line: /rename ')" = 2 ] && ok "rc menus: nothing else ever reached its prompt (two rc lines, besides /rename)" || bad "rc menus: nothing else ever reached its prompt (two rc lines, besides /rename)" "lines entered: $(grep 'line: ' "$HOME/claude-args.log")"
 }
 
 case_events() {
@@ -1456,7 +1491,7 @@ ud() { HOME="$H2" XDG_CONFIG_HOME="$1" python3 -I -c 'import sys; sys.path.inser
 rm "$F2/environment"
 }
 
-run_cases asc no_tmux_server main rc_now events rc_slow new_name outside watcher_memory watcher_ended boot asctl_setup
+run_cases asc no_tmux_server main guards rc_now rc_menu events rc_slow new_name outside watcher_memory watcher_ended boot asctl_setup
 
 echo "asc: $pass passed, $fail failed"
 [ "$fail" = 0 ]
