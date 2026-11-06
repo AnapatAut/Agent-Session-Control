@@ -246,7 +246,18 @@ ts "$(date -u -d '+5 sec' +%Y-%m-%dT%H:%M:%S.000Z)"; pm dontAsk
 [ "$(modenow)" = dontAsk ] && ok "mode now: a record since the start: the transcript's" || bad "mode now: a record since the start: the transcript's" "mode now, newer: $(modenow)"
 asctl off "$id2" --force >/dev/null
 pm manual user
+}
 
+case_shared_stale() {
+# Setup: as main has it at this point, a favorite (id), started and then off.
+server_up
+SS=22222222-3333-4444-8555-00000000003a
+mkdir -p "$HOME/.claude/projects/-x"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SS" > "$HOME/.claude/projects/-x/$SS.jsonl"
+asctl fav "$SS" --name das >/dev/null || stop "a favorite for the shared session tests"
+id=$(jq -r --arg s "$SS" '.entries[] | select(.session_id == $s) | .id4' "$REG")
+asctl on "$id" >/dev/null && claude_in "das-$id" >/dev/null || stop "the favorite started"
+asctl off "$id" >/dev/null || stop "the favorite off"
 echo "== shared session, stale files, locks, a broken registry"
 tm new-session -d -s shared -c "$W" -- "$ASC_CLAUDE" --session-id 33333333-4444-4555-8666-777777777777
 tm split-window -t "=shared:" -- sleep 300
@@ -291,16 +302,21 @@ rm -f "$HOME/.claude/sessions/1.json"
 tm kill-session -t =userwork
 }
 
-# shellcheck disable=SC2329  # helpers run only through poll
-case_guards() {
-# Setup: as main has it at this point, a favorite of a past conversation (SID2, id2), off, named
-# chat, in a trusted folder.
+# The setup of the guards cases, each with a conversation of its own (SID2): as main has it at this
+# point, a favorite of a past conversation (id2), off, named chat, in a trusted folder.
+#   chat_setup <SID2>
+chat_setup() {
 server_up
-SID2=22222222-3333-4444-8555-000000000035
+SID2=$1
 mkdir -p "$HOME/.claude/projects/-x"
 printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SID2" > "$HOME/.claude/projects/-x/$SID2.jsonl"
 asctl fav "$SID2" --name chat >/dev/null || stop "a favorite for the guards"
 id2=$(jq -r --arg s "$SID2" '.entries[] | select(.session_id == $s) | .id4' "$REG")
+}
+
+# shellcheck disable=SC2329  # helpers run only through poll
+case_guards() {
+chat_setup 22222222-3333-4444-8555-000000000035
 echo "== busy: a second claude in the session"
 tm new-session -d -s duo -c "$W" -- "$ASC_CLAUDE" --session-id 77777777-8888-4999-8aaa-bbbbbbbbbbbb
 p6=$(claude_in duo) || stop "a claude in duo"
@@ -380,6 +396,10 @@ touch "$HOME/fake-quote"
 asctl on "$id6" >/dev/null && ok "on with the trust prompt quoted in a transcript" || bad "on with the trust prompt quoted in a transcript" "on failed with a quoted trust prompt"
 grep -q 'quote: got a key' "$HOME/claude-args.log" && bad "no key pressed at a quoted trust prompt" "asctl pressed keys at a quoted trust prompt" || ok "no key pressed at a quoted trust prompt"
 rm -f "$HOME/fake-quote"; asctl off "$id6" --force >/dev/null
+}
+
+case_on_gates() {
+chat_setup 22222222-3333-4444-8555-000000000039
 echo "== a folder name with tmux format characters"
 SID3=33333333-aaaa-4bbb-8ccc-eeeeeeeeeeee
 W3="$T/w#{pane_id}#(true)"; mkdir -p "$W3"; printf '%s\n' "$W3" >> "$HOME/fake-trusted"
@@ -753,13 +773,15 @@ assert past.lengths(d)[a]["lines"] == 1
 PY
 }
 
+# The setup of the rc_slow cases, each with a conversation of its own (SL): a favorite of it (ids),
+# on, its claude (cs, in pane spane) idle with an empty prompt, rc off; the claude log from here
+# on. And the helpers on that claude.
+#   slow_setup <SL>
 # shellcheck disable=SC2329  # helpers run only through poll
-case_rc_slow() {
-# Setup: a favorite of a past conversation, on, its claude idle with an empty prompt, rc off; the
-# claude log from here on.
+slow_setup() {
 server_up
 : > "$HOME/claude-args.log"
-SL=22222222-3333-4444-8555-000000000031
+SL=$1
 mkdir -p "$HOME/.claude/projects/-x"
 printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SL" > "$HOME/.claude/projects/-x/$SL.jsonl"
 asctl fav "$SL" --name slow >/dev/null || stop "a favorite for a slow claude"
@@ -781,8 +803,13 @@ take_back_held() {
 threading.Timer(4.5, os.remove, [sys.argv[4]]).start()
 print(rclive.take_back(sys.argv[2], sys.argv[3], lambda: None))' "$REPO" "$spane" "/remote-control Slow chat" "$HOME/fake-echo-stall"
 }
+attached() { [ "$(tm list-clients -t "=slow-$ids" -F x | wc -l)" = 1 ]; }
 poll 5 slow_empty || stop "an empty prompt in the slow claude"
-echo "== rc now, a slow claude: what is typed drawn late (a busy host), or someone at its session"
+}
+
+case_rc_slow() {
+slow_setup 22222222-3333-4444-8555-000000000031
+echo "== rc now, a slow claude: what is typed drawn late (a busy host)"
 # settled() on prompts set by hand: what it holds to its timeout and what it takes once quiet
 st=$(python3 -I - "$REPO" <<'EOF'
 import sys, time; sys.path.insert(0, sys.argv[1]); from asc import rclive as r
@@ -810,6 +837,14 @@ out=$(take_back_held); sleep 0.5
 [ "$out" = "nothing was sent" ] && slow_empty && [ "$(lines)" = "$n0" ] \
 	&& ok "take back, a slow claude: the whole command removed once its prompt stopped changing" || bad "take back, a slow claude: the whole command removed once its prompt stopped changing" "slow take back: $out / $(slow_prompt)"
 rm -f "$HOME/fake-echo-stall"; slow_clear
+asctl off "$ids" --force >/dev/null; asctl forget "$ids" >/dev/null
+}
+
+case_rc_slow_seen() {
+# Setup: as rc_slow leaves it: rc off, its prompt empty, the lines typed so far (n0)
+slow_setup 22222222-3333-4444-8555-000000000036
+echo "== rc now, a slow claude: a command shown late taken back, or someone at its session"
+n0=$(lines)
 # taken back while nothing of it is drawn yet: removed too, once it shows
 echo "1 hold" > "$HOME/fake-echo-stall"; tm send-keys -t "$spane" -l "/remote-control Slow chat"
 out=$(take_back_held); sleep 2  # it shows once the flag is gone, then its BSpaces
@@ -822,13 +857,20 @@ n0=$(lines)  # that off typed one
 mkfifo "$T/slow-keys"
 TERM=xterm script -qfc "tmux -L $ASC_TMUX_SOCKET -f /dev/null attach -t =slow-$ids" /dev/null < "$T/slow-keys" >/dev/null 2>&1 & ks=$!
 exec {kfd}>"$T/slow-keys"  # the client's keyboard, held by the suite itself (no process to leave behind)
-attached() { [ "$(tm list-clients -t "=slow-$ids" -F x | wc -l)" = 1 ]; }
 poll 5 attached || stop "a client attached to the slow claude's session"
 printf 'x\177' >&"$kfd"; poll 5 slow_empty || stop "the client's keys reached the slow claude"
 # its message ends there: nothing typed and taken back (asctl looks before typing, not only after)
 out=$(asctl rc "$ids" on --title "Slow chat"); seen -x '.*; not changed now: someone typed in its tmux session just now' <<<"$out" && [ "$(lines)" = "$n0" ] && slow_empty \
 	&& ok "rc on: not when someone at its tmux session typed just now" || bad "rc on: not when someone at its tmux session typed just now" "client typed: $out / $(slow_prompt)"
 exec {kfd}>&-; kill "$ks" 2>/dev/null; wait "$ks" 2>/dev/null; poll_gone 5 attached || stop "the client gone"; rm -f "$T/slow-keys"
+asctl off "$ids" --force >/dev/null; asctl forget "$ids" >/dev/null
+}
+
+case_rc_slow_typed() {
+# Setup: as rc_slow_seen leaves it: rc off, its prompt empty, the lines typed so far (n0)
+slow_setup 22222222-3333-4444-8555-000000000037
+n0=$(lines)
+echo "== rc now, a slow claude: someone typed while asctl typed; a dialog redrawn late"
 # someone typed while asctl typed (tmux reports a client key after the first look): no Enter,
 # and what is in its prompt left alone (their keys may be among it)
 out=$(python3 -I -c 'import sys, time; sys.path.insert(0, sys.argv[1]); from asc import rclive, tmuxctl
@@ -851,21 +893,28 @@ seen 'off now' <<<"$out" && [ -z "$(slow_bridge)" ] \
 asctl off "$ids" --force >/dev/null; asctl forget "$ids" >/dev/null
 }
 
-case_new_name() {
-# Setup, as "exact names, trust prompt, rename, mode" left it: a favorite of a past conversation
-# (SID2, id2), off, named chat, in a trusted folder. The claude log from here on: main's rc start
-# typed a /rename, and this case's first check says none was typed.
+# The setup of the new_name cases, each with a conversation of its own (SID2): as "exact names,
+# trust prompt, rename, mode" left it, a favorite of a past conversation (id2), off, named chat, in
+# a trusted folder.
+#   name_setup <SID2>
+name_setup() {
 server_up
-: > "$HOME/claude-args.log"
-SID2=22222222-3333-4444-8555-000000000007
+SID2=$1
 mkdir -p "$HOME/.claude/projects/-x"
 printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SID2" > "$HOME/.claude/projects/-x/$SID2.jsonl"
 asctl fav "$SID2" --name chat >/dev/null || stop "a favorite for a new name"
 id2=$(jq -r --arg s "$SID2" '.entries[] | select(.session_id == $s) | .id4' "$REG")
-echo "== a new name for a running claude: /rename when idle, or a restart"
+}
+sname() { jq -r .name "$HOME/.claude/sessions/$1.json"; }
+
+case_new_name() {
+# The claude log from here on (restart_name's last check reads it too): main's rc start typed a
+# /rename, and this case's first check says none was typed.
+: > "$HOME/claude-args.log"
+name_setup 22222222-3333-4444-8555-000000000007
+echo "== a new name for a running claude: /rename when idle"
 asctl on "$id2" >/dev/null
 c1=$(claude_in "chat-$id2") && ok "a new name: claude up after on" || bad "a new name: claude up after on" "no claude in chat-$id2"
-sname() { jq -r .name "$HOME/.claude/sessions/$1.json"; }
 touch "$HOME/fake-busy"; flagged
 out=$(asctl rename "$id2" talk 2>&1)
 seen "renamed to talk-$id2; claude's own name not changed now: claude is busy" <<<"$out" && [ "$(sname "$c1")" = "chat-$id2" ] && ! seen 'line: /rename' "$HOME/claude-args.log" \
@@ -882,7 +931,15 @@ touch "$HOME/fake-no-rename"
 out=$(asctl rename "$id2" talk4 2>&1)
 seen "not changed now: typed, but claude did not record the new name" <<<"$out" && ok "rename: typed but not taken by claude: said so" || bad "rename: typed but not taken by claude: said so" "rename not taken: $out"
 rm -f "$HOME/fake-no-rename"
-asctl rename "$id2" talk >/dev/null
+asctl off "$id2" --force >/dev/null
+}
+
+case_restart_name() {
+# Setup: as new_name has it at this point: its favorite on, renamed talk, its claude (c1) idle.
+name_setup 22222222-3333-4444-8555-00000000003b
+asctl on "$id2" >/dev/null && c1=$(claude_in "chat-$id2") || stop "a claude for a restart"
+asctl rename "$id2" talk >/dev/null && [ "$(sname "$c1")" = "talk-$id2" ] || stop "the claude renamed talk"
+echo "== a new name for a running claude: a restart"
 touch "$HOME/fake-task"; flagged
 out=$(asctl rename "$id2" talk2 --restart 2>&1)
 seen 'not restarted now: busy: .* runs a command' <<<"$out" && [ "$(claude_in "talk2-$id2")" = "$c1" ] && ok "rename --restart: not while claude runs a command (a background one too)" || bad "rename --restart: not while claude runs a command (a background one too)" "restart with a command running: $out"
@@ -910,23 +967,31 @@ asctl restart "$id2" >/dev/null 2>&1 && bad "restart: refused when it is off" "r
 [ "$(grep 'line: ' "$HOME/claude-args.log" | grep -vc 'line: /rename ')" = 0 ] && ok "new names: nothing but /rename ever reached a prompt" || bad "new names: nothing but /rename ever reached a prompt" "lines entered: $(grep 'line: ' "$HOME/claude-args.log")"
 }
 
+# The setup of the outside cases, each with a conversation of its own (OS): the tmux server kept
+# up with no session (the case closes its only one), Claude Code's version binary (as "a
+# background job" made it), the event log's path, a favorite of the conversation (ido, named
+# outer) off with rc on at its next start, and a claude that ends on SIGTERM, as the real one
+# does, for a terminal outside tmux (outer_tty [hold]: one that ignores SIGTERM; its pid tp).
+#   outside_setup <OS>
 # shellcheck disable=SC2329  # helpers run only through poll
-case_outside() {
-# Setup: the tmux server kept up with no session (the section closes its only one), Claude Code's
-# version binary (as "a background job" made it) and the event log's path.
+outside_setup() {
 server_up
 [ -e "$T/versions/2.1.316" ] || { mkdir -p "$T/versions"; cp "$(command -v bash)" "$T/versions/2.1.316"; }
 EVF="$HOME/.local/state/agent-session-control/events.jsonl"
-echo "== a claude outside its tmux session: where it runs, off of a background session, restart into tmux"
-OS=eeeeeeee-0000-4000-8000-000000000001
+OS=$1
 tm new-session -d -s outer -c "$W" -- "$ASC_CLAUDE" --session-id "$OS"
 po=$(claude_in outer) || stop "a claude in outer"
-asctl fav "$po" --name outer >/dev/null; ido=$(jq -r '.entries[] | select(.name == "outer") | .id4' "$REG")
+asctl fav "$po" --name outer >/dev/null; ido=$(jq -r --arg s "$OS" '.entries[] | select(.session_id == $s) | .id4' "$REG")
 asctl off "$ido" >/dev/null; asctl rc "$ido" on --next-start >/dev/null
-# a claude that ends on SIGTERM, as the real one does; $1: anything: it ignores SIGTERM
+# $1: anything: it ignores SIGTERM
 printf '%s\n' '[ -n "${1:-}" ] && trap "" TERM || trap '"'"'kill $! 2>/dev/null; exit 143'"'"' TERM' 'sleep 300 & wait; wait' > "$T/outside.sh"
 outer_up() { tp=$(pgrep -P "$sc" | head -1); [ -n "$tp" ] && [ "$(cat /proc/"$tp"/comm 2>/dev/null)" = claude ]; }
 outer_tty() { script -qfc "exec -a claude '$FAKE_BASH' '$T/outside.sh' ${1:-}" /dev/null >/dev/null 2>&1 & sc=$!; poll 3 outer_up || return 1; }
+}
+
+case_outside() {
+outside_setup eeeeeeee-0000-4000-8000-000000000001
+echo "== a claude outside its tmux session: where it runs, restart into tmux, its name owed to claude.ai"
 outer_tty || stop "a claude in a terminal outside tmux"
 sfile "$tp" "$OS" "$(start_of "$tp")" ',"kind":"interactive","status":"busy"'
 asctl list | seen "outer-$ido *on (outside" && ok "outside: its favorite is on, outside its tmux session" || bad "outside: its favorite is on, outside its tmux session" "outside list: $(asctl list | grep outer)"
@@ -960,12 +1025,25 @@ with registry.entry_lock(e["id4"]):
     watch._pending_rename({"rename_tries": {}}, e, cli.live_in(e))' "$REPO" "$ido"
 seen "pid=$pb line: /rename outer-$ido" "$HOME/claude-args.log" && [ "$(jq -r --arg i "$ido" '.entries[$i] | "\(.rename_pending) \(.rename_title)"' "$REG")" = "null null" ] \
 	&& ok "the watcher sends it once claude is idle (/rename, though claude has the name), and it is no longer owed" || bad "the watcher sends it once claude is idle (/rename, though claude has the name), and it is no longer owed" "title sent: $(jq -c --arg i "$ido" '.entries[$i]' "$REG")"
-kill "$sc" 2>/dev/null; asctl off "$ido" >/dev/null
+kill "$sc" 2>/dev/null; asctl off "$ido" >/dev/null; asctl forget "$ido" >/dev/null
+}
+
+case_outside_hold() {
+# Setup: as outside leaves its favorite: off
+outside_setup eeeeeeee-0000-4000-8000-000000000002
+echo "== a claude outside its tmux session that does not end on SIGTERM"
 outer_tty hold || stop "a claude outside tmux that ignores SIGTERM"
 sfile "$tp" "$OS" "$(start_of "$tp")" ',"kind":"interactive","status":"idle"'
 o=$(errof restart "$ido")
 seen "still runs 15 s later; nothing was started" <<<"$o" && ! tm has-session -t "=outer-$ido" 2>/dev/null && ok "restart: a claude that does not end on SIGTERM: nothing started" || bad "restart: a claude that does not end on SIGTERM: nothing started" "outside restart, no end: $o"
 kill -KILL "$tp" "$sc" 2>/dev/null; wait "$sc" 2>/dev/null; rm -f "$HOME/.claude/sessions/$tp.json"
+asctl forget "$ido" >/dev/null
+}
+
+case_outside_bg() {
+# Setup: as outside_hold leaves its favorite: off
+outside_setup eeeeeeee-0000-4000-8000-000000000003
+echo "== a claude outside its tmux session: off and restart of a background session"
 ( exec -a claude "$T/versions/2.1.316" "$T/outside.sh" ) >/dev/null 2>&1 & bp=$!; sleep 0.3
 sfile "$bp" "$OS" "$(start_of "$bp")" ',"kind":"bg","jobId":"eeee0001","status":"busy"'
 o=$(errof off "$ido")
@@ -987,8 +1065,8 @@ asctl off "$ido" >/dev/null; asctl forget "$ido" >/dev/null
 }
 
 case_watcher_memory() {
-# Setup: two favorites, off, as main leaves them: one holding SID2 ("not followed: a session id
-# another favorite holds"), one whose conversation has no transcript (its length counted).
+# Setup: two favorites, off, as main leaves them: one holding SID2, one whose conversation has no
+# transcript (its length counted).
 server_up
 SID2=22222222-3333-4444-8555-000000000022 NT=22222222-3333-4444-8555-000000000023
 mkdir -p "$HOME/.claude/projects/-x"
@@ -997,65 +1075,8 @@ printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$NT" > "$HOME/.clau
 asctl fav "$SID2" --name held >/dev/null || stop "a favorite holding SID2"
 asctl fav "$NT" --name nolen >/dev/null || stop "a favorite with no transcript"
 rm -f "$HOME/.claude/projects/-x/$NT.jsonl"
-echo "== watcher: memory, sizes, following, a pending rename, duplicates"
-watch && jq -e 'length == 1 and .[0].avail_pct == 50 and .[0].oom_kill == 0 and (.[0].boot | length) > 0' "$SD/memory.json" >/dev/null \
-	&& [ "$(stat -c %a "$SD/memory.json" "$SD/watch.json" | sort -u)" = 600 ] && ok "watch: a memory sample kept, its files 0600" || bad "watch: a memory sample kept, its files 0600" "watch: no sample: $(cat "$SD/memory.json")"
-jq -e --argjson n "$(date +%s)" '.at <= $n and .at > $n - 60' "$SD/watch.json" >/dev/null && ok "watch: when its run began, for the dashboard" || bad "watch: when its run began, for the dashboard" "watch.json at: $(cat "$SD/watch.json")"
-flock "$SD/watch.lock" sleep 2 & fl=$!; sleep 0.3
-watch; [ "$(jq length "$SD/memory.json")" = 1 ] && ok "watch: a run while another holds the lock does nothing" || bad "watch: a run while another holds the lock does nothing" "watch ran twice at once"
-wait $fl
-# The length of a favorite's conversation: one with no transcript yet gets one of 4 lines.
-lsid=$(jq -r '[.entries[].session_id] | .[]' "$REG" | while read -r x; do compgen -G "$HOME/.claude/projects/*/$x.jsonl" >/dev/null || { echo "$x"; break; }; done)
-mkdir -p "$HOME/.claude/projects/-len"; printf 'a\nb\nc\nd\n' > "$HOME/.claude/projects/-len/$lsid.jsonl"
-watch; jq -e --arg s "$lsid" '.[$s].lines == 4 and .[$s].size == 8' "$SD/lengths.json" >/dev/null && [ "$(stat -c %a "$SD/lengths.json")" = 600 ] \
-	&& ok "watch: a favorite's conversation length counted (lengths.json, 0600)" || bad "watch: a favorite's conversation length counted (lengths.json, 0600)" "watch lengths ($lsid): $(cat "$SD/lengths.json" 2>&1)"
-rm -f "$HOME/.claude/projects/-len/$lsid.jsonl"
-python3 -I -c 'import sys, time; sys.path.insert(0, sys.argv[1]); from asc import memory, registry
-s = memory.sample(); now = int(time.time())
-registry.write_private(registry.state_dir() + "/memory.json", [dict(s, t=now - 600), dict(s, t=now - 400), dict(s, boot="old"), dict(s, t=now + 99)])' "$REPO"
-watch; jq -e 'length == 2 and .[1].t - .[0].t >= 400 and .[1].t - .[0].t < 420' "$SD/memory.json" >/dev/null && ok "watch: samples kept 8 min, this boot's only, none from the future" || bad "watch: samples kept 8 min, this boot's only, none from the future" "samples kept: $(jq -c '[.[] | [.t, .boot]]' "$SD/memory.json")"
-for _ in $(seq 1 125); do watch; done
-[ "$(jq length "$SD/memory.json")" = 120 ] && ok "watch: at most 120 samples" || bad "watch: at most 120 samples" "samples kept: $(jq length "$SD/memory.json")"
-m0=$(evn memory); mem 32000000 3200000; watch; watch
-[ "$(evn memory)" = $((m0 + 1)) ] && last memory | seen 'memory low: 10.0% available' && ok "memory under 15%: one warning, not one per run" || bad "memory under 15%: one warning, not one per run" "memory warning: $(evn memory) $(last memory)"
-mem 32000000 4900000; watch; [ "$(evn memory)" = $((m0 + 1)) ] && ok "15.3%: still warned (back only 1 point over)" || bad "15.3%: still warned (back only 1 point over)" "memory warning flaps"
-mem 32000000 16000000; watch; last memory | seen 'memory back: 50.0% available' && ok "memory back: logged once" || bad "memory back: logged once" "memory back: $(last memory)"
-# A favorite started by asctl in its own session
-WS=eeeeeeee-0000-4000-8000-00000000000a
-tm new-session -d -s w -c "$W" -- "$ASC_CLAUDE" --session-id "$WS"
-pw=$(claude_in w) || stop "a claude in w"
-asctl fav "$pw" --name wat >/dev/null; idw=$(jq -r '.entries[] | select(.name == "wat") | .id4' "$REG")
-asctl off "$idw" >/dev/null; asctl on "$idw" >/dev/null
-pw=$(claude_in "wat-$idw") && ok "watcher: claude up in wat-<id> after on" || bad "watcher: claude up in wat-<id> after on" "no claude in wat-$idw"
-watch; [ "$(jq ".entries[\"$idw\"].rss_kb" "$REG")" -gt 0 ] && ok "watch: the favorite's memory kept as rss_kb" || bad "watch: the favorite's memory kept as rss_kb" "rss_kb: $(jq ".entries[\"$idw\"].rss_kb" "$REG")"
-WS2=eeeeeeee-0000-4000-8000-00000000000b
-echo "$WS2" > "$HOME/fake-branch-$WS"; sleep 0.8; watch
-jq -e --arg i "$idw" --arg a "$WS" --arg b "$WS2" '.entries[$i] | .session_id == $b and .lineage[0] == $a' "$REG" >/dev/null && last followed | seen "now holds session $WS2" \
-	&& ok "followed: a new session id in its own pane (a branch), the old one in lineage" || bad "followed: a new session id in its own pane (a branch), the old one in lineage" "branch not followed: $(jq -c ".entries[\"$idw\"] | {session_id, lineage}" "$REG")"
-echo "$SID2" > "$HOME/fake-branch-$WS2"; sleep 0.8; f0=$(evn followed); watch
-[ "$(jq -r ".entries[\"$idw\"].session_id" "$REG")" = "$WS2" ] && [ "$(evn followed)" = "$f0" ] && ok "not followed: a session id another favorite holds" || bad "not followed: a session id another favorite holds" "followed into another favorite's session"
-echo "$WS2" > "$HOME/fake-branch-$SID2"; sleep 0.8
-mkdir -p "$T/moved"; echo "$T/moved" > "$HOME/fake-cd-$WS2"; sleep 0.8; watch
-[ "$(jq -r ".entries[\"$idw\"].cwd" "$REG")" = "$T/moved" ] && last followed | seen "moved to $T/moved" && ok "followed: a new folder (/cd)" || bad "followed: a new folder (/cd)" "cd not followed: $(jq -r ".entries[\"$idw\"].cwd" "$REG")"
-echo /nonexistent > "$HOME/fake-cd-$WS2"; sleep 0.8; watch
-[ "$(jq -r ".entries[\"$idw\"].cwd" "$REG")" = "$T/moved" ] && ok "not followed: a folder that does not exist" || bad "not followed: a folder that does not exist" "followed a missing folder"
-rm -f "$HOME/fake-cd-$WS2"
-touch "$HOME/fake-busy"; flagged
-asctl rename "$idw" wat2 | seen 'The watcher sends it once claude is idle' && [ "$(jq -r ".entries[\"$idw\"].rename_pending" "$REG")" = "wat2-$idw" ] \
-	&& ok "rename while busy: pending" || bad "rename while busy: pending" "rename pending: $(jq -r ".entries[\"$idw\"].rename_pending" "$REG")"
-watch; watch; watch; watch; [ "$(jq -r .name "$HOME/.claude/sessions/$pw.json")" = "wat-$idw" ] && [ "$(jq -r ".entries[\"$idw\"].rename_pending" "$REG")" = "wat2-$idw" ] \
-	&& ok "watch: nothing typed while claude works, however long (the rename stays pending)" || bad "watch: nothing typed while claude works, however long (the rename stays pending)" "renamed while busy, or pending dropped"
-rm -f "$HOME/fake-busy"; flagged; watch
-[ "$(jq -r .name "$HOME/.claude/sessions/$pw.json")" = "wat2-$idw" ] && [ "$(jq -r ".entries[\"$idw\"].rename_pending" "$REG")" = null ] && last rename | seen "took the name wat2-$idw" \
-	&& ok "watch: the pending rename sent once idle, then cleared" || bad "watch: the pending rename sent once idle, then cleared" "pending rename: $(jq -r .name "$HOME/.claude/sessions/$pw.json")"
-tm new-session -d -s twin -c "$W" -- "$ASC_CLAUDE" --resume "$WS2"
-claude_in twin >/dev/null || stop "a claude in twin"
-d0=$(evn duplicate); watch; watch
-[ "$(evn duplicate)" = $((d0 + 1)) ] && last duplicate | jq -e --arg i "$idw" '.id4 == $i and (.text | test("2 live claudes"))' >/dev/null \
-	&& ok "duplicate: logged once, on its favorite" || bad "duplicate: logged once, on its favorite" "duplicate: $(evn duplicate) $(last duplicate)"
-[ "$(jq -r ".entries[\"$idw\"].session_id" "$REG")" = "$WS2" ] && ok "a duplicate is never followed or touched" || bad "a duplicate is never followed or touched" "duplicate changed the entry"
-tm kill-session -t =twin
-
+echo "== watcher: memory samples, conversation lengths"
+# memory.steady() and memory.evidence(), and live.busy_reason(), on values set by hand
 python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import memory
 b = memory.boot_id(); S = lambda t, p=50, **k: dict({"t": t, "boot": b, "avail_pct": p, "oom_kill": 0, "psi_full_us": 0, "pswpin": 0, "pswpout": 0}, **k)
 full = [S(1000 + 30 * i) for i in range(12)]          # 1000 .. 1330
@@ -1080,17 +1101,87 @@ assert memory._ok(S(1)) and not memory._ok(S(1, oom_kill="3")) and not memory._o
 python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import live, tmuxctl
 tmuxctl.panes = lambda *a, **k: None
 assert live.busy_reason("x", []) == "tmux did not list its panes"' "$REPO" && ok "busy: tmux not answering counts as busy" || bad "busy: tmux not answering counts as busy" "tmux failure read as not busy"
+watch && jq -e 'length == 1 and .[0].avail_pct == 50 and .[0].oom_kill == 0 and (.[0].boot | length) > 0' "$SD/memory.json" >/dev/null \
+	&& [ "$(stat -c %a "$SD/memory.json" "$SD/watch.json" | sort -u)" = 600 ] && ok "watch: a memory sample kept, its files 0600" || bad "watch: a memory sample kept, its files 0600" "watch: no sample: $(cat "$SD/memory.json")"
+jq -e --argjson n "$(date +%s)" '.at <= $n and .at > $n - 60' "$SD/watch.json" >/dev/null && ok "watch: when its run began, for the dashboard" || bad "watch: when its run began, for the dashboard" "watch.json at: $(cat "$SD/watch.json")"
+flock "$SD/watch.lock" sleep 2 & fl=$!; sleep 0.3
+watch; [ "$(jq length "$SD/memory.json")" = 1 ] && ok "watch: a run while another holds the lock does nothing" || bad "watch: a run while another holds the lock does nothing" "watch ran twice at once"
+wait $fl
+# The length of a favorite's conversation: one with no transcript yet gets one of 4 lines.
+lsid=$(jq -r '[.entries[].session_id] | .[]' "$REG" | while read -r x; do compgen -G "$HOME/.claude/projects/*/$x.jsonl" >/dev/null || { echo "$x"; break; }; done)
+mkdir -p "$HOME/.claude/projects/-len"; printf 'a\nb\nc\nd\n' > "$HOME/.claude/projects/-len/$lsid.jsonl"
+watch; jq -e --arg s "$lsid" '.[$s].lines == 4 and .[$s].size == 8' "$SD/lengths.json" >/dev/null && [ "$(stat -c %a "$SD/lengths.json")" = 600 ] \
+	&& ok "watch: a favorite's conversation length counted (lengths.json, 0600)" || bad "watch: a favorite's conversation length counted (lengths.json, 0600)" "watch lengths ($lsid): $(cat "$SD/lengths.json" 2>&1)"
+rm -f "$HOME/.claude/projects/-len/$lsid.jsonl"
+python3 -I -c 'import sys, time; sys.path.insert(0, sys.argv[1]); from asc import memory, registry
+s = memory.sample(); now = int(time.time())
+registry.write_private(registry.state_dir() + "/memory.json", [dict(s, t=now - 600), dict(s, t=now - 400), dict(s, boot="old"), dict(s, t=now + 99)])' "$REPO"
+watch; jq -e 'length == 2 and .[1].t - .[0].t >= 400 and .[1].t - .[0].t < 420' "$SD/memory.json" >/dev/null && ok "watch: samples kept 8 min, this boot's only, none from the future" || bad "watch: samples kept 8 min, this boot's only, none from the future" "samples kept: $(jq -c '[.[] | [.t, .boot]]' "$SD/memory.json")"
+for _ in $(seq 1 125); do watch; done
+[ "$(jq length "$SD/memory.json")" = 120 ] && ok "watch: at most 120 samples" || bad "watch: at most 120 samples" "samples kept: $(jq length "$SD/memory.json")"
+}
+
+case_watcher_follow() {
+# Setup: a favorite, off, holding a session of its own (SH: "not followed: a session id another
+# favorite holds"), as watcher_memory's are.
+server_up
+SH=22222222-3333-4444-8555-000000000038
+mkdir -p "$HOME/.claude/projects/-x"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SH" > "$HOME/.claude/projects/-x/$SH.jsonl"
+asctl fav "$SH" --name heldb >/dev/null || stop "a favorite holding SH"
+echo "== watcher: memory warnings, following, a pending rename, duplicates"
+m0=$(evn memory); mem 32000000 3200000; watch; watch
+[ "$(evn memory)" = $((m0 + 1)) ] && last memory | seen 'memory low: 10.0% available' && ok "memory under 15%: one warning, not one per run" || bad "memory under 15%: one warning, not one per run" "memory warning: $(evn memory) $(last memory)"
+mem 32000000 4900000; watch; [ "$(evn memory)" = $((m0 + 1)) ] && ok "15.3%: still warned (back only 1 point over)" || bad "15.3%: still warned (back only 1 point over)" "memory warning flaps"
+mem 32000000 16000000; watch; last memory | seen 'memory back: 50.0% available' && ok "memory back: logged once" || bad "memory back: logged once" "memory back: $(last memory)"
+# A favorite started by asctl in its own session
+WS=eeeeeeee-0000-4000-8000-00000000000a
+tm new-session -d -s w -c "$W" -- "$ASC_CLAUDE" --session-id "$WS"
+pw=$(claude_in w) || stop "a claude in w"
+asctl fav "$pw" --name wat >/dev/null; idw=$(jq -r '.entries[] | select(.name == "wat") | .id4' "$REG")
+asctl off "$idw" >/dev/null; asctl on "$idw" >/dev/null
+pw=$(claude_in "wat-$idw") && ok "watcher: claude up in wat-<id> after on" || bad "watcher: claude up in wat-<id> after on" "no claude in wat-$idw"
+watch; [ "$(jq ".entries[\"$idw\"].rss_kb" "$REG")" -gt 0 ] && ok "watch: the favorite's memory kept as rss_kb" || bad "watch: the favorite's memory kept as rss_kb" "rss_kb: $(jq ".entries[\"$idw\"].rss_kb" "$REG")"
+WS2=eeeeeeee-0000-4000-8000-00000000000b
+echo "$WS2" > "$HOME/fake-branch-$WS"; sleep 0.8; watch
+jq -e --arg i "$idw" --arg a "$WS" --arg b "$WS2" '.entries[$i] | .session_id == $b and .lineage[0] == $a' "$REG" >/dev/null && last followed | seen "now holds session $WS2" \
+	&& ok "followed: a new session id in its own pane (a branch), the old one in lineage" || bad "followed: a new session id in its own pane (a branch), the old one in lineage" "branch not followed: $(jq -c ".entries[\"$idw\"] | {session_id, lineage}" "$REG")"
+echo "$SH" > "$HOME/fake-branch-$WS2"; sleep 0.8; f0=$(evn followed); watch
+[ "$(jq -r ".entries[\"$idw\"].session_id" "$REG")" = "$WS2" ] && [ "$(evn followed)" = "$f0" ] && ok "not followed: a session id another favorite holds" || bad "not followed: a session id another favorite holds" "followed into another favorite's session"
+echo "$WS2" > "$HOME/fake-branch-$SH"; sleep 0.8
+mkdir -p "$T/moved"; echo "$T/moved" > "$HOME/fake-cd-$WS2"; sleep 0.8; watch
+[ "$(jq -r ".entries[\"$idw\"].cwd" "$REG")" = "$T/moved" ] && last followed | seen "moved to $T/moved" && ok "followed: a new folder (/cd)" || bad "followed: a new folder (/cd)" "cd not followed: $(jq -r ".entries[\"$idw\"].cwd" "$REG")"
+echo /nonexistent > "$HOME/fake-cd-$WS2"; sleep 0.8; watch
+[ "$(jq -r ".entries[\"$idw\"].cwd" "$REG")" = "$T/moved" ] && ok "not followed: a folder that does not exist" || bad "not followed: a folder that does not exist" "followed a missing folder"
+rm -f "$HOME/fake-cd-$WS2"
+touch "$HOME/fake-busy"; flagged
+asctl rename "$idw" wat2 | seen 'The watcher sends it once claude is idle' && [ "$(jq -r ".entries[\"$idw\"].rename_pending" "$REG")" = "wat2-$idw" ] \
+	&& ok "rename while busy: pending" || bad "rename while busy: pending" "rename pending: $(jq -r ".entries[\"$idw\"].rename_pending" "$REG")"
+watch; watch; watch; watch; [ "$(jq -r .name "$HOME/.claude/sessions/$pw.json")" = "wat-$idw" ] && [ "$(jq -r ".entries[\"$idw\"].rename_pending" "$REG")" = "wat2-$idw" ] \
+	&& ok "watch: nothing typed while claude works, however long (the rename stays pending)" || bad "watch: nothing typed while claude works, however long (the rename stays pending)" "renamed while busy, or pending dropped"
+rm -f "$HOME/fake-busy"; flagged; watch
+[ "$(jq -r .name "$HOME/.claude/sessions/$pw.json")" = "wat2-$idw" ] && [ "$(jq -r ".entries[\"$idw\"].rename_pending" "$REG")" = null ] && last rename | seen "took the name wat2-$idw" \
+	&& ok "watch: the pending rename sent once idle, then cleared" || bad "watch: the pending rename sent once idle, then cleared" "pending rename: $(jq -r .name "$HOME/.claude/sessions/$pw.json")"
+tm new-session -d -s twin -c "$W" -- "$ASC_CLAUDE" --resume "$WS2"
+claude_in twin >/dev/null || stop "a claude in twin"
+d0=$(evn duplicate); watch; watch
+[ "$(evn duplicate)" = $((d0 + 1)) ] && last duplicate | jq -e --arg i "$idw" '.id4 == $i and (.text | test("2 live claudes"))' >/dev/null \
+	&& ok "duplicate: logged once, on its favorite" || bad "duplicate: logged once, on its favorite" "duplicate: $(evn duplicate) $(last duplicate)"
+[ "$(jq -r ".entries[\"$idw\"].session_id" "$REG")" = "$WS2" ] && ok "a duplicate is never followed or touched" || bad "a duplicate is never followed or touched" "duplicate changed the entry"
+tm kill-session -t =twin
 # Its favorite off: no later case meets its claude.
 asctl off "$idw" --force >/dev/null
 }
 
+# The setup of the watcher_ended cases, each with sessions of its own (WS2, OT): a favorite (idw)
+# on, its claude (pw) started by asctl in wat2-<id> on session WS2, its folder followed to
+# $T/moved, the watcher run since (a memory sample from before an end); and a second favorite,
+# off ("the others go on").
+#   ended_setup <WS2> <OT>
 # shellcheck disable=SC2329  # helpers run only through poll
-case_watcher_ended() {
-# Setup, as the watcher's first tests left it: a favorite (idw) on, its claude started by asctl
-# in wat2-<id> on session WS2, its folder followed to $T/moved, the watcher run since (a memory
-# sample from before the end below); and a second favorite, off ("the others go on").
+ended_setup() {
 server_up
-WS2=eeeeeeee-0000-4000-8000-0000000000e2 OT=eeeeeeee-0000-4000-8000-0000000000e3
+WS2=$1 OT=$2
 tm new-session -d -s wend -c "$W" -- "$ASC_CLAUDE" --session-id "$WS2"
 pw=$(claude_in wend) || stop "a claude in wend"
 asctl fav "$pw" --name wat2 >/dev/null || stop "a favorite of the claude in wend"
@@ -1104,10 +1195,23 @@ rm -f "$HOME/fake-cd-$WS2"
 mkdir -p "$HOME/.claude/projects/-x"
 printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$OT" > "$HOME/.claude/projects/-x/$OT.jsonl"
 asctl fav "$OT" --name wother >/dev/null || stop "a second favorite for the watcher"
-echo "== watcher: a claude that ended with its tmux session up"
-# OOM kills seen: a counter that only grows, as the kernel's does
-oomk=0; bump() { oomk=$((oomk + 1)); vm 0 0 0 "$oomk"; }
+}
+# One more OOM kill seen: the counter only grows, as the kernel's does (from the cases before too)
+bump() { local k; k=$(awk '$1 == "oom_kill" {print $2}' "$T/vmstat"); vm 0 0 0 $((k + 1)); }
 ended() { last ended | jq -r .text; }
+# A watcher_ended case's favorite as the case before it left it: auto-restart on, its size known,
+# its last restart by the watcher at <when> (epoch s), memory steady.
+#   ended_as_before <when>
+ended_as_before() {
+asctl auto-restart on >/dev/null || stop "auto-restart on"
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import registry
+with registry.changing() as d: d["entries"][sys.argv[2]].update(rss_kb=400000, auto_restarted=int(sys.argv[3]))' "$REPO" "$idw" "$1" || stop "its size and last restart"
+seed
+}
+
+case_watcher_ended() {
+ended_setup eeeeeeee-0000-4000-8000-0000000000e2 eeeeeeee-0000-4000-8000-0000000000e3
+echo "== watcher: a claude that ended with its tmux session up"
 asctl events "$idw" >/dev/null
 # the evidence needs a sample from a second before the end (whole seconds): the last one, from
 # the watch above, may be of the same second as the kill
@@ -1147,7 +1251,16 @@ pw=$pn; seed; bump; watch; kill -TERM "$pw"; sleep 1.2
 printf '143 %s %s %s\n' "$(( $(date +%s) + 3 ))" "$(cat /proc/sys/kernel/random/boot_id)" "$(tm display -p -t "=wat2-$idw:" '#{pane_pid}')" > "$SD/exit/$idw"; watch
 ended | seen 'no memory samples around that time' && ok "an end with no sample after it yet: said so, not taken as no pressure" || bad "an end with no sample after it yet: said so, not taken as no pressure" "no sample after: $(ended)"
 bump; sleep 4.2; watch; pn=$(claude_in "wat2-$idw") && last restarted | seen '1 OOM kill' && ok "no sample after the end yet: asked again next run, then started" || bad "no sample after the end yet: asked again next run, then started" "evidence not asked again: $(jq -s -c '.[-4:] | map([.kind, .text])' "$SD/events.jsonl") / $(cat "$SD/exit/$idw" 2>&1) / $(jq -c '[.[-3:][] | [.t, .oom_kill]]' "$SD/memory.json")"
-pw=$pn; watch; kill -INT "$pw"; sleep 1.2; bump; watch
+# its favorite off, auto-restart off: as the next cases start
+asctl off "$idw" --force >/dev/null; asctl auto-restart off >/dev/null
+}
+
+case_watcher_reasons() {
+# Setup: as watcher_ended leaves its favorite: just started again by the watcher.
+ended_setup eeeeeeee-0000-4000-8000-0000000000f2 eeeeeeee-0000-4000-8000-0000000000f3
+ended_as_before "$(date +%s)"
+echo "== watcher: why an ended claude is not started again; a restart in place"
+watch; kill -INT "$pw"; sleep 1.2; bump; watch
 ended | seen 'exit 0, .*not started again: it did not end by a signal' && ok "exit 0 (the user ended it): never started again" || bad "exit 0 (the user ended it): never started again" "exit 0: $(ended)"
 printf '143 %s some-other-boot\n' "$(date +%s)" > "$SD/exit/$idw"; watch
 ended | seen 'not started again: it ended before this boot' && ok "an exit of another boot: not started again" || bad "an exit of another boot: not started again" "other boot: $(ended)"
@@ -1213,6 +1326,22 @@ mv "$T/moved.x" "$T/moved"
 tm split-window -t "=wat2-$idw:" -- sleep 300; seed; watch
 last waiting | jq -r .text | seen 'has 2 panes' && ok "a session of 2 panes: not started again" || bad "a session of 2 panes: not started again" "2 panes: $(last waiting)"
 tm kill-pane -t "$(tm list-panes -t "=wat2-$idw:" -F '#{pane_id} #{pane_current_command}' | awk '$2 == "sleep" {print $1}')"
+asctl off "$idw" --force >/dev/null; asctl auto-restart off >/dev/null
+}
+
+case_watcher_others() {
+# Setup: as watcher_reasons leaves its favorite: ended by a signal (an exit record), its end seen
+# by the watcher but not started again (its folder gone, then a second pane; both undone), its
+# folder trusted, its last restart long ago.
+ended_setup eeeeeeee-0000-4000-8000-0000000000d2 eeeeeeee-0000-4000-8000-0000000000d3
+ended_as_before 1
+printf '%s\n' "$T/moved" >> "$HOME/fake-trusted"
+bump; watch; kill -TERM "$pw"; sleep 1.2; bump; mv "$T/moved" "$T/moved.x"; watch
+mv "$T/moved.x" "$T/moved"
+tm split-window -t "=wat2-$idw:" -- sleep 300; seed; watch
+last waiting | jq -r .text | seen 'has 2 panes' || stop "its end seen, not started again: a second pane"
+tm kill-pane -t "$(tm list-panes -t "=wat2-$idw:" -F '#{pane_id} #{pane_current_command}' | awk '$2 == "sleep" {print $1}')"
+echo "== watcher: said once, an action's lock, a claude started by hand, a second claude, broken files"
 w1=$(evn waiting); mem 32000000 4800000; watch; mem 32000000 4700000; watch
 [ "$(evn waiting)" = $((w1 + 1)) ] && ok "waiting: the same reason with other numbers is said once" || bad "waiting: the same reason with other numbers is said once" "waiting repeats: $w1 -> $(evn waiting)"
 mem 32000000 16000000
@@ -1491,7 +1620,7 @@ ud() { HOME="$H2" XDG_CONFIG_HOME="$1" python3 -I -c 'import sys; sys.path.inser
 rm "$F2/environment"
 }
 
-run_cases asc no_tmux_server main guards rc_now rc_menu events rc_slow new_name outside watcher_memory watcher_ended boot asctl_setup
+run_cases asc no_tmux_server main shared_stale guards on_gates rc_now rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot asctl_setup
 
 echo "asc: $pass passed, $fail failed"
 [ "$fail" = 0 ]

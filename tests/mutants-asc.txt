@@ -4,30 +4,30 @@ asc/live.py %%%                 if s["status"] == "busy": %%%                 if
 asc/live.py %%%                     return f"it runs a claude asctl cannot read (pid {pid})" %%%                     continue %%% off refused: a pane runs a claude with no session file %%% guards
 asc/live.py %%%             if name in WRAPPERS: %%%             if True: %%% off refused: another pane runs sleep %%% main
 asc/live.py %%%             if name == "claude": %%%             if False: %%% off %%% main
-asc/live.py %%% base == str(pid) and %%%  %%% a copied session file (wrong file name) is not a second live claude %%% main
+asc/live.py %%% base == str(pid) and %%%  %%% a copied session file (wrong file name) is not a second live claude %%% shared_stale
 asc/live.py %%% (raw.get("pidDomain") is None or raw.get("pidDomain") == domain) %%% True %%% a file from another machine (right PID and start) is not live %%% guards
 asc/live.py %%%         if (st and is_claude(pid, st[0])) or %%%         if False and %%% on refused: an unreadable session file of a running claude %%% guards
-asc/cli.py %%%     if away: %%%     if False: %%% off refused: its claude now runs in another session %%% main
+asc/cli.py %%%     if away: %%%     if False: %%% off refused: its claude now runs in another session %%% shared_stale
 asc/cli.py %%%     return live_in(e, lv) or next( %%%     return live_in(e, lv) or None and next( %%% on refused while a live claude holds the session id %%% main
 asc/cli.py %%%     return (any(l.endswith("No, exit") %%%     return True or (any(l.endswith("No, exit") %%% no key pressed at a quoted trust prompt %%% guards
 asc/tmuxctl.py %%%     return run("has-session", "-t", "=" + name) %%%     return run("has-session", "-t", name) %%% on while a longer-named session das-<id>x exists %%% main
-asc/tmuxctl.py %%% "-s", name, "-c", cwd.replace("#", "##") %%% "-s", name, "-c", cwd %%% claude started in the literal folder (tmux formats not expanded) %%% guards
+asc/tmuxctl.py %%% "-s", name, "-c", cwd.replace("#", "##") %%% "-s", name, "-c", cwd %%% claude started in the literal folder (tmux formats not expanded) %%% on_gates
 asc/live.py %%%         if s["live"]: %%%         if s["ok"]: %%% on refused: a well-formed file of a running claude does not check out %%% guards
 asc/cli.py %%%             if owner: %%%             if False: %%% fav refused: the claude runs in another favorite's tmux session %%% guards
-asc/cli.py %%%             if others and not whole: %%%             if False: %%% fav refused: shares its tmux session with another pane %%% main
+asc/cli.py %%%             if others and not whole: %%%             if False: %%% fav refused: shares its tmux session with another pane %%% shared_stale
 asc/cli.py %%%     if live_for(e): %%%     if False: %%% on refused while a live claude holds the session id %%% main
 asc/cli.py %%%             if "❯ Yes, I trust this folder" not in screen: %%%             if False: %%% on in a folder not trusted yet: the prompt answered %%% main
 asc/cli.py %%% ["--resume", e["session_id"]] if e.get("started") else %%% ["--session-id", e["session_id"]] if e.get("started") else %%% started with --resume, --name and the mode %%% main
-asc/registry.py %%% fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB) %%% fcntl.LOCK_EX %%% on refused while another asctl holds the entry %%% main
+asc/registry.py %%% fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB) %%% fcntl.LOCK_EX %%% on refused while another asctl holds the entry %%% shared_stale
 asc/registry.py %%% MODES = {"auto": "auto", "manual": "manual", "skip": "bypassPermissions"} %%% MODES = {"auto": "auto", "manual": "manual", "skip": "auto"} %%% mode skip starts with bypassPermissions %%% main
-asc/registry.py %%%     except ValueError as e: %%%     except ZeroDivisionError as e: %%% a broken registry refused, with a clear message %%% main
+asc/registry.py %%%     except ValueError as e: %%%     except ZeroDivisionError as e: %%% a broken registry refused, with a clear message %%% shared_stale
 bin/asctl-wrap %%% > "$f.tmp") && mv -f "$f.tmp" "$f" %%% > /dev/null) %%% the wrapper recorded exit 143 (SIGTERM) %%% main
-asc/memory.py %%%     if 100 * avail / total < START_PCT: %%%     if False: %%% on refused below 20% available, nothing started %%% guards
-asc/memory.py %%%     if left < LEAVE_PCT: %%%     if False: %%% on refused when the start would leave under 15% (600 MB expected) %%% guards
-asc/cli.py %%%     if not force_memory: %%%     if False: %%% on refused below 20% available, nothing started %%% guards
-asc/cli.py %%%             e["rc"] = True %%%             pass %%% resurrect on turns rc on %%% guards
-asc/cli.py %%%  or (resurrect and e.get("resurrect")) %%%  or False %%% a resurrect start always has rc; a manual one follows the toggle %%% guards
-asc/registry.py %%%     if not t or t.startswith("-"): %%%     if not t: %%% a title starting with - refused (claude would read an option) %%% guards
+asc/memory.py %%%     if 100 * avail / total < START_PCT: %%%     if False: %%% on refused below 20% available, nothing started %%% on_gates
+asc/memory.py %%%     if left < LEAVE_PCT: %%%     if False: %%% on refused when the start would leave under 15% (600 MB expected) %%% on_gates
+asc/cli.py %%%     if not force_memory: %%%     if False: %%% on refused below 20% available, nothing started %%% on_gates
+asc/cli.py %%%             e["rc"] = True %%%             pass %%% resurrect on turns rc on %%% on_gates
+asc/cli.py %%%  or (resurrect and e.get("resurrect")) %%%  or False %%% a resurrect start always has rc; a manual one follows the toggle %%% on_gates
+asc/registry.py %%%     if not t or t.startswith("-"): %%%     if not t: %%% a title starting with - refused (claude would read an option) %%% on_gates
 asc/rclive.py %%%     if now["status"] != "idle": %%%     if now["status"] == "busy" and False: %%% busy: nothing typed %%% rc_now
 asc/rclive.py %%%         return "its pane is in copy mode" %%%         pass %%% copy mode: nothing typed %%% rc_now
 asc/rclive.py %%%     if t: %%%     if False: %%% text in its prompt: nothing typed, the setting saved for the next start %%% rc_now
@@ -50,19 +50,19 @@ asc/rclive.py %%%     return bool(t) and t[1] == CMD %%%     return bool(t) %%% 
 asc/rclive.py %%%     if not wait_for(lambda: seen() > n and (session(s["pid"]) or {}).get("name") == name, confirm): %%%     if False: %%% rename: typed but not taken by claude: said so %%% new_name
 asc/rclive.py %%%             n += f.read(tail).count(text) %%%             n = 1 %%% rename of an idle claude: /rename typed, the same claude takes the name %%% new_name
 asc/cli.py %%%             why = rclive.rename(s, new) %%%             why = None %%% rename: not when a menu above the box would take Enter %%% rc_menu
-asc/cli.py %%%     if "--remote-control" in argv and %%%     if False and %%% a start with rc sends its name to claude.ai (/rename, once rc is up) %%% new_name
+asc/cli.py %%%     if "--remote-control" in argv and %%%     if False and %%% a start with rc sends its name to claude.ai (/rename, once rc is up) %%% restart_name
 asc/rclive.py %%%     if t is not None and cmd.startswith(t): %%%     if t is not None: %%% the prompt not showing the command as typed: Enter not pressed, text not ours left alone %%% rc_menu
 asc/rclive.py %%%             if not dialog_open(pid, scr) or selected(scr, DISCONNECT): %%%             if not dialog_open(pid, scr): %%% rc off: the dialog, Disconnect selected and confirmed %%% rc_now
 asc/rclive.py %%%     l = next((l for l in reversed(bottom(scr)) if label in l), "") %%%     l = next((l for l in bottom(scr) if "❯" in l and label in l), "") %%% off: a slow dialog, its lines quoted in the transcript: waited for the dialog itself %%% rc_menu
 asc/rclive.py %%%     return status(pid) == "waiting" and prompt_text(scr) is None and %%%     return %%% off: a slow dialog, its lines quoted in the transcript: waited for the dialog itself %%% rc_menu
 asc/cli.py %%%     return FOLLOW.get(m) or own %%%     return m or own %%% mode: default (manual's old name) starts as manual %%% main
 asc/cli.py %%%         for line in reversed(lines[1:] if st.st_size > tail else lines): %%%         for line in lines: %%% mode: last ran in skip, the favorite set to skip: skip %%% main
-asc/live.py %%%         if name in SHELLS and snap in _cmdline(pid): %%%         if False: %%% rename --restart: not while claude runs a command (a background one too) %%% new_name
-asc/live.py %%%         if isinstance(meta, dict) and meta.get("finished") is True: %%%         if False: %%% restart: a new claude on the same conversation, with the new name and rc title (finished, ended or old subagents do not hold it) %%% new_name
-asc/live.py %%%  and m.get("stop_reason") == "end_turn": %%%  and False: %%% restart: a new claude on the same conversation, with the new name and rc title (finished, ended or old subagents do not hold it) %%% new_name
-asc/live.py %%%             if now - os.lstat(path).st_mtime > AGENT_FRESH: %%%             if False: %%% restart: a new claude on the same conversation, with the new name and rc title (finished, ended or old subagents do not hold it) %%% new_name
-asc/live.py %%%                 t = claude_tasks(s, kids) %%%                 t = "" %%% rename --restart: not while claude runs a command (a background one too) %%% new_name
-asc/cli.py %%%     if s["status"] != "idle":⏎        raise RegistryError(f"its claude is %%%     if False:⏎        raise RegistryError(f"its claude is %%% restart: not while claude waits (a question or dialog would be lost) %%% new_name
+asc/live.py %%%         if name in SHELLS and snap in _cmdline(pid): %%%         if False: %%% rename --restart: not while claude runs a command (a background one too) %%% restart_name
+asc/live.py %%%         if isinstance(meta, dict) and meta.get("finished") is True: %%%         if False: %%% restart: a new claude on the same conversation, with the new name and rc title (finished, ended or old subagents do not hold it) %%% restart_name
+asc/live.py %%%  and m.get("stop_reason") == "end_turn": %%%  and False: %%% restart: a new claude on the same conversation, with the new name and rc title (finished, ended or old subagents do not hold it) %%% restart_name
+asc/live.py %%%             if now - os.lstat(path).st_mtime > AGENT_FRESH: %%%             if False: %%% restart: a new claude on the same conversation, with the new name and rc title (finished, ended or old subagents do not hold it) %%% restart_name
+asc/live.py %%%                 t = claude_tasks(s, kids) %%%                 t = "" %%% rename --restart: not while claude runs a command (a background one too) %%% restart_name
+asc/cli.py %%%     if s["status"] != "idle":⏎        raise RegistryError(f"its claude is %%%     if False:⏎        raise RegistryError(f"its claude is %%% restart: not while claude waits (a question or dialog would be lost) %%% restart_name
 asc/live.py %%%         j["pane"], j["host"] = h["pane"], h %%%         pass %%% the job takes the pane of the claude showing it %%% guards
 asc/live.py %%% s["pane"] = None if s["kind"] == "bg" else next( %%% s["pane"] = next( %%% a job under a pane, shown by no claude, is in no pane %%% guards
 asc/live.py %%%     known.update({s["host"]["pid"]: s for s in lv if s.get("host")}) %%%     pass %%% off refused: the job is working %%% guards
@@ -79,36 +79,36 @@ asc/events.py %%%     if not stat.S_ISREG(os.fstat(fd).st_mode): %%%     if Fals
 asc/events.py %%%     return ok and 0 < t <= time.time() + 86400 %%%     return ok %%% asctl events reads past odd lines %%% events
 asc/cli.py %%%         events.log("failed", e, f"{what}: {x}") %%%         events.log("refused", e, f"{what}: {x}") %%% an error after a change is logged as failed %%% events
 asc/cli.py %%%             out(ended) %%%             say("off", e, ended) %%% off with a job: one off event, the job named in it %%% guards
-asc/cli.py %%%                 pending(id4, new) %%%                 pass %%% rename while busy: pending %%% watcher_memory
+asc/cli.py %%%                 pending(id4, new) %%%                 pass %%% rename while busy: pending %%% watcher_follow
 asc/watch.py %%%             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB) %%%             pass %%% watch: a run while another holds the lock does nothing %%% watcher_memory
-asc/watch.py %%%     if pct < memory.WARN_PCT and not st["warned"]: %%%     if pct < memory.WARN_PCT: %%% memory under 15%: one warning, not one per run %%% watcher_memory
-asc/watch.py %%%     elif pct >= memory.WARN_PCT + 1 and st["warned"]: %%%     elif pct >= memory.WARN_PCT and st["warned"]: %%% 15.3%: still warned (back only 1 point over) %%% watcher_memory
-asc/watch.py %%%     for sid in sorted(set(dups) - set(st["dups"])): %%%     for sid in dups: %%% duplicate: logged once, on its favorite %%% watcher_memory
-asc/watch.py %%%     if sum(1 for x in lv if x["pane"] and x["pane"]["session"] == e["tmux"]) != 1: %%%     if False: %%% a second claude in the session: its folder not followed %%% watcher_ended
-asc/watch.py %%%         if not held and _set( %%%         if _set( %%% not followed: a session id another favorite holds %%% watcher_memory
-asc/watch.py %%%     if s["cwd"] != e.get("cwd") and os.path.isdir(s["cwd"]): %%%     if s["cwd"] != e.get("cwd"): %%% not followed: a folder that does not exist %%% watcher_memory
-asc/watch.py %%%     if ex and s.get("started_at") and s["started_at"] >= ex[1]: %%%     if False: %%% a claude started by hand after the end: the old exit record dropped %%% watcher_ended
-asc/watch.py %%%     if rclive.guard(s) is not None:  # busy, waiting, typing: the next run %%%     if False: %%% watch: nothing typed while claude works, however long (the rename stays pending) %%% watcher_memory
+asc/watch.py %%%     if pct < memory.WARN_PCT and not st["warned"]: %%%     if pct < memory.WARN_PCT: %%% memory under 15%: one warning, not one per run %%% watcher_follow
+asc/watch.py %%%     elif pct >= memory.WARN_PCT + 1 and st["warned"]: %%%     elif pct >= memory.WARN_PCT and st["warned"]: %%% 15.3%: still warned (back only 1 point over) %%% watcher_follow
+asc/watch.py %%%     for sid in sorted(set(dups) - set(st["dups"])): %%%     for sid in dups: %%% duplicate: logged once, on its favorite %%% watcher_follow
+asc/watch.py %%%     if sum(1 for x in lv if x["pane"] and x["pane"]["session"] == e["tmux"]) != 1: %%%     if False: %%% a second claude in the session: its folder not followed %%% watcher_others
+asc/watch.py %%%         if not held and _set( %%%         if _set( %%% not followed: a session id another favorite holds %%% watcher_follow
+asc/watch.py %%%     if s["cwd"] != e.get("cwd") and os.path.isdir(s["cwd"]): %%%     if s["cwd"] != e.get("cwd"): %%% not followed: a folder that does not exist %%% watcher_follow
+asc/watch.py %%%     if ex and s.get("started_at") and s["started_at"] >= ex[1]: %%%     if False: %%% a claude started by hand after the end: the old exit record dropped %%% watcher_others
+asc/watch.py %%%     if rclive.guard(s) is not None:  # busy, waiting, typing: the next run %%%     if False: %%% watch: nothing typed while claude works, however long (the rename stays pending) %%% watcher_follow
 asc/watch.py %%%     if not same: %%%     if True: %%% an end is logged once %%% watcher_ended
 asc/watch.py %%%  if same and prev.get("has") is not None %%%  if same and "has" in prev %%% no sample after the end yet: asked again next run, then started %%% watcher_ended
-asc/watch.py %%%     reason = re.sub(r"[0-9][0-9.]*", "N", why)  # the same reason with other numbers is not news %%%     reason = why %%% waiting: the same reason with other numbers is said once %%% watcher_ended
+asc/watch.py %%%     reason = re.sub(r"[0-9][0-9.]*", "N", why)  # the same reason with other numbers is not news %%%     reason = why %%% waiting: the same reason with other numbers is said once %%% watcher_others
 asc/watch.py %%%     if not isinstance(settings, dict) or settings.get("auto_restart") is not True: %%%     if False: %%% ended by SIGTERM: logged, auto-restart off by default %%% watcher_ended
-asc/watch.py %%%     if code not in (137, 143): %%%     if False: %%% exit 0 (the user ended it): never started again %%% watcher_ended
+asc/watch.py %%%     if code not in (137, 143): %%%     if False: %%% exit 0 (the user ended it): never started again %%% watcher_reasons
 asc/watch.py %%%     if has is not True: %%%     if has is None: %%% no memory pressure seen: not started, said once %%% watcher_ended
 asc/watch.py %%%     if abs(time.time() - last) < RESTART_EVERY: %%%     if False: %%% not again within 30 min %%% watcher_ended
-asc/watch.py %%%     if len(panes) != 1: %%%     if False: %%% a session of 2 panes: not started again %%% watcher_ended
-asc/watch.py %%%     why = cli.pane_free(e, panes[0]["pane_id"], pid) %%%     why = "" %%% its pane is not the shell asctl-wrap left: not started %%% watcher_ended
+asc/watch.py %%%     if len(panes) != 1: %%%     if False: %%% a session of 2 panes: not started again %%% watcher_reasons
+asc/watch.py %%%     why = cli.pane_free(e, panes[0]["pane_id"], pid) %%%     why = "" %%% its pane is not the shell asctl-wrap left: not started %%% watcher_reasons
 asc/watch.py %%%     return memory.steady(samples)  # the gate (room for its size) is On's own %%%     return "" %%% after a dip, waits for 5 min steady %%% watcher_ended
-asc/watch.py %%%     if time.time() - t > RESTART_WITHIN: %%%     if False: %%% an end over an hour old: not started again %%% watcher_ended
-asc/watch.py %%%     if not boot or boot != memory.boot_id(): %%%     if boot != memory.boot_id(): %%% no boot id, here or in the record: not taken as this boot %%% watcher_ended
-asc/cli.py %%%     if p["pane_pid"] != pane_pid: %%%     if False: %%% its pane is not the shell asctl-wrap left: not started %%% watcher_ended
-asc/cli.py %%%     if p["in_mode"]: %%%     if False: %%% its pane scrolled back: not started %%% watcher_ended
-asc/cli.py %%%     if any(time.time() - a < TYPING_S for a in acts): %%%     if False: %%% someone typing in it (a recent key from a client): not started %%% watcher_ended
+asc/watch.py %%%     if time.time() - t > RESTART_WITHIN: %%%     if False: %%% an end over an hour old: not started again %%% watcher_reasons
+asc/watch.py %%%     if not boot or boot != memory.boot_id(): %%%     if boot != memory.boot_id(): %%% no boot id, here or in the record: not taken as this boot %%% watcher_reasons
+asc/cli.py %%%     if p["pane_pid"] != pane_pid: %%%     if False: %%% its pane is not the shell asctl-wrap left: not started %%% watcher_reasons
+asc/cli.py %%%     if p["in_mode"]: %%%     if False: %%% its pane scrolled back: not started %%% watcher_reasons
+asc/cli.py %%%     if any(time.time() - a < TYPING_S for a in acts): %%%     if False: %%% someone typing in it (a recent key from a client): not started %%% watcher_reasons
 asc/cli.py %%%     if live.children_map().get(pane_pid): %%%     if False: %%% its pane runs something: not started %%% watcher_ended
-asc/watch.py %%%             if st["failed"].get(e["id4"]) != msg: %%%             if True: %%% an error with one entry: logged once while it lasts, the others go on %%% watcher_ended
-asc/watch.py %%%             with registry.entry_lock(e["id4"]): %%%             if True: %%% an entry an action holds: left alone %%% watcher_ended
+asc/watch.py %%%             if st["failed"].get(e["id4"]) != msg: %%%             if True: %%% an error with one entry: logged once while it lasts, the others go on %%% watcher_reasons
+asc/watch.py %%%             with registry.entry_lock(e["id4"]): %%%             if True: %%% an entry an action holds: left alone %%% watcher_others
 asc/watch.py %%%         return str(x) %%%         _set(e, {}, {"auto_restarted": int(time.time())}); return str(x) %%% steady again: started %%% watcher_ended
-asc/cli.py %%%         r = tmuxctl.respawn(pane, e["cwd"], [wrap, exit_file(e["id4"])] + argv) %%%         tmuxctl.kill_session(e["tmux"]); r = tmuxctl.new_session(e["tmux"], e["cwd"], [wrap, exit_file(e["id4"])] + argv) %%% restart in place: the same session and pane %%% watcher_ended
+asc/cli.py %%%         r = tmuxctl.respawn(pane, e["cwd"], [wrap, exit_file(e["id4"])] + argv) %%%         tmuxctl.kill_session(e["tmux"]); r = tmuxctl.new_session(e["tmux"], e["cwd"], [wrap, exit_file(e["id4"])] + argv) %%% restart in place: the same session and pane %%% watcher_reasons
 asc/memory.py %%%     if any(b["t"] - a["t"] > GAP_S for a, b in zip(chain, chain[1:])): %%%     if False: %%% steady and evidence: gaps, a dip, another boot, each kind of pressure, samples too far apart %%% watcher_memory
 asc/memory.py %%%     if low < pct: %%%     if False: %%% steady and evidence: gaps, a dip, another boot, each kind of pressure, samples too far apart %%% watcher_memory
 asc/memory.py %%%     if (grew("oom_kill") or 0) > 0: %%%     if False: %%% steady and evidence: gaps, a dip, another boot, each kind of pressure, samples too far apart %%% watcher_memory
@@ -163,18 +163,18 @@ asc/setup.py %%%         cli.out("asctl is set up already: nothing to do") %%%  
 asc/setup.py %%%     if server and not conf: %%%     if False: %%% setup, continuum's restore on only in the running server: refused, the tmux command that turns it off named %%% asctl_setup
 asc/setup.py %%%     if server and not conf: %%%     if server: %%% setup, continuum on in the config and the server: the config first %%% asctl_setup
 asc/setup.py %%% for o in server)) %%% for o in ("restore", "boot"))) %%% setup, continuum's restore on only in the running server: refused, the tmux command that turns it off named %%% asctl_setup
-asc/live.py %%%     if s["kind"] == "bg" and not s.get("pane"): %%%     if False: %%% off of a background session refused while it works %%% outside
+asc/live.py %%%     if s["kind"] == "bg" and not s.get("pane"): %%%     if False: %%% off of a background session refused while it works %%% outside_bg
 asc/live.py %%%     if 136 <= major <= 143: %%%     if False: %%% off refused: where it runs named (the program and its terminal), and how to move it in %%% outside
 asc/live.py %%%     for a in ancestors(s["pid"])[1:]: %%%     for a in []: %%% off refused: where it runs named (the program and its terminal), and how to move it in %%% outside
-asc/cli.py %%%     if away and live.where(away)["how"] == "background" and away["job"] and not up: %%%     if False: %%% off of a background session refused while it works %%% outside
-asc/cli.py %%%             raise RegistryError(f"busy: {why} (its claude runs as {live.where(away)['text']})") %%%             pass %%% off of a background session refused while it works %%% outside
+asc/cli.py %%%     if away and live.where(away)["how"] == "background" and away["job"] and not up: %%%     if False: %%% off of a background session refused while it works %%% outside_bg
+asc/cli.py %%%             raise RegistryError(f"busy: {why} (its claude runs as {live.where(away)['text']})") %%%             pass %%% off of a background session refused while it works %%% outside_bg
 asc/cli.py %%%         return f"its claude is {'working' if s['status'] == 'busy' else s['status']}" %%%         return "" %%% restart refused while it works %%% outside
-asc/cli.py %%%     if w["how"] == "background" and now["job"]: %%%     if False: %%% off: claude stop failing is said, and the session still runs %%% outside
-asc/cli.py %%%         if not live.alive(now["pid"], now["proc_start"]): %%%         if True: %%% restart: a claude that does not end on SIGTERM: nothing started %%% outside
+asc/cli.py %%%     if w["how"] == "background" and now["job"]: %%%     if False: %%% off: claude stop failing is said, and the session still runs %%% outside_bg
+asc/cli.py %%%         if not live.alive(now["pid"], now["proc_start"]): %%%         if True: %%% restart: a claude that does not end on SIGTERM: nothing started %%% outside_hold
 asc/cli.py %%%         raise RegistryError(f"its claude runs in {w['text']}, and tmux session {e['tmux']!r} is up " %%%         print(f"its claude runs in {w['text']}, and tmux session {e['tmux']!r} is up " %%% restart refused: its tmux session is up without it (nothing ended) %%% outside
 asc/cli.py %%%     if away and not away.get("host"): %%%     if False: %%% restart refused while it works %%% outside
 asc/cli.py %%%     if outside: %%%     if False: %%% restart --outside (the page's): refused for a claude in its tmux session %%% outside
-asc/cli.py %%%         raise ActionFailed(f"claude stop {now['job']}: {(r.stderr or r.stdout).strip()[:200] or 'failed'}") %%%         pass %%% off: claude stop failing is said, and the session still runs %%% outside
+asc/cli.py %%%         raise ActionFailed(f"claude stop {now['job']}: {(r.stderr or r.stdout).strip()[:200] or 'failed'}") %%%         pass %%% off: claude stop failing is said, and the session still runs %%% outside_bg
 asc/cli.py %%%             x["rename_title"] = True if title else None %%%             x["rename_title"] = None %%% a start that cannot send its name to claude.ai (claude busy): owed to it, though claude has the name %%% outside
 asc/watch.py %%%     if pend != e["tmux"] or (s["name"] == pend and not e.get("rename_title")): %%%     if pend != e["tmux"] or s["name"] == pend: %%% the watcher sends it once claude is idle (/rename, though claude has the name), and it is no longer owed %%% outside
 asc/rclive.py %%%     if wait_for(lambda: offers_cmd(screen(pane), before), timeout): %%%     if offers_cmd(steady(pane), before): %%% off: a menu drawn a moment after the typed text is waited for %%% rc_now
@@ -184,12 +184,12 @@ asc/rclive.py %%% t is not None and t != typed and %%% t is not None and %%% set
 asc/rclive.py %%% and t != typed and typed.startswith(t) %%% and t != typed %%% settled: all of what was typed, or other text, is taken once it stops changing %%% rc_slow
 asc/rclive.py %%% *["BSpace"] * len(cmd)) %%% *["BSpace"] * len(t)) %%% take back, a slow claude: the whole command removed once its prompt stopped changing %%% rc_slow
 asc/rclive.py %%% else settled(pane) %%% else prompt_text(screen(pane)) %%% take back, a slow claude: the whole command removed once its prompt stopped changing %%% rc_slow
-asc/rclive.py %%%             if not wait_for(lambda: marked(steady(pane)) != was, 5):⏎                tmuxctl.send_pane(pane, "Escape")⏎                return "its dialog did not show the selection move; closed it"⏎ %%%             time.sleep(0.3)⏎ %%% rc off, a dialog redrawn late: Disconnect chosen, one Up at a time %%% rc_slow
-asc/rclive.py %%% if t is not None and cmd.startswith(t): %%% if t and cmd.startswith(t): %%% take back, nothing drawn yet: removed as it shows %%% rc_slow
-asc/rclive.py %%%     why = typed_in(s, since)⏎    if why:⏎        return why⏎ %%%     why = None⏎ %%% rc on: not when someone at its tmux session typed just now %%% rc_slow
-asc/rclive.py %%%     if any(a >= since for a in acts): %%%     if False: %%% rc on: not when someone at its tmux session typed just now %%% rc_slow
-asc/rclive.py %%% why = check(scr, before) or typed_in(s, since) %%% why = check(scr, before) %%% someone typed while asctl typed: no Enter, its prompt left as it is %%% rc_slow
-asc/rclive.py %%%         if meanwhile(): %%%         if False: %%% someone typed while asctl typed: no Enter, its prompt left as it is %%% rc_slow
+asc/rclive.py %%%             if not wait_for(lambda: marked(steady(pane)) != was, 5):⏎                tmuxctl.send_pane(pane, "Escape")⏎                return "its dialog did not show the selection move; closed it"⏎ %%%             time.sleep(0.3)⏎ %%% rc off, a dialog redrawn late: Disconnect chosen, one Up at a time %%% rc_slow_typed
+asc/rclive.py %%% if t is not None and cmd.startswith(t): %%% if t and cmd.startswith(t): %%% take back, nothing drawn yet: removed as it shows %%% rc_slow_seen
+asc/rclive.py %%%     why = typed_in(s, since)⏎    if why:⏎        return why⏎ %%%     why = None⏎ %%% rc on: not when someone at its tmux session typed just now %%% rc_slow_seen
+asc/rclive.py %%%     if any(a >= since for a in acts): %%%     if False: %%% rc on: not when someone at its tmux session typed just now %%% rc_slow_seen
+asc/rclive.py %%% why = check(scr, before) or typed_in(s, since) %%% why = check(scr, before) %%% someone typed while asctl typed: no Enter, its prompt left as it is %%% rc_slow_typed
+asc/rclive.py %%%         if meanwhile(): %%%         if False: %%% someone typed while asctl typed: no Enter, its prompt left as it is %%% rc_slow_typed
 asc/events.py %%% [i for r, i in mine if r < per] %%% [i for r, i in mine] %%% kept: a favorite's last 200 however old; others 7 days; before a forget is an earlier favorite's %%% events
 asc/events.py %%%         elif t >= cut: %%%         elif True: %%% pruned: an event past 7 days and a broken line %%% events
 asc/events.py %%%         if fav and kind == "forget": %%%         if False: %%% kept: a favorite's last 200 however old; others 7 days; before a forget is an earlier favorite's %%% events
