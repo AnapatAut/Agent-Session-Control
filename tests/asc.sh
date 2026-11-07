@@ -181,7 +181,9 @@ cg() { cut -d: -f3 "/proc/$1/cgroup" 2>/dev/null; }
 wp=$(ps -o ppid= -p "$pid" | tr -d ' '); sp=$(tm display -p '#{pid}')
 if [ "$(cg "$wp")" = "$(cg "$sp")" ]; then skip "claude is in its pane's scope, not the server's cgroup" "no pane scopes here (no user bus for tmux)"
 else [ "$(cg "$pid")" = "$(cg "$wp")" ] && ok "claude is in its pane's scope, not the server's cgroup" || bad "claude is in its pane's scope, not the server's cgroup" "claude in $(cg "$pid"), its pane in $(cg "$wp")"; fi
-lastargs | grep -q -- "--resume $SID --name das-$id --permission-mode auto" && ok "started with --resume, --name and the mode" || bad "started with --resume, --name and the mode" "wrong args: $(lastargs)"
+# dev's claude had no message yet, so no transcript: started as new on its session id (--resume
+# would find nothing, and claude would exit at once)
+lastargs | grep -q -- "--session-id $SID --name das-$id --permission-mode auto" && ok "no transcript yet: started with --session-id, --name and the mode" || bad "no transcript yet: started with --session-id, --name and the mode" "wrong args: $(lastargs)"
 [ "$(jqe ".entries[\"$id\"].want_on")" = true ] && ok "want_on true after on" || bad "want_on true after on" "want_on not true after on"
 asctl on "$id" >/dev/null 2>&1 && bad "a second on refused (session exists)" "a second on accepted" || ok "a second on refused (session exists)"
 tm rename-session -t "=das-$id" moved
@@ -406,7 +408,16 @@ W3="$T/w#{pane_id}#(true)"; mkdir -p "$W3"; printf '%s\n' "$W3" >> "$HOME/fake-t
 printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W3" "$SID3" > "$HOME/.claude/projects/-x/$SID3.jsonl"
 asctl fav "$SID3" --name fmt >/dev/null; id7=$(jq -r '.entries[] | select(.name == "fmt") | .id4' "$REG")
 asctl on "$id7" >/dev/null && grep -qF "cwd=$W3 " "$HOME/claude-args.log" && ok "claude started in the literal folder (tmux formats not expanded)" || bad "claude started in the literal folder (tmux formats not expanded)" "the folder was expanded by tmux: $(lastargs)"
+lastargs | seen -- "--resume $SID3 " && ok "a conversation with a transcript: started with --resume" || bad "a conversation with a transcript: started with --resume" "wrong args: $(lastargs)"
 asctl off "$id7" --force >/dev/null
+
+echo "== a claude that ends at once"
+touch "$HOME/fake-exit-at-once"
+t0=$(date +%s); out=$(errof on "$id2"); t1=$(date +%s)
+rm -f "$HOME/fake-exit-at-once"
+seen "^asctl: chat-$id2: tmux session started, but claude exited 3 [0-9]* s after it started" <<<"$out" && [ $((t1 - t0)) -lt 20 ] \
+	&& ok "on, a claude that ends at once: said in seconds on stderr, with its exit" || bad "on, a claude that ends at once: said in seconds on stderr, with its exit" "after $((t1 - t0)) s: $out"
+asctl off "$id2" --force >/dev/null
 
 echo "== memory gate"
 mem 32000000 1600000
@@ -981,6 +992,9 @@ EVF="$HOME/.local/state/agent-session-control/events.jsonl"
 OS=$1
 tm new-session -d -s outer -c "$W" -- "$ASC_CLAUDE" --session-id "$OS"
 po=$(claude_in outer) || stop "a claude in outer"
+# its first message written: a transcript, so a start takes the conversation up (--resume)
+mkdir -p "$HOME/.claude/projects/-x"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$OS" > "$HOME/.claude/projects/-x/$OS.jsonl"
 asctl fav "$po" --name outer >/dev/null; ido=$(jq -r --arg s "$OS" '.entries[] | select(.session_id == $s) | .id4' "$REG")
 asctl off "$ido" >/dev/null; asctl rc "$ido" on --next-start >/dev/null
 # $1: anything: it ignores SIGTERM
@@ -1184,6 +1198,9 @@ server_up
 WS2=$1 OT=$2
 tm new-session -d -s wend -c "$W" -- "$ASC_CLAUDE" --session-id "$WS2"
 pw=$(claude_in wend) || stop "a claude in wend"
+# its first message written: a transcript, so a start takes the conversation up (--resume)
+mkdir -p "$HOME/.claude/projects/-x"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$WS2" > "$HOME/.claude/projects/-x/$WS2.jsonl"
 asctl fav "$pw" --name wat2 >/dev/null || stop "a favorite of the claude in wend"
 idw=$(jq -r --arg s "$WS2" '.entries[] | select(.session_id == $s) | .id4' "$REG")
 asctl off "$idw" >/dev/null; asctl on "$idw" >/dev/null

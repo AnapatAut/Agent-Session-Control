@@ -17,7 +17,10 @@ asc/cli.py %%%             if owner: %%%             if False: %%% fav refused: 
 asc/cli.py %%%             if others and not whole: %%%             if False: %%% fav refused: shares its tmux session with another pane %%% shared_stale
 asc/cli.py %%%     if live_for(e): %%%     if False: %%% on refused while a live claude holds the session id %%% main
 asc/cli.py %%%             if "❯ Yes, I trust this folder" not in screen: %%%             if False: %%% on in a folder not trusted yet: the prompt answered %%% main
-asc/cli.py %%% ["--resume", e["session_id"]] if e.get("started") else %%% ["--session-id", e["session_id"]] if e.get("started") else %%% started with --resume, --name and the mode %%% main
+asc/cli.py %%% ["--resume", e["session_id"]] if has_transcript(e["session_id"]) else %%% ["--session-id", e["session_id"]] if has_transcript(e["session_id"]) else %%% a conversation with a transcript: started with --resume %%% on_gates
+asc/cli.py %%%  if has_transcript(e["session_id"]) else %%%  if e.get("started") else %%% no transcript yet: started with --session-id, --name and the mode %%% main
+asc/cli.py %%%         if os.path.exists(exit_file(e["id4"])):  # claude ended already %%%         if False:  # claude ended already %%% on, a claude that ends at once: said in seconds on stderr, with its exit %%% on_gates
+asc/cli.py %%%         print(f"asctl: {msg}", file=sys.stderr, flush=True) %%%         print(f"asctl: {msg}", flush=True) %%% on, a claude that ends at once: said in seconds on stderr, with its exit %%% on_gates
 asc/registry.py %%% fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB) %%% fcntl.LOCK_EX %%% on refused while another asctl holds the entry %%% shared_stale
 asc/registry.py %%% MODES = {"auto": "auto", "manual": "manual", "skip": "bypassPermissions"} %%% MODES = {"auto": "auto", "manual": "manual", "skip": "auto"} %%% mode skip starts with bypassPermissions %%% main
 asc/registry.py %%%     except ValueError as e: %%%     except ZeroDivisionError as e: %%% a broken registry refused, with a clear message %%% shared_stale

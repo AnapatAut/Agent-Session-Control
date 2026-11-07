@@ -93,7 +93,10 @@ Then run `bin/asctl setup` from the checkout.
 
 `bin/asctl` keeps a registry of favorite Claude Code sessions and turns each one on (a tmux
 session `NAME-ID` in its folder, the conversation resumed) and off (claude gets SIGTERM, then
-its tmux session closes). Python 3 standard library only.
+its tmux session closes). Python 3 standard library only. A conversation is resumed
+(`--resume`) only once claude has written its transcript, at its first message; before that it
+starts again as new on the same session id (`--session-id`), as `--resume` would find nothing.
+A claude that ends at once is said in seconds, with its exit code (on stderr: the page shows it).
 
 ```bash
 asctl live                  # running claudes: pid, session id, tmux session, folder

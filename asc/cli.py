@@ -145,9 +145,19 @@ def pane_free(e, pane, pane_pid):
     return ""
 
 
+def has_transcript(sid):
+    """True when claude has written the conversation's transcript, which it does at its first
+    message: only then can --resume take it up (claude exits 1 on one it cannot find), and
+    --session-id would no longer start it."""
+    pattern = os.path.expanduser(f"~/.claude/projects/*/{glob.escape(sid)}.jsonl")
+    return any(os.path.isfile(p) for p in glob.glob(pattern))
+
+
 def claude_argv(e, resurrect=False):
     a = [os.environ.get("ASC_CLAUDE", "claude")]  # isolation: no mutant may change this line
-    a += ["--resume", e["session_id"]] if e.get("started") else ["--session-id", e["session_id"]]
+    # by its transcript, not by "started": a claude started (or favorited) before its first
+    # message has none, and is started again as new, on the same session id
+    a += ["--resume", e["session_id"]] if has_transcript(e["session_id"]) else ["--session-id", e["session_id"]]
     a += ["--name", e["tmux"], "--permission-mode", start_mode(e)]
     if e.get("rc") or (resurrect and e.get("resurrect")):
         a += ["--remote-control", e.get("rc_title") or e["tmux"]]
@@ -391,6 +401,8 @@ def wait_started(e, timeout=40):
         s = live_in(e)
         if s:
             return s
+        if os.path.exists(exit_file(e["id4"])):  # claude ended already (asctl-wrap's record)
+            return None
         screen = tmuxctl.capture(e["tmux"])
         if trust_prompt(screen, e["cwd"]):
             if "❯ Yes, I trust this folder" not in screen:
@@ -494,7 +506,12 @@ def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, r
         raise ActionFailed("the tmux server ended while starting; nothing was started (it is marked on)")
     s = wait_started(e)
     if not s:
-        say("failed", e, f"{e['tmux']}: tmux session started, but no claude came up (see: tmux attach -t ={e['tmux']})")
+        ex = last_exit_full(e["id4"])
+        why = f"claude exited {ex[0]} {max(0, ex[1] - e['last_on'])} s after it started" if ex else "no claude came up"
+        msg = f"{e['tmux']}: tmux session started, but {why} (see: tmux attach -t ={e['tmux']})"
+        # on stderr, as every failure: the page shows it (stdout is for what was done)
+        print(f"asctl: {msg}", file=sys.stderr, flush=True)
+        events.log("failed", e, msg)
         return 1
     events.log("on", e, f"claude {s['pid']}, session {s['session_id']}" + (" (past the memory gate)" if force_memory else ""),
                mode=argv[argv.index("--permission-mode") + 1], rc="--remote-control" in argv)

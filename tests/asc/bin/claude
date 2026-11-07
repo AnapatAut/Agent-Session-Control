@@ -37,6 +37,10 @@
 # new session id it takes (a branch or a rewind); $HOME/fake-cd-<session id>: a folder it moves
 # to (/cd). $HOME/fake-hog: it takes 400 MB at once (the sandbox's real OOM kill; the flag is
 # removed first, so a claude started again does not do it too).
+# A conversation is taken up only from its transcript (~/.claude/projects/*/<id>.jsonl, written at
+# its first message): --resume of one with none says so and exits 1 at once, as Claude Code does;
+# --session-id of one that has one too (stricter than may be needed: a start never takes a
+# conversation up as new by mistake). $HOME/fake-exit-at-once: it exits 3 at once.
 # Every start is logged to $HOME/claude-args.log. `claude stop JOB` (a background session) sends
 # SIGTERM to the claude whose session file names that jobId, and fails for a job none names
 # ($HOME/fake-stop-fails: it fails anyway).
@@ -55,11 +59,17 @@ fi
 # edited by the terminal (bash's read sets that only while it reads: a BSpace that came between
 # two reads was taken by the terminal's line editing, and lost).
 if [ -t 0 ]; then tty_was=$(stty -g); trap 'stty "$tty_was" 2>/dev/null' EXIT; stty -echo -icanon min 1 time 0; fi
-sid=""; name=""; prev=""; rc=""
+sid=""; how=""; name=""; prev=""; rc=""
 for a in "$@"; do
-	case $prev in --resume|--session-id) sid=$a ;; --name) name=$a ;; --remote-control) rc=session_start ;; esac
+	case $prev in --resume|--session-id) sid=$a how=$prev ;; --name) name=$a ;; --remote-control) rc=session_start ;; esac
 	prev=$a
 done
+[ ! -e "$HOME/fake-exit-at-once" ] || { echo "fake: could not start" >&2; exit 3; }
+if [ -n "$sid" ]; then
+	had=$(compgen -G "$HOME/.claude/projects/*/$sid.jsonl")
+	[ "$how" != --resume ] || [ -n "$had" ] || { echo "No conversation found with session ID: $sid" >&2; exit 1; }
+	[ "$how" != --session-id ] || [ -z "$had" ] || { echo "Session ID $sid is already in use." >&2; exit 1; }
+fi
 [ -n "$sid" ] || sid=$(cat /proc/sys/kernel/random/uuid)
 src=""; [ -n "$name" ] || { name="${PWD##*/}-1a"; src=',"nameSource":"derived"'; }  # claude makes one up
 trusted="$HOME/fake-trusted"

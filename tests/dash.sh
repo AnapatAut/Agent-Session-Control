@@ -518,14 +518,14 @@ jq -e --arg a "$P1" '.past[] | select(.session_id == $a) | .title == "<b>Old</b>
 jq -e --arg b "$P2" '.past[] | select(.session_id == $b) | .title == "api work" and .cwd == "/srv/api"' <<<"$pj" >/dev/null && ok "past: title from the end of a big transcript, folder from its start" || bad "past: title from the end of a big transcript, folder from its start" "past: big transcript read wrong"
 jq -e --arg d "$P4" '.past[] | select(.session_id == $d) | .title == "Earlyoom setup"' <<<"$pj" >/dev/null && ok "past: without a title given, claude's own (the last ai-title)" || bad "past: without a title given, claude's own (the last ai-title)" "past: ai-title not used"
 jq -e '.past | length == 2' <<<"$(dc "http://x/api/past?q=SRV")" >/dev/null && ok "past: search by folder, any case" || bad "past: search by folder, any case" "past: search wrong"
-tm new-session -d -s dev2 -c "$W" -- "$ASC_CLAUDE" --session-id "$P2"
+tm new-session -d -s dev2 -c "$W" -- "$ASC_CLAUDE" --resume "$P2"
 claude_in dev2 >/dev/null || stop "a claude in dev2"
 asctl fav "$P1" >/dev/null
 pj=$(dc "http://x/api/past")
 jq -e --arg b "$P2" '[.past[].session_id] | index($b) == null' <<<"$pj" >/dev/null && ok "past: a running conversation is not listed" || bad "past: a running conversation is not listed" "past: a running one listed"
 jq -e --arg a "$P1" '[.past[].session_id] | index($a) == null' <<<"$pj" >/dev/null && ok "past: a favorite is not listed" || bad "past: a favorite is not listed" "past: a favorite listed"
 state | jq -e --arg b "$P2" '.active[] | select(.session_id == $b) | .name == "api work" and (.claude_name | endswith("-1a"))' >/dev/null && ok "a running claude with a made-up name goes by its title" || bad "a running claude with a made-up name goes by its title" "active: made-up name shown: $(state | jq -c .active)"
-tm new-session -d -s dev4 -c "$W" -- "$ASC_CLAUDE" --session-id "$P4" --name given
+tm new-session -d -s dev4 -c "$W" -- "$ASC_CLAUDE" --resume "$P4" --name given
 claude_in dev4 >/dev/null || stop "a claude in dev4"
 state | jq -e --arg d "$P4" '.active[] | select(.session_id == $d) | .name == "given"' >/dev/null && ok "a name given to claude stays, over its title" || bad "a name given to claude stays, over its title" "active: a given name replaced: $(state | jq -c .active)"
 tm kill-session -t =dev4
@@ -664,6 +664,12 @@ state | jq -e '.memory.warn' >/dev/null && ok "state: the memory warning is on b
 [ "$(post '{"action":"on","force_memory":true,'"$R3"'}' | tail -1)" = 200 ] && ok "on with force_memory (after the page's confirm)" || bad "on with force_memory (after the page's confirm)" "forced on failed"
 post '{"action":"off","force":true,'"$R3"'}' >/dev/null
 mem 32000000 16000000
+touch "$HOME/fake-exit-at-once"
+out=$(post '{"action":"on",'"$R3"'}')
+rm -f "$HOME/fake-exit-at-once"
+[ "$(tail -1 <<<"$out")" = 409 ] && seen '"error": "trio-'"$id3"': tmux session started, but claude exited 3 ' <<<"$out" \
+	&& ok "on, a claude that ends at once: refused with its exit, not an unknown error" || bad "on, a claude that ends at once: refused with its exit, not an unknown error" "on, claude ending at once: $out"
+post '{"action":"off","force":true,'"$R3"'}' >/dev/null
 }
 
 case_notices() {
