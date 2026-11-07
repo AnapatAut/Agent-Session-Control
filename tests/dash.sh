@@ -501,6 +501,28 @@ dc "http://x/api/events" | jq -e '(.events | length > 5) and .events[0].kind == 
 [ "$(dc -o /dev/null -w '%{http_code}' "http://x/api/events?id=12")" = 400 ] && ok "events: a bad id is 400" || bad "events: a bad id is 400" "events: bad id accepted"
 }
 
+case_actions_new() {
+echo "== actions: a new session in a folder pasted by path"
+dash_up
+mkdir -p "$HOME/web" "$HOME/fresh2"; printf '%s\n' "$HOME/web" >> "$HOME/fake-trusted"
+n0=$(state | jq '.favorites | length')
+[ "$(post '{"action":"new","path":5}' | tail -1)" = 400 ] && ok "new: the path must be text" || bad "new: the path must be text" "a number taken as a path"
+[ "$(post '{"action":"new","path":"'"$HOME"'/web","mode":"skip"}' | tail -1)" = 400 ] && ok "new from the page: mode skip refused" || bad "new from the page: mode skip refused" "skip taken from the page"
+[ "$(post '{"action":"new","path":"'"$HOME"'/web","trust":"yes"}' | tail -1)" = 400 ] && ok "new: trust only when it is true (\"yes\" is not)" || bad "new: trust only when it is true (\"yes\" is not)" "trust taken from a non-boolean"
+[ "$(post '{"action":"new","path":"'"$HOME"'/web","name":"Bad Name"}' | tail -1)" = 400 ] && ok "new: a bad name refused" || bad "new: a bad name refused" "a bad name taken"
+out=$(post '{"action":"new","path":"-x"}')
+[ "$(tail -1 <<<"$out")" = 409 ] && seen 'is not an absolute path' <<<"$out" && ok "new: a path starting with - stays a path" || bad "new: a path starting with - stays a path" "a dash path: $out"
+out=$(post '{"action":"new","path":"'"$HOME"'/fresh2"}')
+[ "$(tail -1 <<<"$out")" = 409 ] && seen 'is not a trusted folder yet' <<<"$out" && [ "$(state | jq '.favorites | length')" = "$n0" ] \
+	&& ok "new from the page: an untrusted folder refused with the reason, nothing made" || bad "new from the page: an untrusted folder refused with the reason, nothing made" "untrusted: $out"
+out=$(post '{"action":"new","path":"'"$HOME"'/fresh2","trust":true}')
+idn=$(jq -r --arg c "$HOME/fresh2" '.entries[] | select(.cwd == $c) | .id4' "$REG")
+[ "$(tail -1 <<<"$out")" = 200 ] && [ -n "$idn" ] && state | jq -e --arg i "$idn" '.favorites[] | select(.id4 == $i) | .state == "on"' >/dev/null && lastargs | seen -- "--session-id " \
+	&& ok "new from the page, trust confirmed: on, started as new" || bad "new from the page, trust confirmed: on, started as new" "new with trust: $out"
+post '{"action":"off","force":true,"id":"'"$idn"'","tmux":"fresh2-'"$idn"'"}' >/dev/null
+post '{"action":"forget","id":"'"$idn"'","tmux":"fresh2-'"$idn"'"}' >/dev/null
+}
+
 case_past() {
 echo "== past conversations"
 dash_up
@@ -788,7 +810,7 @@ else
 fi
 }
 
-run_cases dash page config socket pwa state actions_token actions_fav past client operator stale tmux_hang transcripts token rc notices prefix systemd
+run_cases dash page config socket pwa state actions_token actions_fav actions_new past client operator stale tmux_hang transcripts token rc notices prefix systemd
 
 echo "dash: $pass passed, $fail failed"
 [ "$fail" = 0 ]

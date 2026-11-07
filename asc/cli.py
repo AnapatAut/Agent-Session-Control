@@ -5,6 +5,11 @@
   asctl fav REF [--name N] [--whole-session]
                                    favorite a running claude (REF: its pid, session id or
                                    tmux pane %N), or a past conversation (REF: its session id)
+  asctl new FOLDER [--name N] [--mode auto|manual|skip] [--rc] [--trust] [--force-memory]
+                                   a new favorite in FOLDER (a path in your home, ~/ too: not
+                                   hidden, yours, not writable by others), started as On does;
+                                   a folder Claude Code does not trust yet is refused unless
+                                   --trust, which answers its trust prompt for this start
   asctl on ID [--force-memory]     start it: a tmux session NAME-ID in its folder, resumed;
                                    refused when memory is short (asc/memory.py) unless forced
   asctl off ID [--force]           end it: claude gets SIGTERM, then its tmux session closes
@@ -89,7 +94,7 @@ def refusals(e, what):
 
 
 # Commands that change something: each is logged when refused or failed (main).
-ACTIONS = {"fav", "on", "off", "rename", "restart", "mode", "rc", "resurrect", "forget"}
+ACTIONS = {"fav", "new", "on", "off", "rename", "restart", "mode", "rc", "resurrect", "forget"}
 
 
 def exit_file(id4):
@@ -385,6 +390,69 @@ def cmd_fav(args):
     return 0
 
 
+def new_folder(path):
+    """The folder of a new favorite, checked: an absolute path (or ~/...), its real path a folder
+    in the user's home (not the home itself), no part of it hidden, and it and every folder from
+    the home down to it the user's own and not writable by others (no one else can swap what
+    claude then runs in). Else RegistryError."""
+    if not isinstance(path, str) or not 0 < len(path) <= 4096 or any(ord(c) < 32 or ord(c) == 127 for c in path):
+        raise RegistryError("the folder must be a path of 1 to 4096 characters, none a control character")
+    p = os.path.expanduser(path) if path == "~" or path.startswith("~/") else path
+    if not os.path.isabs(p):
+        raise RegistryError(f"{path!r} is not an absolute path (or ~/...)")
+    home, real = os.path.realpath(os.path.expanduser("~")), os.path.realpath(p)
+    rel = os.path.relpath(real, home)
+    if real == home:
+        raise RegistryError("not the home folder itself: a folder in it")
+    if rel == ".." or rel.startswith(".." + os.sep):
+        raise RegistryError(f"{real} is not in your home folder")
+    parts = rel.split(os.sep)
+    if any(x.startswith(".") for x in parts):
+        raise RegistryError(f"{real} is a hidden folder, or in one")
+    if not os.path.isdir(real):
+        raise RegistryError(f"{real} is not a folder")
+    for i in range(len(parts)):
+        d = os.path.join(home, *parts[:i + 1])
+        st = os.lstat(d)
+        if st.st_uid != os.getuid() or st.st_mode & 0o002:
+            raise RegistryError(f"{d} is not yours, or others can write to it")
+    return real
+
+
+def cmd_new(args):
+    cwd = new_folder(args.folder)
+    name = registry.check_name(args.name) if args.name else registry.slug(os.path.basename(cwd))
+    if not args.force_memory:
+        why = memory.gate()
+        if why:
+            raise RegistryError(f"{why} (asctl new --force-memory starts it anyway)")
+    sid = str(uuid.uuid4())
+    with registry.changing() as data:
+        taken = tmuxctl.sessions()
+        id4 = registry.new_id4(data, taken)
+        tmux = f"{name}-{id4}"
+        if tmux in taken:
+            raise RegistryError(f"tmux session {tmux!r} exists")
+        t = registry.now()
+        data["entries"][id4] = {
+            "id4": id4, "name": name, "tmux": tmux, "cwd": cwd, "session_id": sid, "lineage": [],
+            "started": False, "rc": args.rc, "rc_title": tmux, "mode": args.mode,
+            "resurrect": False, "want_on": False, "note": "", "created": t, "last_on": None, "last_off": None,
+        }
+        e = dict(data["entries"][id4])
+    say("new", e, f"new session {id4} {tmux} ({cwd})", session=sid)
+    with registry.entry_lock(id4):
+        try:
+            return _on(id4, args.force_memory, trust=args.trust)
+        except Untrusted:
+            # its tmux session (claude at the prompt) and the favorite go: nothing was started
+            tmuxctl.kill_session(tmux)
+            with registry.changing() as data:
+                data["entries"].pop(id4, None)
+            events.log("forget", e, f"forgot {id4} {tmux}: not started, its folder not trusted yet")
+            raise
+
+
 def trust_prompt(screen, cwd):
     """True only for Claude Code's own trust prompt for this folder: its fixed lines, in
     order, as the last lines on screen (a transcript that quotes them does not count)."""
@@ -399,10 +467,15 @@ def trust_prompt(screen, cwd):
             and rest[-1].startswith("Enter to confirm") and cwd in "".join(lines))
 
 
-def wait_started(e, timeout=40):
+class Untrusted(RegistryError):
+    """Claude Code asks whether to trust the folder, and this start may not answer it."""
+
+
+def wait_started(e, timeout=40, trust=True):
     """Wait for the claude of a just-started session; answer the trust prompt only for the
     entry's own folder (Claude Code selects "No, exit" by default: press Down, check, Enter),
-    and only while no claude in the session has its session file yet."""
+    and only while no claude in the session has its session file yet. trust False: never
+    answer it (Untrusted when it shows)."""
     end = time.time() + timeout
     while time.time() < end:
         time.sleep(0.5)
@@ -415,12 +488,16 @@ def wait_started(e, timeout=40):
             return None
         screen = tmuxctl.capture(e["tmux"])
         if trust_prompt(screen, e["cwd"]):
+            if not trust:
+                raise Untrusted(f"{e['cwd']} is not a trusted folder yet: Claude Code asks whether to trust it "
+                                f"(asctl new --trust answers yes for it)")
             if "❯ Yes, I trust this folder" not in screen:
                 tmuxctl.send_key(e["tmux"], "Down")
                 time.sleep(0.5)
             screen = tmuxctl.capture(e["tmux"])
             if trust_prompt(screen, e["cwd"]) and "❯ Yes, I trust this folder" in screen and not live_in(e):
                 tmuxctl.send_key(e["tmux"], "Enter")
+                events.log("trusted", e, f"answered Claude Code's trust prompt for {e['cwd']}: yes")
     return None
 
 
@@ -454,12 +531,13 @@ def ensure_server():
     return pid
 
 
-def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, resurrect=False):
+def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, resurrect=False, trust=True):
     """On, with the entry's lock held. pane, pane_pid: a pane %N of the entry's own tmux session
     whose claude ended, and the PID asctl-wrap left there (the watcher's restart): claude runs
     there again in place of its shell (the session and anyone attached stay), after the same
     checks and pane_free just before. starting: called once nothing can refuse any more.
-    resurrect: asctl boot's start (with rc when resurrect is on, as claude_argv says)."""
+    resurrect: asctl boot's start (with rc when resurrect is on, as claude_argv says).
+    trust: whether Claude Code's trust prompt for its folder may be answered (wait_started)."""
     e = registry.find(registry.load(), id4)
     if pane is not None:
         server = tmuxctl.server_pid()  # a pane to start in: its server, never a new one
@@ -514,7 +592,7 @@ def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, r
         if pane is None:
             tmuxctl.kill_session(e["tmux"])
         raise ActionFailed("the tmux server ended while starting; nothing was started (it is marked on)")
-    s = wait_started(e)
+    s = wait_started(e, trust=trust)
     if not s:
         ex = started_exit(e)
         why = f"claude exited {ex[0]} {max(0, ex[1] - e['last_on'])} s after it started" if ex else "no claude came up"
@@ -909,6 +987,14 @@ def main(argv=None):
     a.add_argument("--name")
     a.add_argument("--whole-session", action="store_true")
     a.set_defaults(f=cmd_fav)
+    a = sub.add_parser("new")
+    a.add_argument("folder")
+    a.add_argument("--name")
+    a.add_argument("--mode", choices=list(registry.MODES), default="auto")
+    a.add_argument("--rc", action="store_true")
+    a.add_argument("--trust", action="store_true")
+    a.add_argument("--force-memory", action="store_true")
+    a.set_defaults(f=cmd_new)
     a = sub.add_parser("on")
     a.add_argument("id")
     a.add_argument("--force-memory", action="store_true")
@@ -973,10 +1059,10 @@ def main(argv=None):
         if args.cmd not in ACTIONS:
             return args.f(args)
         try:
-            e = registry.find(registry.load(), args.id) if args.cmd != "fav" else None
+            e = registry.find(registry.load(), args.id) if args.cmd not in ("fav", "new") else None
         except RegistryError:
             e = None
-        with refusals(e, args.cmd + ("" if e or args.cmd == "fav" else f" {args.id}")):
+        with refusals(e, args.cmd + ("" if e or args.cmd in ("fav", "new") else f" {args.id}")):
             return args.f(args)
     except RegistryError as e:
         print(f"asctl: {e}", file=sys.stderr)

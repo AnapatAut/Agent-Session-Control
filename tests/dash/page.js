@@ -76,4 +76,17 @@ check("repeats in a row fold into one line, from the first",
   `(() => { const r = (t) => ({ t, kind: "refused", by: "page", text: "on: 0001 is being started or stopped by another asctl; try again" });
     const g = evFold([r(900), r(800), r(700), { t: 600, kind: "on", by: "page", text: "" }, r(500)]);
     return g.length === 3 && g[0].n === 3 && g[0].first === 700 && g[1].n === 1 && g[2].n === 1; })()`);
+// A new session refused: what the page may ask, and the folder its trust confirm names.
+const UT = HOME + "/real is not a trusted folder yet: Claude Code asks whether to trust it (asctl new --trust answers yes for it)";
+check("new: an untrusted folder is asked about before trust is sent, never again once sent",
+  `newRetry({ action: "new", path: "~/x" }, { ok: false, error: "${UT}" }) === "trust"
+  && newRetry({ action: "new", path: "~/x", trust: true }, { ok: false, error: "${UT}" }) === null`);
+check("new: memory short asks to force it, a forced one never again",
+  `newRetry({ action: "new" }, { ok: false, error: "memory: 5.0% available, a start needs 20%" }) === "memory"
+  && newRetry({ action: "new", force_memory: true }, { ok: false, error: "memory: 5.0% available" }) === null`);
+check("new: other refusals, other actions and a success ask nothing",
+  `newRetry({ action: "new" }, { ok: false, error: "${HOME}/f is not a folder" }) === null
+  && newRetry({ action: "on" }, { ok: false, error: "${UT}" }) === null && newRetry({ action: "new" }, { ok: true }) === null`);
+check("new: the trust confirm names the folder asctl named (its real path)", `untrustedPath("${UT}") === "${HOME}/real"`);
+check("new and trusted: in words", `evLabel({ kind: "new" }) === "Created" && evLabel({ kind: "trusted" }) === "Folder trusted"`);
 process.exit(fail ? 1 : 0);

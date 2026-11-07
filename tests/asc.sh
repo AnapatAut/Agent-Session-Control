@@ -455,6 +455,49 @@ asctl note "$id2" "$(head -c 501 /dev/zero | tr '\0' x)" >/dev/null 2>&1 && bad 
 asctl note "$id2" -- "-starts with a dash" >/dev/null && ok "a note may start with -" || bad "a note may start with -" "a note starting with - refused"
 }
 
+# asctl new: a new favorite in a folder pasted by path, started as new (no transcript yet); its
+# folder's checks; Claude Code's trust prompt answered only with --trust.
+case_new_session() {
+server_up
+echo "== new: a favorite in a folder given by path"
+mkdir -p "$HOME/proj" "$HOME/Proj Two" "$HOME/fresh" "$HOME/.hid" "$HOME/open"
+chmod o+w "$HOME/open"; : > "$HOME/nofile"; ln -s "$W" "$HOME/link"
+printf '%s\n' "$HOME/proj" "$HOME/Proj Two" >> "$HOME/fake-trusted"
+nid() { jq -r --arg c "$1" '[.entries[] | select(.cwd == $c) | .id4] | last // empty' "$REG"; }
+asctl new "$HOME/proj" --name proj >/dev/null; idn=$(nid "$HOME/proj")
+sn=$(jqe ".entries[\"$idn\"].session_id")
+[ -n "$idn" ] && lastargs | seen -- "--session-id $sn --name proj-$idn --permission-mode auto" && claude_now "proj-$idn" >/dev/null && last new | seen "new session $idn proj-$idn" \
+	&& ok "new: a favorite, its claude up, started as new (--session-id)" || bad "new: a favorite, its claude up, started as new (--session-id)" "new: $idn $(lastargs)"
+asctl new '~/Proj Two' --mode manual --rc >/dev/null; id2n=$(nid "$HOME/Proj Two")
+[ -n "$id2n" ] && claude_now "proj-two-$id2n" >/dev/null && lastargs | seen -- "--name proj-two-$id2n --permission-mode manual --remote-control proj-two-$id2n" \
+	&& ok "new: ~/ taken, named after its folder, its mode and rc" || bad "new: ~/ taken, named after its folder, its mode and rc" "new ~/: $id2n $(lastargs)"
+n0=$(jq '.entries | length' "$REG"); s0=$(tm ls -F '#{session_name}' | sort | tr '\n' ' ')
+refused() { out=$(errof new "$@"); seen -- "$want" <<<"$out"; }
+want="is not an absolute path"; refused proj && ok "new refused: a relative path" || bad "new refused: a relative path" "relative: $out"
+want="is not in your home folder"; refused "$W" && ok "new refused: a folder outside the home" || bad "new refused: a folder outside the home" "outside: $out"
+want="is not in your home folder"; refused "$HOME/link" && ok "new refused: a link in the home to a folder outside it" || bad "new refused: a link in the home to a folder outside it" "link: $out"
+want="not the home folder itself"; refused "$HOME" && ok "new refused: the home folder itself" || bad "new refused: the home folder itself" "home: $out"
+want="is a hidden folder, or in one"; refused "$HOME/.hid" && ok "new refused: a hidden folder" || bad "new refused: a hidden folder" "hidden: $out"
+want="is not a folder"; refused "$HOME/nofile" && ok "new refused: not a folder" || bad "new refused: not a folder" "not a folder: $out"
+want="is not yours, or others can write to it"; refused "$HOME/open" && ok "new refused: a folder others can write to" || bad "new refused: a folder others can write to" "o+w: $out"
+want="none a control character"; refused "$HOME/pr"$'\t'"oj" && ok "new refused: a control character in the path" || bad "new refused: a control character in the path" "control: $out"
+mem 32000000 1600000
+want="memory: 5.0% available"; refused "$HOME/proj" && ok "new refused when memory is short" || bad "new refused when memory is short" "memory: $out"
+mem 32000000 16000000
+echo "== new: a folder Claude Code does not trust yet"
+want="is not a trusted folder yet"; refused "$HOME/fresh" && ok "new refused: an untrusted folder, its trust prompt not answered" || bad "new refused: an untrusted folder, its trust prompt not answered" "untrusted: $out"
+[ "$(jq '.entries | length' "$REG")" = "$n0" ] && [ "$(tm ls -F '#{session_name}' | sort | tr '\n' ' ')" = "$s0" ] && ! seen -xF "$HOME/fresh" "$HOME/fake-trusted" \
+	&& ok "new refused: no favorite, tmux session or trust left behind" || bad "new refused: no favorite, tmux session or trust left behind" "left: $(jq -c '[.entries[].tmux]' "$REG") / $(tm ls -F '#{session_name}' | tr '\n' ' ')"
+asctl new "$HOME/fresh" --trust >/dev/null; id3n=$(nid "$HOME/fresh")
+[ -n "$id3n" ] && claude_now "fresh-$id3n" >/dev/null && seen -xF "$HOME/fresh" "$HOME/fake-trusted" && last trusted | seen "trust prompt for $HOME/fresh: yes" \
+	&& ok "new --trust: the trust prompt answered for its folder, logged" || bad "new --trust: the trust prompt answered for its folder, logged" "--trust: $id3n $(last trusted)"
+echo "== new: off and on before a first message"
+asctl off "$idn" >/dev/null; asctl on "$idn" >/dev/null
+claude_now "proj-$idn" >/dev/null && lastargs | seen -- "--session-id $sn " \
+	&& ok "new, off and on before a first message: started again as new" || bad "new, off and on before a first message: started again as new" "on again: $(lastargs)"
+for x in "$idn" "$id2n" "$id3n"; do asctl off "$x" --force >/dev/null; asctl forget "$x" >/dev/null; done
+}
+
 case_rc_now() {
 echo "== rc now: the menu and the input box on screens drawn by hand (asc/rclive.py)"
 # The menu by its shape and mark, on screens drawn by hand (each its own check).
@@ -1644,7 +1687,7 @@ ud() { HOME="$H2" XDG_CONFIG_HOME="$1" python3 -I -c 'import sys; sys.path.inser
 rm "$F2/environment"
 }
 
-run_cases asc no_tmux_server main shared_stale guards on_gates rc_now rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot asctl_setup
+run_cases asc no_tmux_server main shared_stale guards on_gates new_session rc_now rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot asctl_setup
 
 echo "asc: $pass passed, $fail failed"
 [ "$fail" = 0 ]

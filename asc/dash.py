@@ -412,6 +412,25 @@ def action_argv(a):
         if a.get("name") is not None:
             argv += ["--name", registry.check_name(_text(a["name"]))]
         return argv + (["--whole-session"] if a.get("whole_session") is True else [])
+    if kind == "new":
+        # the folder pasted on the page; asctl new checks it (a folder of the user's own, in the
+        # home, not hidden), and answers Claude Code's trust prompt only with trust: true, which
+        # the page sends after its own warning was confirmed
+        path = a.get("path")
+        if not isinstance(path, str) or not 0 < len(path) <= 4096 or any(ord(c) < 32 or ord(c) == 127 for c in path):
+            raise RegistryError("new needs path: a folder's path")
+        argv = ["new"]
+        if a.get("name") not in (None, ""):
+            argv += ["--name", registry.check_name(_text(a["name"]))]
+        if a.get("mode", "auto") not in WEB_MODES:
+            raise RegistryError("from the page the mode can be auto or manual; skip only with asctl new --mode skip")
+        argv += ["--mode", a.get("mode", "auto")]
+        for k in ("rc", "trust", "force_memory"):
+            if not isinstance(a.get(k, False), bool):
+                raise RegistryError(f"{k} needs true or false")
+            if a.get(k):
+                argv.append("--" + k.replace("_", "-"))
+        return argv + ["--", path]
     if not isinstance(id4, str) or not registry.ID4_RE.fullmatch(id4):
         raise RegistryError("id must be a favorite's 4-digit id")
     # The page names the entry it shows: a page out of date (a rename, an id forgotten and drawn

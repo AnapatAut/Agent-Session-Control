@@ -34,9 +34,9 @@ KEEP_SLACK = 50
 KEEP_DAYS = 7
 MAX_BYTES = 2 << 20
 CHECK_BYTES = 16000  # a favorite's line is over 80 bytes: under this none can have KEEP_PER
-KINDS = {"fav", "forget", "on", "off", "restart", "rename", "rc", "resurrect", "mode", "refused",
+KINDS = {"fav", "new", "forget", "on", "off", "restart", "rename", "rc", "resurrect", "mode", "refused",
          "failed", "ended", "restarted", "followed", "waiting", "duplicate", "memory", "setting",
-         "setup"}
+         "setup", "trusted"}
 BY = {"cli", "page", "watch", "boot"}
 
 

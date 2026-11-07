@@ -215,3 +215,16 @@ asc/past.py %%%             if isinstance(k, str) and _entry(v) and v["size"] ==
 asc/boot.py %%%             _status([], "", done=True) %%%             pass %%% boot.json once boot ends: done %%% boot
 asc/boot.py %%%         _status(todo, why) %%%         pass %%% boot.json while boot runs (its lock held): what it still brings back, and why it waits (0600) %%% boot
 asc/cli.py %%%  and any(p["pane_pid"] == ex[3] for p in tmuxctl.panes(e["tmux"])): %%%  and True: %%% an exit record of another pane (one the session before wrote late) is not this start's %%% on_gates
+asc/cli.py %%%     if not os.path.isabs(p): %%%     if False: %%% new refused: a relative path %%% new_session
+asc/cli.py %%%     if real == home: %%%     if False: %%% new refused: the home folder itself %%% new_session
+asc/cli.py %%%     if rel == ".." or rel.startswith(".." + os.sep): %%%     if False: %%% new refused: a folder outside the home %%% new_session
+asc/cli.py %%%     if any(x.startswith(".") for x in parts): %%%     if False: %%% new refused: a hidden folder %%% new_session
+asc/cli.py %%%     if not os.path.isdir(real): %%%     if False: %%% new refused: not a folder %%% new_session
+asc/cli.py %%%         if st.st_uid != os.getuid() or st.st_mode & 0o002: %%%         if st.st_uid != os.getuid(): %%% new refused: a folder others can write to %%% new_session
+asc/cli.py %%% raise RegistryError("the folder must be a path of 1 to 4096 characters, none a control character") %%% pass %%% new refused: a control character in the path %%% new_session
+asc/cli.py %%%         why = memory.gate()⏎        if why:⏎            raise RegistryError(f"{why} (asctl new %%%         why = ""⏎        if why:⏎            raise RegistryError(f"{why} (asctl new %%% new refused: no favorite, tmux session or trust left behind %%% new_session
+asc/cli.py %%%             return _on(id4, args.force_memory, trust=args.trust) %%%             return _on(id4, args.force_memory, trust=True) %%% new refused: an untrusted folder, its trust prompt not answered %%% new_session
+asc/cli.py %%%             if not trust: %%%             if False: %%% new refused: an untrusted folder, its trust prompt not answered %%% new_session
+asc/cli.py %%%             tmuxctl.kill_session(tmux) %%%             pass %%% new refused: no favorite, tmux session or trust left behind %%% new_session
+asc/cli.py %%%                 data["entries"].pop(id4, None) %%%                 pass %%% new refused: no favorite, tmux session or trust left behind %%% new_session
+asc/cli.py %%%                 events.log("trusted", e, %%%                 None and events.log("trusted", e, %%% new --trust: the trust prompt answered for its folder, logged %%% new_session

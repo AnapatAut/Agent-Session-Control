@@ -185,6 +185,11 @@ details.top .opts { background: var(--card); margin-top: 10px; }
 .dlg input { display: block; width: 100%; margin-top: 14px; border: 2px solid var(--line); border-radius: 14px; padding: 11px 13px;
              font: inherit; font-size: 16px; background: var(--well); outline: none; }
 .dlg input:focus { border-color: var(--blue); background: #fff; }
+.fl { display: block; }
+.fl input { display: block; width: 100%; border: 2px solid var(--line); border-radius: 14px; padding: 11px 13px;
+            font: inherit; font-size: 16px; background: var(--well); outline: none; }
+.fl input:focus { border-color: var(--blue); background: #fff; }
+.newrow { display: flex; justify-content: flex-end; margin-top: 4px; }
 .dlg-err { min-height: 18px; margin-top: 6px; font-size: 12.5px; color: var(--red); }
 .dlg-err:empty { min-height: 0; margin: 0; }
 .dlg-b { display: flex; gap: 10px; margin-top: 18px; }

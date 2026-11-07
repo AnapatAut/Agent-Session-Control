@@ -12,7 +12,7 @@ const HIST_FIRST = 5, HIST_PAGE = 50;  // a sheet's history: the newest lines, t
 let S = null;            // the last state from the server
 let past = [];           // past conversations for the search box
 let filter = "all";      // the chip pressed
-let sheetOf = null;      // {kind: "fav" | "active" | "past", key}, while the sheet is open
+let sheetOf = null;      // {kind: "fav" | "active" | "past" | "new", key}, while the sheet is open
 let sheetSig = "";       // the data the open sheet was drawn from: redrawn only when it changes
 const pending = new Set();  // ids with an action running: their controls stay disabled across redraws
 const hist = new Map();     // id4: its events (newest first), for its open sheet
@@ -370,7 +370,7 @@ function toast(text) {
 // One action; returns {ok, out|error}. Off refused as busy, and On refused for memory, offer the
 // forced one after a confirm (never automatic).
 async function act(body) {
-  const id = body.id || body.ref;
+  const id = body.id || body.ref || body.path;
   pending.add(id);
   if (sheetOf) renderSheet();  // every control of this session off until the answer
   let j;
@@ -389,8 +389,14 @@ async function act(body) {
                   ok: "Force off", danger: true })) {
     return act({ ...body, force: true });
   }
-  if (!j.ok && body.action === "on" && !body.force_memory && /^memory:/.test(j.error || "") &&
-      await ask({ title: "Memory is short", text: `${j.error}\n\nStart ${body.tmux} anyway? earlyoom may then end other sessions.`,
+  const retry = newRetry(body, j);
+  if (retry === "trust" && await ask({ title: "Trust this folder?", ok: "Trust and start", danger: true,
+    text: `Claude Code will be able to read, edit, and execute files in ${tilde(untrustedPath(j.error))}.\n\n` +
+          "Only trust a folder whose contents you know: a project you made, or code from someone you trust." })) {
+    return act({ ...body, trust: true });
+  }
+  if ((retry === "memory" || (!j.ok && body.action === "on" && !body.force_memory && /^memory:/.test(j.error || ""))) &&
+      await ask({ title: "Memory is short", text: `${j.error}\n\nStart ${body.tmux || "it"} anyway? earlyoom may then end other sessions.`,
                   ok: "Start anyway", danger: true })) {
     return act({ ...body, force_memory: true });
   }
@@ -400,6 +406,17 @@ async function act(body) {
   if (sheetOf) renderSheet();  // also when the state did not change
   return j;
 }
+
+// A new session refused for what the page can ask about: its folder not trusted yet (asked
+// before trust is sent, never sent unasked), or memory short; else null.
+function newRetry(body, j) {
+  if (j.ok || body.action !== "new") return null;
+  if (!body.trust && /^.+ is not a trusted folder yet: /.test(j.error || "")) return "trust";
+  if (!body.force_memory && /^memory:/.test(j.error || "")) return "memory";
+  return null;
+}
+// The folder asctl named as not trusted: its real path, which the confirm shows (a link resolved)
+function untrustedPath(error) { return (error || "").split(" is not a trusted folder yet: ")[0]; }
 
 async function refresh() {
   const rf = $("rf");
@@ -456,6 +473,7 @@ function staleCheck() {
   $("nup").hidden = !stale;
   if (!stale) { $("stale").hidden = true; $("nup").setAttribute("aria-expanded", "false"); }
 }
+$("newbtn").addEventListener("click", () => openSheet("new", "new"));
 $("nup").addEventListener("click", () => {
   const open = $("stale").hidden;
   $("stale").hidden = !open;
@@ -510,7 +528,8 @@ function kv(pairs) {
 // --- a favorite's history in its sheet: in words, with no pids, session ids or whole paths ---
 const EV_KIND = { on: "Turned on", off: "Turned off", restart: "Restarted", restarted: "Restarted after an out-of-memory kill",
   ended: "Claude ended", refused: "Refused", failed: "Failed", followed: "Followed", rename: "Renamed", resurrect: "Resurrect",
-  rc: "Remote control", fav: "Favorited", mode: "Permissions", waiting: "Waiting", duplicate: "Two claudes", setting: "Setting" };
+  rc: "Remote control", fav: "Favorited", mode: "Permissions", waiting: "Waiting", duplicate: "Two claudes", setting: "Setting",
+  new: "Created", trusted: "Folder trusted" };
 const EV_BY = { cli: "asctl", page: "page", watch: "watcher", boot: "boot" };
 const UUID_G = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 function evLabel(x) {
@@ -538,7 +557,7 @@ function evDetail(x) {
   const named = x.kind === "rc" && !/: rc (on|off)\b/.test(t);  // its name not sent to claude.ai, and why
   if (!named && !["refused", "failed", "waiting", "ended", "restarted", "duplicate", "mode"].includes(x.kind)) return "";
   if (x.kind === "ended") t = t.split(";")[0].replace(/^claude ended, /, "");
-  t = t.replace(/^(?:(?:boot|watch|on|off|rename|rc|resurrect|mode|forget|restart|fav|note|start again after exit \d+)(?: [\w.-]+)?: |[a-z0-9][a-z0-9-]*-\d{4}: )+/, "");
+  t = t.replace(/^(?:(?:boot|watch|on|off|rename|rc|resurrect|mode|forget|restart|fav|new|note|start again after exit \d+)(?: [\w.-]+)?: |[a-z0-9][a-z0-9-]*-\d{4}: )+/, "");
   t = t.replace(/^\d{4} is being started or stopped by another asctl; try again$/, "busy with another start or stop");
   t = t.replace(/ \(see: [^)]*\)/g, "").replace(/ \((?:pids? )?[\d, ]{3,}\)/g, "").replace(/\bclaude \d{3,}\b/g, "claude")
        .replace(UUID_G, "…");
@@ -691,8 +710,54 @@ function pastSheet(c) {
     kids(el("div", null, "acts"), favoriteButton(c.session_id))];
 }
 
+// --- a new session: a favorite in a folder pasted by path, started at once (asctl new) -------
+const newForm = { path: "", name: "", mode: "auto", rc: false };
+function newSheet() {
+  const f = newForm, err = el("div", "", "res err");
+  const field = (label, key, hint) => {
+    const i = el("input");
+    Object.assign(i, { type: "text", name: key, value: f[key], placeholder: hint, autocomplete: "off", autocapitalize: "none", spellcheck: false });
+    i.setAttribute("aria-label", label);
+    i.addEventListener("input", () => { f[key] = i.value.trim(); err.textContent = ""; });
+    return kids(el("label", null, "fl"), el("span", label.toUpperCase(), "lab"), i);
+  };
+  const toggle = (label, on, flip) => {
+    const b = sw(on(), label, () => { flip(); b.setAttribute("aria-checked", String(on())); });
+    return b;
+  };
+  return [el("h2", "New session"),
+    el("div", "A new favorite in a folder of yours, started now as a new conversation. Paste its path (pwd).", "s2"),
+    field("Folder", "path", "~/projects/app"),
+    field("Name", "name", "the folder's name"),
+    el("span", "SETTINGS", "lab"),
+    kids(el("div", null, "opts"),
+      opt("Ask first (manual)", "Off: auto mode, claude decides what needs asking",
+        toggle("Ask first (manual)", () => f.mode === "manual", () => { f.mode = f.mode === "manual" ? "auto" : "manual"; })),
+      opt("Remote control", "Reach it from claude.ai and the app",
+        toggle("Remote control", () => f.rc, () => { f.rc = !f.rc; }))),
+    err,
+    kids(el("div", null, "acts"), btn("Create and start", "p", async () => {
+      if (!f.path) { err.textContent = "Paste the folder's path first."; return; }
+      if (f.name && !/^[a-z0-9][a-z0-9-]{0,30}$/.test(f.name)) {
+        err.textContent = "Name: a-z, 0-9 and -, starting with a letter or digit, up to 31"; return;
+      }
+      const j = await act({ action: "new", path: f.path, mode: f.mode, rc: f.rc, ...(f.name ? { name: f.name } : {}) });
+      if (j.ok) { Object.assign(newForm, { path: "", name: "", mode: "auto", rc: false }); closeSheet(); }
+    }))];
+}
+
 function renderSheet() {
   const sheet = $("sheet");
+  if (sheetOf.kind === "new") {
+    if (sheetSig === "new") return;  // drawn once: a refresh never redraws it under the typing
+    sheetSig = "new";
+    const x = el("button", "✕", "x");
+    x.type = "button";
+    x.setAttribute("aria-label", "Close");
+    x.addEventListener("click", () => closeSheet());
+    sheet.replaceChildren(x, ...newSheet());
+    return;
+  }
   // never redraw under the user's typing
   if (sheet.contains(document.activeElement) && document.activeElement.tagName === "TEXTAREA") return;
   let item = null, body = null;
