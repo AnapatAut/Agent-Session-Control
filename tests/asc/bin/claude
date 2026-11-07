@@ -79,6 +79,7 @@ if ! grep -qxF "$PWD" "$trusted" 2>/dev/null; then
 	sel=0
 	draw() {
 		clear
+		[ ! -e "$HOME/fake-quote-above" ] || printf '%s\n' " > why does it show this?" " ❯ Yes, I trust this folder" " (quoted)" ""
 		printf '%s\n' " Accessing workspace:" "" " $PWD" "" " Quick safety check: Is this a project you created or one you trust?" ""
 		if [ $sel = 0 ]; then printf '%s\n' " ❯ No, exit" "   Yes, I trust this folder"
 		else printf '%s\n' "   No, exit" " ❯ Yes, I trust this folder"; fi

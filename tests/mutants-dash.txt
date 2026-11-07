@@ -92,12 +92,13 @@ asc/dash.py %%% mem["avail_kb"] - total)} %%% mem["avail_kb"])} %%% state: other
 asc/dash.py %%%             "outside": dict(live.where(s), busy=cli.outside_busy(s, kids)) if st.startswith("on (outside") else None, %%%             "outside": None, %%% state: a claude outside its tmux session says where it runs, and why a move in waits %%% actions_fav
 asc/dash.py %%%         return ["restart", ref, "--outside"] %%%         return ["restart", ref] %%% restart from the page only moves a claude outside its tmux session in (one in it: refused, left alone) %%% actions_fav
 asc/past.py %%%     ok = isinstance(x, dict) and all(type(x.get(k)) is int and x[k] >= 0 for k in ("ino", "size", "lines", "seen")) %%%     ok = isinstance(x, dict) %%% odd lengths: lines as a string, none shown %%% notices
-asc/cli.py %%%         print(f"asctl: {msg}", file=sys.stderr, flush=True) %%%         print(f"asctl: {msg}", flush=True) %%% on, a claude that ends at once: refused with its exit, not an unknown error %%% rc
+asc/cli.py %%%     print(f"asctl: {msg}", file=sys.stderr, flush=True) %%%     print(f"asctl: {msg}", flush=True) %%% on, a claude that ends at once: refused with its exit, not an unknown error %%% rc
 asc/dash.py %%%         path = registry.check_path(a.get("path")) %%%         path = a.get("path") %%% new: the path must be text %%% actions_new
 asc/dash.py %%%         if a.get("mode", "auto") not in WEB_MODES: %%%         if False: %%% new from the page: mode skip refused %%% actions_new
-asc/dash.py %%%             if not isinstance(a.get(k, False), bool): %%%             if False: %%% new: trust only when it is true ("yes" is not) %%% actions_new
+asc/dash.py %%%             if not isinstance(a.get(k, False), bool): %%%             if False: %%% new: rc only when it is true ("yes" is not) %%% actions_new
 asc/dash.py %%%         return argv + ["--", path] %%%         return argv + [path] %%% new: a path starting with - stays a path %%% actions_new
-asc/web/app.js %%%   if (!body.trust && untrustedPath(j.error)) return "trust"; %%%   if (untrustedPath(j.error)) return "trust"; %%% page: new: an untrusted folder is asked about before trust is sent, never again once sent %%% page
-asc/web/app.js %%% return t.endsWith(UNTRUSTED_END) ? t.slice(0, -UNTRUSTED_END.length) : ""; %%% return t.split(" is not a trusted folder yet: ")[0]; %%% page: new: no folder read off another refusal, or off words that only look like asctl's %%% page
-asc/web/app.js %%%     return act({ ...body, path: untrustedPath(j.error), trust: true }); %%%     return act({ ...body, trust: true }); %%% page: new: trust sent only after the confirm, for the folder it named %%% page
-asc/web/app.js %%%   if (retry === "trust" && await ask({ %%%   if (retry === "trust" && !await ask({ %%% page: new: trust sent only after the confirm, for the folder it named %%% page
+asc/dash.py %%%         return ["trust", ref] %%%         return ["on", ref] %%% trust from the page: the prompt answered for its folder, on, started as new %%% actions_new
+asc/web/app.js %%%   if (st === "waiting for trust") return %%%   if (st === "waiting for trusts") return %%% page: waiting for trust: needs attention, names the folder %%% page
+asc/web/app.js %%%   if (!await ask({ title: "Trust this folder?" %%%   if (await ask({ title: "Trust this folder?" %%% page: trust folder: sent only after a yes to a warning that names the folder, with only which favorite %%% page
+asc/web/app.js %%%   return act({ action: "trust", id: e.id4, tmux: e.tmux }); %%%   return act({ action: "trust", id: e.id4, tmux: e.tmux, path: e.cwd }); %%% page: trust folder: sent only after a yes to a warning that names the folder, with only which favorite %%% page
+asc/web/app.js %%% (body.action === "on" || body.action === "new") && !body.force_memory %%% body.action === "on" && !body.force_memory %%% page: new: memory short asks to force it, sent forced only after a yes %%% page

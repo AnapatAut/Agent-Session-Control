@@ -122,7 +122,7 @@ claude_in() {
 # A case's setup: the tmux server up, kept with no session.
 server_up() { tm start-server \; set -g exit-empty off || stop "the tmux server for the case"; }
 # A live fake claude started by hand in a tmux session, as a user would (folder trusted).
-W="$T/work"; mkdir -p "$W" "$T/other"
+W="$T/work"; mkdir -p "$W"
 printf '%s\n' "$W" > "$HOME/fake-trusted"
 SID=11111111-2222-4333-8444-555555555555
 
@@ -214,12 +214,18 @@ tm kill-session -t "=das-${id}x"
 asctl fav "$(cat /proc/sys/kernel/random/uuid)" >/dev/null 2>&1 && bad "fav of an unknown session id refused" "fav of an unknown session id accepted" || ok "fav of an unknown session id refused"
 SID2=22222222-3333-4444-8555-666666666666
 mkdir -p "$HOME/.claude/projects/-x"
-printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n{"type":"agent-name","agentName":"Old Talk"}\n' "$T/other" "$SID2" > "$HOME/.claude/projects/-x/$SID2.jsonl"
+mkdir -p "$HOME/talk"  # in the home: asctl trusts only a folder New session would take
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n{"type":"agent-name","agentName":"Old Talk"}\n' "$HOME/talk" "$SID2" > "$HOME/.claude/projects/-x/$SID2.jsonl"
 asctl fav "$SID2" >/dev/null && ok "fav of a past conversation" || bad "fav of a past conversation" "fav of a past conversation failed"
 id2=$(jq -r --arg s "$SID2" '.entries[] | select(.session_id == $s) | .id4' "$REG")
 [ "$(jqe ".entries[\"$id2\"].tmux")" = "old-talk-$id2" ] && ok "named from its title: old-talk-<id>" || bad "named from its title: old-talk-<id>" "name: $(jqe ".entries[\"$id2\"].tmux")"
-asctl on "$id2" >/dev/null && ok "on in a folder not trusted yet: the prompt answered" || bad "on in a folder not trusted yet: the prompt answered" "on stopped at the trust prompt"
-grep -q 'trust: yes' "$HOME/claude-args.log" && ok "trust answered yes (Down, check, Enter)" || bad "trust answered yes (Down, check, Enter)" "trust not answered yes"
+touch "$HOME/fake-quote-above"  # a transcript above the prompt quotes its Yes, selected
+out=$(asctl on "$id2") && seen "^waiting: old-talk-$id2: its claude waits: Claude Code asks whether to trust $HOME/talk, not answered" <<<"$out" \
+	&& [ "$(jqe ".entries[\"$id2\"].awaiting_trust.mode")" = auto ] && ! grep -q 'trust: ' "$HOME/claude-args.log" \
+	&& ok "on in a folder not trusted yet: its claude left at the prompt, marked, nothing answered" || bad "on in a folder not trusted yet: its claude left at the prompt, marked, nothing answered" "on: $out / $(jqe ".entries[\"$id2\"].awaiting_trust")"
+asctl trust "$id2" >/dev/null && grep -q 'trust: yes' "$HOME/claude-args.log" && claude_now "old-talk-$id2" >/dev/null \
+	&& ok "trust: the prompt answered yes (Down, check, Enter), its claude up" || bad "trust: the prompt answered yes (Down, check, Enter), its claude up" "trust: $(grep 'trust: ' "$HOME/claude-args.log")"
+rm -f "$HOME/fake-quote-above"
 asctl off "$id2" >/dev/null
 asctl rename "$id2" chat >/dev/null && [ "$(jqe ".entries[\"$id2\"].tmux")" = "chat-$id2" ] && ok "rename" || bad "rename" "rename failed"
 asctl rename "$id2" 'Bad Name' >/dev/null 2>&1 && bad "a bad name refused" "a bad name accepted" || ok "a bad name refused"
@@ -398,7 +404,8 @@ poll 5 live_has 99999999 && ok "live: a claude in another window of a favorite's
 errof fav 99999999-aaaa-4bbb-8ccc-dddddddddddd --whole-session | grep -q "tmux session of favorite $id6" && ok "fav refused: the claude runs in another favorite's tmux session" || bad "fav refused: the claude runs in another favorite's tmux session" "fav took over another favorite's tmux session"
 asctl off "$id6" --force >/dev/null
 touch "$HOME/fake-quote"
-asctl on "$id6" >/dev/null && ok "on with the trust prompt quoted in a transcript" || bad "on with the trust prompt quoted in a transcript" "on failed with a quoted trust prompt"
+out=$(asctl on "$id6") && seen "^on: duo-$id6 " <<<"$out" && [ "$(jqe ".entries[\"$id6\"].awaiting_trust")" = null ] \
+	&& ok "on with the trust prompt quoted in a transcript: its claude up, not taken for the prompt" || bad "on with the trust prompt quoted in a transcript: its claude up, not taken for the prompt" "on with a quoted prompt: $out"
 grep -q 'quote: got a key' "$HOME/claude-args.log" && bad "no key pressed at a quoted trust prompt" "asctl pressed keys at a quoted trust prompt" || ok "no key pressed at a quoted trust prompt"
 rm -f "$HOME/fake-quote"; asctl off "$id6" --force >/dev/null
 }
@@ -456,7 +463,8 @@ asctl note "$id2" -- "-starts with a dash" >/dev/null && ok "a note may start wi
 }
 
 # asctl new: a new favorite in a folder pasted by path, started as new (no transcript yet); its
-# folder's checks; Claude Code's trust prompt answered only with --trust.
+# folder's checks. Claude Code's trust prompt: a start leaves its claude waiting at it (never
+# answered by asctl itself), asctl trust answers it, Off closes it.
 case_new_session() {
 server_up
 echo "== new: a favorite in a folder given by path"
@@ -484,6 +492,8 @@ want="is not yours, or others can write to it"; refused "$HOME/open/sub" && ok "
 want="none a control or format character"; refused "$HOME/pr"$'\t'"oj" && ok "new refused: a control character in the path" || bad "new refused: a control character in the path" "control: $out"
 want="none a control or format character"; refused "$HOME/proj"$'\xe2\x80\xae' && ok "new refused: a format character (bidi) in the path" || bad "new refused: a format character (bidi) in the path" "bidi: $out"
 # (U+202E right-to-left override, as its UTF-8 bytes: \u needs a UTF-8 locale, the sandbox has none)
+mkdir -p "$HOME/b"$'\xe2\x80\xae'"x"; ln -s "$HOME/b"$'\xe2\x80\xae'"x" "$HOME/blink"
+want="none a control or format character"; refused "$HOME/blink" && ok "new refused: a link to a folder with a format character in its name" || bad "new refused: a link to a folder with a format character in its name" "bidi link: $out"
 # who owns a folder, and its group, as another user would see them (no second user here)
 nf() { python3 -I -c 'import os, sys; sys.path.insert(0, sys.argv[1]); from asc import cli, registry
 u, g = os.getuid(), os.getgid()
@@ -498,20 +508,71 @@ nf "$HOME/gw" | seen "^taken $HOME/gw\$" && nf "$HOME/gw" gid | seen "is not you
 mem 32000000 1600000
 want="memory: 5.0% available, a start needs 20% (asctl new --force-memory starts it anyway)"; refused "$HOME/proj" && ok "new refused when memory is short" || bad "new refused when memory is short" "memory: $out"
 mem 32000000 16000000
+[ "$(jq '.entries | length' "$REG")" = "$n0" ] && [ "$(tm ls -F '#{session_name}' | sort | tr '\n' ' ')" = "$s0" ] \
+	&& ok "new refused: no favorite or tmux session left behind" || bad "new refused: no favorite or tmux session left behind" "left: $(jq -c '[.entries[].tmux]' "$REG") / $(tm ls -F '#{session_name}' | tr '\n' ' ')"
 echo "== new: a folder Claude Code does not trust yet"
-want="is not a trusted folder yet"; refused "$HOME/fresh" && ok "new refused: an untrusted folder, its trust prompt not answered" || bad "new refused: an untrusted folder, its trust prompt not answered" "untrusted: $out"
-[ "$(jq '.entries | length' "$REG")" = "$n0" ] && [ "$(tm ls -F '#{session_name}' | sort | tr '\n' ' ')" = "$s0" ] && ! seen -xF "$HOME/fresh" "$HOME/fake-trusted" \
-	&& ok "new refused: no favorite, tmux session or trust left behind" || bad "new refused: no favorite, tmux session or trust left behind" "left: $(jq -c '[.entries[].tmux]' "$REG") / $(tm ls -F '#{session_name}' | tr '\n' ' ')"
-asctl new "$HOME/fresh" --trust >/dev/null; id3n=$(nid "$HOME/fresh")
-[ -n "$id3n" ] && claude_now "fresh-$id3n" >/dev/null && seen -xF "$HOME/fresh" "$HOME/fake-trusted" && last trusted | seen "trust prompt for $HOME/fresh: yes" \
-	&& ok "new --trust: the trust prompt answered for its folder, logged" || bad "new --trust: the trust prompt answered for its folder, logged" "--trust: $id3n $(last trusted)"
-jqe ".entries[\"$id3n\"].ran" | seen -x true && ok "new: the favorite marked as run once its claude is up" || bad "new: the favorite marked as run once its claude is up" "ran: $(jqe ".entries[\"$id3n\"].ran")"
-# one whose claude never came up (asctl new killed part way): a later start answers no prompt
-asctl off "$id3n" --force >/dev/null; grep -vxF "$HOME/fresh" "$HOME/fake-trusted" > "$T/ft"; cp "$T/ft" "$HOME/fake-trusted"
-jq --arg i "$id3n" '.entries[$i].ran = false' "$REG" > "$T/reg.new" && cp "$T/reg.new" "$REG"
-out=$(errof on "$id3n")
-seen "is not a trusted folder yet" <<<"$out" && ! tm has-session -t "=fresh-$id3n" 2>/dev/null && ! seen -xF "$HOME/fresh" "$HOME/fake-trusted" \
-	&& ok "a new favorite that never ran: a later on answers no trust prompt, its session closed" || bad "a new favorite that never ran: a later on answers no trust prompt, its session closed" "never ran: $out"
+t0=$(date +%s); out=$(asctl new "$HOME/fresh" --mode manual); t1=$(date +%s); id3n=$(nid "$HOME/fresh")
+[ -n "$id3n" ] && [ $((t1 - t0)) -lt 20 ] && seen "^waiting: fresh-$id3n: its claude waits: Claude Code asks whether to trust $HOME/fresh, not answered" <<<"$out" \
+	&& tm has-session -t "=fresh-$id3n" 2>/dev/null && ! claude_now "fresh-$id3n" >/dev/null && ! seen -xF "$HOME/fresh" "$HOME/fake-trusted" \
+	&& last untrusted | seen "whether to trust $HOME/fresh, not answered" \
+	&& ok "new, an untrusted folder: its claude left at the trust prompt at once, nothing answered, logged" || bad "new, an untrusted folder: its claude left at the trust prompt at once, nothing answered, logged" "new after $((t1 - t0)) s: $id3n $out / $(last untrusted)"
+[ "$(jqe ".entries[\"$id3n\"].awaiting_trust | .mode + \" \" + (.rc | tostring)")" = "manual false" ] && asctl list | seen -E "^$id3n  fresh-$id3n +waiting for trust " \
+	&& ok "new, an untrusted folder: marked waiting for trust, with its start's mode and rc" || bad "new, an untrusted folder: marked waiting for trust, with its start's mode and rc" "mark: $(jqe ".entries[\"$id3n\"].awaiting_trust") / $(asctl list)"
+out=$(errof trust "$idn")
+seen "no claude of proj-$idn waits at Claude Code's trust prompt" <<<"$out" && ok "trust refused: a favorite whose claude does not wait at the prompt" || bad "trust refused: a favorite whose claude does not wait at the prompt" "trust of one up: $out"
+sp=$(tm split-window -d -P -F '#{pane_id}' -t "=fresh-$id3n:" -- sleep 300)
+out=$(errof trust "$id3n"); tm kill-pane -t "$sp"
+seen "does not show in 'fresh-$id3n' (its one pane, not in copy mode)" <<<"$out" && ! seen -xF "$HOME/fresh" "$HOME/fake-trusted" \
+	&& ok "trust refused: its session not that one pane, nothing answered" || bad "trust refused: its session not that one pane, nothing answered" "trust with two panes: $out"
+mk=$(jqe ".entries[\"$id3n\"].awaiting_trust | tojson")
+jq --arg i "$id3n" 'del(.entries[$i].awaiting_trust)' "$REG" > "$T/reg.new" && cp "$T/reg.new" "$REG"
+out=$(errof trust "$id3n")
+jq --arg i "$id3n" --argjson m "$mk" '.entries[$i].awaiting_trust = $m' "$REG" > "$T/reg.new" && cp "$T/reg.new" "$REG"
+seen "no claude of fresh-$id3n waits at Claude Code's trust prompt" <<<"$out" && ! seen -xF "$HOME/fresh" "$HOME/fake-trusted" \
+	&& ok "trust refused: a prompt that no start of asctl's left (not marked), nothing answered" || bad "trust refused: a prompt that no start of asctl's left (not marked), nothing answered" "trust unmarked: $out"
+# the mark names another pane (a session of the same name made since): not this one's
+jq --arg i "$id3n" '.entries[$i].awaiting_trust.pane_pid = 1' "$REG" > "$T/reg.new" && cp "$T/reg.new" "$REG"
+out=$(errof trust "$id3n"); st=$(asctl list)
+jq --arg i "$id3n" --argjson m "$mk" '.entries[$i].awaiting_trust = $m' "$REG" > "$T/reg.new" && cp "$T/reg.new" "$REG"
+seen "no claude of fresh-$id3n waits" <<<"$out" && ! seen -E "^$id3n  fresh-$id3n +waiting for trust" <<<"$st" && ! seen -xF "$HOME/fresh" "$HOME/fake-trusted" \
+	&& ok "trust refused: the mark of another pane (a session of the same name made since), nothing answered" || bad "trust refused: the mark of another pane (a session of the same name made since), nothing answered" "other pane: $out"
+# the prompt names another folder, one the favorite's is the start of
+mkdir -p "$HOME/fre"
+jq --arg i "$id3n" --arg c "$HOME/fre" '.entries[$i].cwd = $c' "$REG" > "$T/reg.new" && cp "$T/reg.new" "$REG"
+out=$(errof trust "$id3n")
+jq --arg i "$id3n" --arg c "$HOME/fresh" '.entries[$i].cwd = $c' "$REG" > "$T/reg.new" && cp "$T/reg.new" "$REG"
+seen "trust prompt for $HOME/fre does not show" <<<"$out" && ! seen -xF "$HOME/fresh" "$HOME/fake-trusted" \
+	&& ok "trust refused: a prompt naming another folder (its own path the start of it), nothing answered" || bad "trust refused: a prompt naming another folder (its own path the start of it), nothing answered" "other folder: $out"
+# a folder New session would not take (others can write to it)
+chmod o+w "$HOME/fresh"; out=$(errof trust "$id3n"); chmod o-w "$HOME/fresh"
+seen "asctl trusts only a folder New session would take: $HOME/fresh is not yours, or others can write to it" <<<"$out" && ! seen -xF "$HOME/fresh" "$HOME/fake-trusted" \
+	&& ok "trust refused: a folder others can write to, nothing answered" || bad "trust refused: a folder others can write to, nothing answered" "o+w: $out"
+# its pane in copy mode (someone reading it): keys would scroll it
+tm copy-mode -t "=fresh-$id3n:"; out=$(errof trust "$id3n"); tm send-keys -t "=fresh-$id3n:" -X cancel
+seen "(its one pane, not in copy mode)" <<<"$out" && ! seen -xF "$HOME/fresh" "$HOME/fake-trusted" \
+	&& ok "trust refused: its pane in copy mode, nothing answered" || bad "trust refused: its pane in copy mode, nothing answered" "copy mode: $out"
+asctl trust "$id3n" >/dev/null && claude_now "fresh-$id3n" >/dev/null && seen -xF "$HOME/fresh" "$HOME/fake-trusted" \
+	&& last trusted | seen "trust prompt for $HOME/fresh: yes" && [ "$(last on | jq -r '.id4 + " " + .mode')" = "$id3n manual" ] \
+	&& ok "trust: the prompt answered for its folder, its claude up, logged" || bad "trust: the prompt answered for its folder, its claude up, logged" "trust: $(last trusted) / $(last on)"
+[ "$(jqe ".entries[\"$id3n\"].awaiting_trust")" = null ] && asctl list | seen -E "^$id3n  fresh-$id3n +on " \
+	&& ok "trust: the mark gone once its claude is up" || bad "trust: the mark gone once its claude is up" "after trust: $(jqe ".entries[\"$id3n\"].awaiting_trust") / $(asctl list)"
+# not trusted again (as if Claude Code forgot it): on waits again, Off closes it without --force
+untrust() { grep -vxF "$HOME/fresh" "$HOME/fake-trusted" > "$T/ft"; cp "$T/ft" "$HOME/fake-trusted"; }
+asctl off "$id3n" --force >/dev/null; untrust
+out=$(asctl on "$id3n"); seen "^waiting: " <<<"$out" || stop "on of a favorite in a folder not trusted waits at the prompt" "$out"
+asctl off "$id3n" >/dev/null && ! tm has-session -t "=fresh-$id3n" 2>/dev/null && [ "$(jqe ".entries[\"$id3n\"].awaiting_trust")" = null ] \
+	&& last off | seen "its claude closed at the trust prompt, not answered" && ! seen -xF "$HOME/fresh" "$HOME/fake-trusted" \
+	&& ok "off of a claude at the trust prompt: closed without --force, the mark gone, nothing trusted" || bad "off of a claude at the trust prompt: closed without --force, the mark gone, nothing trusted" "off: $(last off) / $(jqe ".entries[\"$id3n\"].awaiting_trust")"
+# No at the prompt, in its pane: its claude ended, not waiting any more
+out=$(asctl on "$id3n"); seen "^waiting: " <<<"$out" || stop "on of a favorite in a folder not trusted waits at the prompt, again" "$out"
+tm send-keys -t "=fresh-$id3n:" Enter  # No, exit: selected first
+# shellcheck disable=SC2329  # run only through poll
+nended() { asctl list | seen -E "^$id3n  fresh-$id3n +tmux up, claude ended \(1\)"; }
+poll 5 nended && ok "a claude at the trust prompt that ended (No, in its pane): ended, not waiting" || bad "a claude at the trust prompt that ended (No, in its pane): ended, not waiting" "list: $(asctl list)"
+# a start drops the mark of the one before, also when its claude then ends at once
+tm kill-session -t "=fresh-$id3n"
+touch "$HOME/fake-exit-at-once"; asctl on "$id3n" >/dev/null 2>&1; rm -f "$HOME/fake-exit-at-once"
+[ "$(jqe ".entries[\"$id3n\"].awaiting_trust")" = null ] && ok "on: a start drops the mark of the one before" || bad "on: a start drops the mark of the one before" "mark: $(jqe ".entries[\"$id3n\"].awaiting_trust")"
 echo "== new: a claude that ends at once"
 n1=$(jq '.entries | length' "$REG"); touch "$HOME/fake-exit-at-once"
 out=$(errof new "$HOME/proj" --name gone); rm -f "$HOME/fake-exit-at-once"
@@ -1265,7 +1326,7 @@ asctl off "$idw" --force >/dev/null
 
 # The setup of the watcher_ended cases, each with sessions of its own (WS2, OT): a favorite (idw)
 # on, its claude (pw) started by asctl in wat2-<id> on session WS2, its folder followed to
-# $T/moved, the watcher run since (a memory sample from before an end); and a second favorite,
+# $T/moved (trusted), the watcher run since (a memory sample from before an end); and a second favorite,
 # off ("the others go on").
 #   ended_setup <WS2> <OT>
 # shellcheck disable=SC2329  # helpers run only through poll
@@ -1285,6 +1346,7 @@ mkdir -p "$T/moved"; echo "$T/moved" > "$HOME/fake-cd-$WS2"
 moved_in() { watch; [ "$(jq -r ".entries[\"$idw\"].cwd" "$REG")" = "$T/moved" ]; }
 poll 5 moved_in || stop "wat2-<id> followed to its folder"
 rm -f "$HOME/fake-cd-$WS2"
+printf '%s\n' "$T/moved" >> "$HOME/fake-trusted"  # its folder trusted: a start answers no prompt
 mkdir -p "$HOME/.claude/projects/-x"
 printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$OT" > "$HOME/.claude/projects/-x/$OT.jsonl"
 asctl fav "$OT" --name wother >/dev/null || stop "a second favorite for the watcher"
@@ -1585,6 +1647,29 @@ last waiting | seen "127.0.0.1:$shut_port did not answer in 1 s; starting anyway
 kill "$lp" 2>/dev/null
 }
 
+# The watcher and a claude a start left at Claude Code's trust prompt (run last: a watcher run
+# adds memory samples and events the cases before count).
+case_trust_watch() {
+server_up
+mkdir -p "$HOME/twait"
+asctl new "$HOME/twait" >/dev/null; idt=$(jq -r --arg c "$HOME/twait" '[.entries[] | select(.cwd == $c) | .id4] | last // empty' "$REG")
+[ -n "$idt" ] && [ "$(jqe ".entries[\"$idt\"].awaiting_trust.mode")" = auto ] || stop "a new favorite whose claude waits at the trust prompt"
+endsof() { jq -s --arg i "$idt" '[.[] | select(.kind == "ended" and .id4 == $i)] | length' "$SD/events.jsonl"; }
+ne=$(endsof); watch
+[ "$(endsof)" = "$ne" ] && [ "$(jqe ".entries[\"$idt\"].awaiting_trust.mode")" = auto ] \
+	&& ok "watch: a claude at the trust prompt is not an end, its mark kept" || bad "watch: a claude at the trust prompt is not an end, its mark kept" "watch: $(last ended) / $(jqe ".entries[\"$idt\"].awaiting_trust")"
+# the prompt answered by hand in its pane: the watcher drops the mark
+# shellcheck disable=SC2329  # run only through poll
+ysel() { tm capture-pane -p -t "=twait-$idt:" | seen "❯ Yes, I trust this folder"; }
+tm send-keys -t "=twait-$idt:" Down; poll 3 ysel || stop "Yes selected at the prompt by hand"
+tm send-keys -t "=twait-$idt:" Enter
+claude_in "twait-$idt" >/dev/null || stop "its claude up after the prompt was answered by hand"
+watch
+[ "$(jqe ".entries[\"$idt\"].awaiting_trust")" = null ] && last trusted | seen "answered in its pane (not by asctl)" \
+	&& ok "watch: a trust prompt answered in its pane: the mark dropped, logged" || bad "watch: a trust prompt answered in its pane: the mark dropped, logged" "watch: $(jqe ".entries[\"$idt\"].awaiting_trust") / $(last trusted)"
+asctl off "$idt" --force >/dev/null; asctl forget "$idt" >/dev/null
+}
+
 case_asctl_setup() {
 # Setup: a tmux server up (the section turns continuum on in it).
 server_up
@@ -1713,7 +1798,7 @@ ud() { HOME="$H2" XDG_CONFIG_HOME="$1" python3 -I -c 'import sys; sys.path.inser
 rm "$F2/environment"
 }
 
-run_cases asc no_tmux_server main shared_stale guards on_gates new_session rc_now rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot asctl_setup
+run_cases asc no_tmux_server main shared_stale guards on_gates new_session rc_now rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot asctl_setup trust_watch
 
 echo "asc: $pass passed, $fail failed"
 [ "$fail" = 0 ]

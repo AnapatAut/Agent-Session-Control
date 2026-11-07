@@ -111,6 +111,8 @@ function look(e) {
                    : `Its claude runs, but not in tmux session ${e.tmux}.` };
   if (st.startsWith("ended by a signal")) return { group: "attention", dot: "bad", label: "Ended unexpectedly",
     why: `Claude was ended by a signal (${code}); its tmux session is still up. Turn it on to start claude again.` };
+  if (st === "waiting for trust") return { group: "attention", dot: "wait", label: "Waiting for trust",
+    why: `Claude Code asks whether to trust ${tilde(e.cwd)}. Trust folder lets claude start there; Off closes it.` };
   if (st.startsWith("tmux up")) return { group: "attention", dot: "wait", label: "Claude ended",
     why: `Claude ended${code ? " (exit " + code + ")" : ""}; its tmux session is still up.` };
   const boot = S && S.boot ? S.boot.todo : [];
@@ -367,8 +369,8 @@ function toast(text) {
   toast.timer = setTimeout(() => { t.hidden = true; }, 5000);
 }
 
-// One action; returns {ok, out|error}. Off refused as busy, and On refused for memory, offer the
-// forced one after a confirm (never automatic).
+// One action; returns {ok, out|error}. Off refused as busy, and On or New session refused for
+// memory, offer the forced one after a confirm (never automatic).
 async function act(body) {
   const id = body.id || body.ref || body.path;
   pending.add(id);
@@ -389,14 +391,7 @@ async function act(body) {
                   ok: "Force off", danger: true })) {
     return act({ ...body, force: true });
   }
-  const retry = newRetry(body, j);
-  if (retry === "trust" && await ask({ title: "Trust this folder?", ok: "Trust and start", danger: true,
-    text: `Claude Code will be able to read, edit, and execute files in ${tilde(untrustedPath(j.error))}.\n\n` +
-          "Only trust a folder whose contents you know: a project you made, or code from someone you trust." })) {
-    pending.delete(id);
-    return act({ ...body, path: untrustedPath(j.error), trust: true });  // the folder the confirm named
-  }
-  if ((retry === "memory" || (!j.ok && body.action === "on" && !body.force_memory && /^memory:/.test(j.error || ""))) &&
+  if (!j.ok && (body.action === "on" || body.action === "new") && !body.force_memory && /^memory:/.test(j.error || "") &&
       await ask({ title: "Memory is short", text: `${j.error}\n\nStart ${body.tmux || "it"} anyway? earlyoom may then end other sessions.`,
                   ok: "Start anyway", danger: true })) {
     return act({ ...body, force_memory: true });
@@ -407,19 +402,6 @@ async function act(body) {
   if (sheetOf) renderSheet();  // also when the state did not change
   return j;
 }
-
-// A new session refused for what the page can ask about: its folder not trusted yet (asked
-// before trust is sent, never sent unasked), or memory short; else null.
-function newRetry(body, j) {
-  if (j.ok || body.action !== "new") return null;
-  if (!body.trust && untrustedPath(j.error)) return "trust";
-  if (!body.force_memory && /^memory:/.test(j.error || "")) return "memory";
-  return null;
-}
-// The folder asctl named as not trusted: its real path (a link resolved), which the confirm shows
-// and trust is then sent for. asctl's words end the message, so they are taken off its end.
-const UNTRUSTED_END = " is not a trusted folder yet: Claude Code asks whether to trust it (asctl new --trust answers yes for it)";
-function untrustedPath(error) { const t = error || ""; return t.endsWith(UNTRUSTED_END) ? t.slice(0, -UNTRUSTED_END.length) : ""; }
 
 async function refresh() {
   const rf = $("rf");
@@ -532,7 +514,7 @@ function kv(pairs) {
 const EV_KIND = { on: "Turned on", off: "Turned off", restart: "Restarted", restarted: "Restarted after an out-of-memory kill",
   ended: "Claude ended", refused: "Refused", failed: "Failed", followed: "Followed", rename: "Renamed", resurrect: "Resurrect",
   rc: "Remote control", fav: "Favorited", mode: "Permissions", waiting: "Waiting", duplicate: "Two claudes", setting: "Setting",
-  new: "Created", trusted: "Folder trusted" };
+  new: "Created", trusted: "Folder trusted", untrusted: "Waiting for trust" };
 const EV_BY = { cli: "asctl", page: "page", watch: "watcher", boot: "boot" };
 const UUID_G = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 function evLabel(x) {
@@ -629,20 +611,24 @@ function favSheet(e) {
   // its claude outside its tmux session: Off reaches only a background session (Claude Code's
   // own stop), and only when idle; Restart in tmux moves any idle one in
   const o = e.outside, bg = o && o.how === "background";
-  const pwb = btn("", "pw " + (on ? "on" : "off"), async () => {
-    if (on) {
+  // its claude at Claude Code's trust prompt: its tmux session is up, so the power button turns it off
+  const waiting = e.state === "waiting for trust", up = on || waiting;
+  const pwb = btn("", "pw " + (up ? "on" : "off"), async () => {
+    if (up) {
       if (!await ask({ title: `Turn ${e.tmux} off?`, ok: "Turn off", danger: true,
-        text: bg ? "Its background session stops (claude stop). The conversation is kept." : "What runs in its tmux session ends." })) return;
+        text: waiting ? "Its claude, still at the trust prompt, closes. Nothing is trusted."
+            : bg ? "Its background session stops (claude stop). The conversation is kept." : "What runs in its tmux session ends." })) return;
       await act({ action: "off", ...ref });
     } else {
       await act({ action: "on", ...ref });
     }
   }, wait || (o && !(bg && !o.busy)));
   pwb.append(powerIcon());
-  pwb.setAttribute("aria-label", on ? "On: turn it off" : "Off: turn it on");
-  pwb.title = o && !(bg && !o.busy) ? "Runs outside its tmux session: restart it in tmux, or end it there" : on ? "Turn off" : "Turn on";
+  pwb.setAttribute("aria-label", up ? "On: turn it off" : "Off: turn it on");
+  pwb.title = o && !(bg && !o.busy) ? "Runs outside its tmux session: restart it in tmux, or end it there" : up ? "Turn off" : "Turn on";
   out.push(kids(el("div", null, "btns"), pwb, rcb));  // the power button tells on or off
   if (l.why) out.push(el("div", l.why, "warn " + (l.dot === "bad" ? "bad" : "")));
+  if (waiting) out.push(kids(el("div", null, "acts"), btn("Trust folder", "danger", () => trustFolder(e), wait)));
   if (o && o.busy) out.push(el("div", "Restart in tmux once it is idle: " + o.busy.replace(/^its claude is /, "it is ") + ".", "warn"));
   if (o && !o.busy) out.push(kids(el("div", null, "acts"), btn("Restart in tmux", "p", async () => {
     if (!await ask({ title: `Restart ${e.tmux} in tmux?`, ok: "Restart in tmux",
@@ -688,6 +674,15 @@ function favSheet(e) {
   return out;
 }
 
+// Trust folder: only on a yes to the page's own warning, which names the folder; asctl answers
+// Claude Code's prompt for its own record of it (the page sends only which favorite).
+async function trustFolder(e) {
+  if (!await ask({ title: "Trust this folder?", ok: "Trust and start", danger: true,
+    text: `Claude Code will be able to read, edit, and execute files in ${tilde(e.cwd)}, and use the folder's own settings.\n\n` +
+          "Only trust a folder whose contents you know: a project you made, or code from someone you trust." })) return null;
+  return act({ action: "trust", id: e.id4, tmux: e.tmux });
+}
+
 function favoriteButton(sid) {
   return btn("☆ Favorite", "p", async () => {
     const j = await act({ action: "fav", ref: sid });
@@ -729,7 +724,8 @@ function newSheet() {
     return b;
   };
   return [el("h2", "New session"),
-    el("div", "A new favorite in a folder of yours, started now as a new conversation. Paste its path (pwd).", "s2"),
+    el("div", "A new favorite in a folder of yours, started now as a new conversation. Paste its path (pwd). " +
+              "A folder Claude Code does not trust yet waits for your Trust folder on its card.", "s2"),
     field("Folder", "path", "~/projects/app"),
     field("Name", "name", "the folder's name"),
     el("span", "SETTINGS", "lab"),

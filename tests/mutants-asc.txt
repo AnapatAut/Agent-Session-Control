@@ -9,18 +9,17 @@ asc/live.py %%% (raw.get("pidDomain") is None or raw.get("pidDomain") == domain)
 asc/live.py %%%         if (st and is_claude(pid, st[0])) or %%%         if False and %%% on refused: an unreadable session file of a running claude %%% guards
 asc/cli.py %%%     if away: %%%     if False: %%% off refused: its claude now runs in another session %%% shared_stale
 asc/cli.py %%%     return live_in(e, lv) or next( %%%     return live_in(e, lv) or None and next( %%% on refused while a live claude holds the session id %%% main
-asc/cli.py %%%     return (any(l.endswith("No, exit") %%%     return True or (any(l.endswith("No, exit") %%% no key pressed at a quoted trust prompt %%% guards
+asc/cli.py %%%     return (any(l.endswith("No, exit") %%%     return True or (any(l.endswith("No, exit") %%% on with the trust prompt quoted in a transcript: its claude up, not taken for the prompt %%% guards
 asc/tmuxctl.py %%%     return run("has-session", "-t", "=" + name) %%%     return run("has-session", "-t", name) %%% on while a longer-named session das-<id>x exists %%% main
 asc/tmuxctl.py %%% "-s", name, "-c", cwd.replace("#", "##") %%% "-s", name, "-c", cwd %%% claude started in the literal folder (tmux formats not expanded) %%% on_gates
 asc/live.py %%%         if s["live"]: %%%         if s["ok"]: %%% on refused: a well-formed file of a running claude does not check out %%% guards
 asc/cli.py %%%             if owner: %%%             if False: %%% fav refused: the claude runs in another favorite's tmux session %%% guards
 asc/cli.py %%%             if others and not whole: %%%             if False: %%% fav refused: shares its tmux session with another pane %%% shared_stale
 asc/cli.py %%%     if live_for(e): %%%     if False: %%% on refused while a live claude holds the session id %%% main
-asc/cli.py %%%             if "❯ Yes, I trust this folder" not in screen: %%%             if False: %%% on in a folder not trusted yet: the prompt answered %%% main
 asc/cli.py %%% ["--resume", e["session_id"]] if has_transcript(e["session_id"]) else %%% ["--session-id", e["session_id"]] if has_transcript(e["session_id"]) else %%% a conversation with a transcript: started with --resume %%% on_gates
 asc/cli.py %%%  if has_transcript(e["session_id"]) else %%%  if e.get("started") else %%% no transcript yet: started with --session-id, --name and the mode %%% main
 asc/cli.py %%%         if started_exit(e):  # claude ended already %%%         if False:  # claude ended already %%% on, a claude that ends at once: said in seconds on stderr, with its exit %%% on_gates
-asc/cli.py %%%         print(f"asctl: {msg}", file=sys.stderr, flush=True) %%%         print(f"asctl: {msg}", flush=True) %%% on, a claude that ends at once: said in seconds on stderr, with its exit %%% on_gates
+asc/cli.py %%%     print(f"asctl: {msg}", file=sys.stderr, flush=True) %%%     print(f"asctl: {msg}", flush=True) %%% on, a claude that ends at once: said in seconds on stderr, with its exit %%% on_gates
 asc/registry.py %%% fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB) %%% fcntl.LOCK_EX %%% on refused while another asctl holds the entry %%% shared_stale
 asc/registry.py %%% MODES = {"auto": "auto", "manual": "manual", "skip": "bypassPermissions"} %%% MODES = {"auto": "auto", "manual": "manual", "skip": "auto"} %%% mode skip starts with bypassPermissions %%% main
 asc/registry.py %%%     except ValueError as e: %%%     except ZeroDivisionError as e: %%% a broken registry refused, with a clear message %%% shared_stale
@@ -53,7 +52,7 @@ asc/rclive.py %%%     return bool(t) and t[1] == CMD %%%     return bool(t) %%% 
 asc/rclive.py %%%     if not wait_for(lambda: seen() > n and (session(s["pid"]) or {}).get("name") == name, confirm): %%%     if False: %%% rename: typed but not taken by claude: said so %%% new_name
 asc/rclive.py %%%             n += f.read(tail).count(text) %%%             n = 1 %%% rename of an idle claude: /rename typed, the same claude takes the name %%% new_name
 asc/cli.py %%%             why = rclive.rename(s, new) %%%             why = None %%% rename: not when a menu above the box would take Enter %%% rc_menu
-asc/cli.py %%%     if "--remote-control" in argv and %%%     if False and %%% a start with rc sends its name to claude.ai (/rename, once rc is up) %%% restart_name
+asc/cli.py %%%     if rc and (e.get("rc_title") %%%     if False and (e.get("rc_title") %%% a start with rc sends its name to claude.ai (/rename, once rc is up) %%% restart_name
 asc/rclive.py %%%     if t is not None and cmd.startswith(t): %%%     if t is not None: %%% the prompt not showing the command as typed: Enter not pressed, text not ours left alone %%% rc_menu
 asc/rclive.py %%%             if not dialog_open(pid, scr) or selected(scr, DISCONNECT): %%%             if not dialog_open(pid, scr): %%% rc off: the dialog, Disconnect selected and confirmed %%% rc_now
 asc/rclive.py %%%     l = next((l for l in reversed(bottom(scr)) if label in l), "") %%%     l = next((l for l in bottom(scr) if "❯" in l and label in l), "") %%% off: a slow dialog, its lines quoted in the transcript: waited for the dialog itself %%% rc_menu
@@ -222,17 +221,35 @@ asc/cli.py %%%     if any(x.startswith(".") for x in parts): %%%     if False: %
 asc/cli.py %%%     if not os.path.isdir(real): %%%     if False: %%% new refused: not a folder %%% new_session
 asc/cli.py %%%  or st.st_mode & 0o002 or (st.st_mode & 0o020 %%%  or (st.st_mode & 0o020 %%% new refused: a folder others can write to %%% new_session
 asc/cli.py %%%         why = memory.gate()⏎        if why:⏎            raise RegistryError(f"{why} (asctl new %%%         why = ""⏎        if why:⏎            raise RegistryError(f"{why} (asctl new %%% new refused when memory is short %%% new_session
-asc/cli.py %%%             r = _on(id4, args.force_memory, trust=args.trust) %%%             r = _on(id4, args.force_memory, trust=True) %%% new refused: an untrusted folder, its trust prompt not answered %%% new_session
-asc/cli.py %%%             if not trust: %%%             if False: %%% new refused: an untrusted folder, its trust prompt not answered %%% new_session
-asc/cli.py %%%                 events.log("trusted", e, %%%                 None and events.log("trusted", e, %%% new --trust: the trust prompt answered for its folder, logged %%% new_session
 asc/registry.py %%%  or unicodedata.category(c) == "Cf" for c in path %%%  for c in path %%% new refused: a format character (bidi) in the path %%% new_session
 asc/registry.py %%% any(ord(c) < 32 or 0x7f <= ord(c) < 0xa0 or unicodedata.category(c) == "Cf" for c in path) %%% any(unicodedata.category(c) == "Cf" for c in path) %%% new refused: a control character in the path %%% new_session
 asc/cli.py %%%     for i in range(len(parts) + 1):⏎        d = os.path.join(home, *parts[:i]) %%%     for i in [len(parts)]:⏎        d = os.path.join(home, *parts[:i]) %%% new refused: in a folder others can write to %%% new_session
 asc/cli.py %%%  or (st.st_mode & 0o020 and st.st_gid != os.getgid()): %%%  or False: %%% new: a folder its own group can write to is taken (umask 002), another group's not %%% new_session
 asc/cli.py %%%         if st.st_uid != os.getuid() or st.st_mode & 0o002 %%%         if False or st.st_mode & 0o002 %%% new refused: a folder not yours %%% new_session
-asc/cli.py %%%         s = wait_started(e, trust=e.get("ran", True) if trust is None else trust) %%%         s = wait_started(e, trust=True if trust is None else trust) %%% a new favorite that never ran: a later on answers no trust prompt, its session closed %%% new_session
-asc/cli.py %%%             registry.find(data, e["id4"])["ran"] = True %%%             pass %%% new: the favorite marked as run once its claude is up %%% new_session
-asc/cli.py %%%             tmuxctl.kill_session(e["tmux"])  # its own session, claude at the prompt %%%             pass  # its own session, claude at the prompt %%% a new favorite that never ran: a later on answers no trust prompt, its session closed %%% new_session
 asc/cli.py %%%         if r != 0:⏎            _drop_new(e, %%%         if False:⏎            _drop_new(e, %%% new, its claude ending at once: no favorite or tmux session left %%% new_session
 asc/cli.py %%%     tmuxctl.kill_session(e["tmux"])⏎    with registry.changing() as data:⏎        data["entries"].pop(e["id4"], None) %%%     pass⏎    with registry.changing() as data:⏎        data["entries"].pop(e["id4"], None) %%% new, its claude ending at once: no favorite or tmux session left %%% new_session
-asc/cli.py %%%     with registry.changing() as data:⏎        data["entries"].pop(e["id4"], None) %%%     with registry.changing() as data:⏎        pass %%% new refused: no favorite, tmux session or trust left behind %%% new_session
+asc/cli.py %%%     with registry.changing() as data:⏎        data["entries"].pop(e["id4"], None) %%%     with registry.changing() as data:⏎        pass %%% new, its claude ending at once: no favorite or tmux session left %%% new_session
+asc/cli.py %%%     if not yes_selected(tmuxctl.capture_pane(pane)):⏎        tmuxctl.send_pane(pane, "Down") %%%     if False:⏎        tmuxctl.send_pane(pane, "Down") %%% trust: the prompt answered yes (Down, check, Enter), its claude up %%% main
+asc/cli.py %%%             raise Untrusted(f"Claude Code asks %%%             None and Untrusted(f"Claude Code asks %%% new, an untrusted folder: its claude left at the trust prompt at once, nothing answered, logged %%% new_session
+asc/cli.py %%%         events.log("untrusted", e, msg) %%%         None and events.log("untrusted", e, msg) %%% new, an untrusted folder: its claude left at the trust prompt at once, nothing answered, logged %%% new_session
+asc/cli.py %%%             out(f"waiting: {msg}")⏎        return 0 %%%             out(f"waiting: {msg}")⏎        return 1 %%% new, an untrusted folder: its claude left at the trust prompt at once, nothing answered, logged %%% new_session
+asc/cli.py %%% ["awaiting_trust"] = {"since" %%% ["awaiting_trust_"] = {"since" %%% new, an untrusted folder: marked waiting for trust, with its start's mode and rc %%% new_session
+asc/cli.py %%% "mode": mode, "rc": rc, %%% "mode": "auto", "rc": rc, %%% new, an untrusted folder: marked waiting for trust, with its start's mode and rc %%% new_session
+asc/cli.py %%% "mode": mode, "rc": rc, %%% "mode": mode, "rc": True, %%% new, an untrusted folder: marked waiting for trust, with its start's mode and rc %%% new_session
+asc/cli.py %%%     if up and awaiting(e):⏎        return "waiting for trust", None %%%     if False:⏎        return "waiting for trust", None %%% new, an untrusted folder: marked waiting for trust, with its start's mode and rc %%% new_session
+asc/watch.py %%%                 elif e["tmux"] in up and cli.awaiting(e): %%%                 elif False: %%% watch: a claude at the trust prompt is not an end, its mark kept %%% trust_watch
+asc/cli.py %%%     if not ps or len(ps) != 1 or live_in(e, lv): %%%     if not ps or live_in(e, lv): %%% trust refused: its session not that one pane, nothing answered %%% new_session
+asc/cli.py %%%     if not awaiting(e):⏎        return None %%%     if False:⏎        return None %%% trust refused: a prompt that no start of asctl's left (not marked), nothing answered %%% new_session
+asc/cli.py %%%     events.log("trusted", e, f"answered %%%     None and events.log("trusted", e, f"answered %%% trust: the prompt answered for its folder, its claude up, logged %%% new_session
+asc/cli.py %%%             registry.find(data, e["id4"]).pop("awaiting_trust", None) %%%             registry.find(data, e["id4"]).get("awaiting_trust", None) %%% trust: the mark gone once its claude is up %%% new_session
+asc/cli.py %%%     waiting = up and not s and at_trust_prompt(e, lv) is not None %%%     waiting = False %%% off of a claude at the trust prompt: closed without --force, the mark gone, nothing trusted %%% new_session
+asc/cli.py %%%         x.pop("awaiting_trust", None) %%%         x.get("awaiting_trust", None) %%% off of a claude at the trust prompt: closed without --force, the mark gone, nothing trusted %%% new_session
+asc/watch.py %%%     if e.get("awaiting_trust") is not None and _set( %%%     if False and _set( %%% watch: a trust prompt answered in its pane: the mark dropped, logged %%% trust_watch
+asc/cli.py %%%     if not isinstance(m, dict) or started_exit(e): %%%     if not isinstance(m, dict): %%% a claude at the trust prompt that ended (No, in its pane): ended, not waiting %%% new_session
+asc/cli.py %%%         e.pop("awaiting_trust", None)⏎    mode, rc %%%         e.get("awaiting_trust", None)⏎    mode, rc %%% on: a start drops the mark of the one before %%% new_session
+asc/cli.py %%%     return rest is not None and [l for l in rest if l.startswith("❯")] == [YES] %%%     return YES in screen %%% trust: the prompt answered yes (Down, check, Enter), its claude up %%% main
+asc/cli.py %%%     registry.check_path(real)  # a link %%%     pass  # a link %%% new refused: a link to a folder with a format character in its name %%% new_session
+asc/cli.py %%% p["pane_id"] == m.get("pane") and p["pane_pid"] == m.get("pane_pid") %%% p["pane_id"] == m.get("pane") %%% trust refused: the mark of another pane (a session of the same name made since), nothing answered %%% new_session
+asc/cli.py %%% and folder == cwd) %%% and cwd in folder) %%% trust refused: a prompt naming another folder (its own path the start of it), nothing answered %%% new_session
+asc/cli.py %%%     if not ok:⏎        raise RegistryError(f"asctl trusts only %%%     if False:⏎        raise RegistryError(f"asctl trusts only %%% trust refused: a folder others can write to, nothing answered %%% new_session
+asc/cli.py %%%  and not ps[0]["in_mode"] else None %%%  else None %%% trust refused: its pane in copy mode, nothing answered %%% new_session

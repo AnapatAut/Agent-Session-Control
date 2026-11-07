@@ -80,37 +80,38 @@ check("repeats in a row fold into one line, from the first",
   `(() => { const r = (t) => ({ t, kind: "refused", by: "page", text: "on: 0001 is being started or stopped by another asctl; try again" });
     const g = evFold([r(900), r(800), r(700), { t: 600, kind: "on", by: "page", text: "" }, r(500)]);
     return g.length === 3 && g[0].n === 3 && g[0].first === 700 && g[1].n === 1 && g[2].n === 1; })()`);
-// A new session refused: what the page may ask, and the folder its trust confirm names.
-const UT = HOME + "/real is not a trusted folder yet: Claude Code asks whether to trust it (asctl new --trust answers yes for it)";
-check("new: an untrusted folder is asked about before trust is sent, never again once sent",
-  `newRetry({ action: "new", path: "~/x" }, { ok: false, error: "${UT}" }) === "trust"
-  && newRetry({ action: "new", path: "~/x", trust: true }, { ok: false, error: "${UT}" }) === null`);
-check("new: memory short asks to force it, a forced one never again",
-  `newRetry({ action: "new" }, { ok: false, error: "memory: 5.0% available, a start needs 20%" }) === "memory"
-  && newRetry({ action: "new", force_memory: true }, { ok: false, error: "memory: 5.0% available" }) === null`);
-check("new: other refusals, other actions and a success ask nothing",
-  `newRetry({ action: "new" }, { ok: false, error: "${HOME}/f is not a folder" }) === null
-  && newRetry({ action: "on" }, { ok: false, error: "${UT}" }) === null && newRetry({ action: "new" }, { ok: true }) === null`);
-check("new: the trust confirm names the folder asctl named (its real path)", `untrustedPath("${UT}") === "${HOME}/real"`);
-check("new and trusted: in words", `evLabel({ kind: "new" }) === "Created" && evLabel({ kind: "trusted" }) === "Folder trusted"`);
-check("new: no folder read off another refusal, or off words that only look like asctl's",
-  `untrustedPath("${HOME}/f is not a folder") === "" && untrustedPath("${UT}x") === ""`);
+// A favorite whose claude waits at Claude Code's trust prompt, and the page's Trust folder.
+check("waiting for trust: needs attention, names the folder", `(() => { const l = look({ state: "waiting for trust", cwd: "${HOME}/fresh" });
+  return l.group === "attention" && l.label === "Waiting for trust"
+    && l.why === "Claude Code asks whether to trust ~/fresh. Trust folder lets claude start there; Off closes it."; })()`);
+check("new, trusted, untrusted: in words",
+  `evLabel({ kind: "new" }) === "Created" && evLabel({ kind: "trusted" }) === "Folder trusted" && evLabel({ kind: "untrusted" }) === "Waiting for trust"`);
 
-// act itself, with a fetch that refuses as asctl does and the confirm answered no, then yes:
-// trust is sent only after a yes, and for the folder the confirm named
-check("new: trust sent only after the confirm, for the folder it named", `(async () => {
-  const sent = [];
-  fetch = async (u, o) => {
-    if (o && o.body) sent.push(JSON.parse(o.body));
-    const j = o && o.body && JSON.parse(o.body).trust ? { ok: true, out: "made" } : { ok: false, error: "${UT}" };
-    return { status: 200, json: async () => j };
-  };
+// act and Trust folder themselves, with a fetch that records what is sent and the confirm
+// answered no, then yes; one after the other (chain): each sets the page's fetch and ask
+run("var chain = Promise.resolve();");
+const rec = `const sent = [], asked = [];
+  fetch = async (u, o) => { if (o && o.body) sent.push(JSON.parse(o.body)); return { status: 200, json: async () => reply(sent[sent.length - 1]) }; };`;
+check("trust folder: sent only after a yes to a warning that names the folder, with only which favorite", `(chain = chain.then(async () => {
+  ${rec}
+  const reply = () => ({ ok: true, out: "on" });
+  ask = async (o) => { asked.push(o.text); return false; };
+  const e = { id4: "0007", tmux: "fresh-0007", cwd: "${HOME}/fresh", state: "waiting for trust" };
+  await trustFolder(e);
+  const no = sent.length === 0 && asked.length === 1 && asked[0].includes(" files in ~/fresh, ");
+  ask = async () => true;
+  await trustFolder(e);
+  return no && sent.length === 1 && JSON.stringify(sent[0]) === '{"action":"trust","id":"0007","tmux":"fresh-0007"}';
+}))`);
+check("new: memory short asks to force it, sent forced only after a yes", `(chain = chain.then(async () => {
+  ${rec}
+  const reply = (b) => b.force_memory ? { ok: true, out: "made" } : { ok: false, error: "memory: 5.0% available, a start needs 20%" };
   ask = async () => false;
   await act({ action: "new", path: "~/x", mode: "auto", rc: false });
-  const no = sent.length === 1 && !("trust" in sent[0]);
+  const no = sent.length === 1 && !("force_memory" in sent[0]);
   sent.length = 0;
   ask = async () => true;
   await act({ action: "new", path: "~/x", mode: "auto", rc: false });
-  return no && sent.length === 2 && !("trust" in sent[0]) && sent[1].trust === true && sent[1].path === "${HOME}/real";
-})()`);
+  return no && sent.length === 2 && !("force_memory" in sent[0]) && sent[1].force_memory === true && sent[1].path === "~/x";
+}))`);
 Promise.all(later).then(() => process.exit(fail ? 1 : 0));

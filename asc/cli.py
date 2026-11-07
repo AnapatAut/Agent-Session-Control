@@ -5,12 +5,12 @@
   asctl fav REF [--name N] [--whole-session]
                                    favorite a running claude (REF: its pid, session id or
                                    tmux pane %N), or a past conversation (REF: its session id)
-  asctl new FOLDER [--name N] [--mode auto|manual|skip] [--rc] [--trust] [--force-memory]
+  asctl new FOLDER [--name N] [--mode auto|manual|skip] [--rc] [--force-memory]
                                    a new favorite in FOLDER (a path in your home, ~/ too: not
                                    hidden; it and the folders above it yours, writable by no one
-                                   else), started as On does, or nothing left; a folder Claude
-                                   Code does not trust yet is refused unless --trust, which
-                                   answers its trust prompt for this start
+                                   else), started as On does, or nothing left
+  asctl trust ID                   yes to Claude Code's trust prompt for its folder, where a start
+                                   left its claude waiting (asctl never answers it by itself)
   asctl on ID [--force-memory]     start it: a tmux session NAME-ID in its folder, resumed;
                                    refused when memory is short (asc/memory.py) unless forced
   asctl off ID [--force]           end it: claude gets SIGTERM, then its tmux session closes
@@ -95,7 +95,7 @@ def refusals(e, what):
 
 
 # Commands that change something: each is logged when refused or failed (main).
-ACTIONS = {"fav", "new", "on", "off", "rename", "restart", "mode", "rc", "resurrect", "forget"}
+ACTIONS = {"fav", "new", "trust", "on", "off", "rename", "restart", "mode", "rc", "resurrect", "forget"}
 
 
 def exit_file(id4):
@@ -324,6 +324,8 @@ def state_of(e, lv, up_sessions=None):
         return "on", s
     if s:
         return "on (outside its tmux session)", s
+    if up and awaiting(e):
+        return "waiting for trust", None
     ex = last_exit(e["id4"])
     if up:
         if ex and ex[0] in (137, 143):
@@ -412,6 +414,7 @@ def new_folder(path):
         raise RegistryError(f"{real} is a hidden folder, or in one")
     if not os.path.isdir(real):
         raise RegistryError(f"{real} is not a folder")
+    registry.check_path(real)  # a link's target too: no control or format character shown later
     for i in range(len(parts) + 1):
         d = os.path.join(home, *parts[:i])
         st = os.lstat(d)
@@ -437,7 +440,7 @@ def cmd_new(args):
         t = registry.now()
         data["entries"][id4] = {
             "id4": id4, "name": name, "tmux": tmux, "cwd": cwd, "session_id": sid, "lineage": [],
-            "started": False, "ran": False, "rc": args.rc, "rc_title": tmux, "mode": args.mode,
+            "started": False, "rc": args.rc, "rc_title": tmux, "mode": args.mode,
             "resurrect": False, "want_on": False, "note": "", "created": t, "last_on": None, "last_off": None,
         }
         e = dict(data["entries"][id4])
@@ -445,10 +448,7 @@ def cmd_new(args):
     # all or nothing: a new favorite whose claude did not come up goes again, with its session
     with registry.entry_lock(id4, wait=True):
         try:
-            r = _on(id4, args.force_memory, trust=args.trust)
-        except Untrusted:
-            _drop_new(e, "not started, its folder not trusted yet")
-            raise
+            r = _on(id4, args.force_memory)
         except BaseException:
             _drop_new(e, "its start failed")
             raise
@@ -471,29 +471,39 @@ def _drop_new(e, why):
     events.log("forget", e, f"forgot {e['id4']} {e['tmux']}: {why}")
 
 
+def _prompt_lines(screen):
+    """The folder Claude Code's trust prompt names (its lines from "Accessing workspace:" to
+    "Quick safety check:", joined: a long path wraps), and the prompt's lines from that last
+    "Quick safety check:" on, when it is among the last 12 lines on screen; else ("", None).
+    Lines stripped, the empty ones left out."""
+    lines = [l.strip() for l in screen.splitlines() if l.strip()]
+    q = next((k for k in range(len(lines) - 1, max(len(lines) - 12, 0) - 1, -1)
+              if lines[k].startswith("Quick safety check:")), None)
+    if q is None:
+        return "", None
+    a = next((k for k in range(q - 1, -1, -1) if lines[k] == "Accessing workspace:"), None)
+    return ("" if a is None else "".join(lines[a + 1:q])), lines[q:]
+
+
 def trust_prompt(screen, cwd):
     """True only for Claude Code's own trust prompt for this folder: its fixed lines, in
-    order, as the last lines on screen (a transcript that quotes them does not count)."""
-    lines = [l.strip() for l in screen.splitlines() if l.strip()]
-    tail = lines[-12:]
-    try:
-        i = next(k for k, l in enumerate(tail) if l.startswith("Quick safety check:"))
-    except StopIteration:
+    order, as the last lines on screen (a transcript that quotes them does not count), naming
+    exactly this folder."""
+    folder, rest = _prompt_lines(screen)
+    if rest is None:
         return False
-    rest = tail[i:]
     return (any(l.endswith("No, exit") for l in rest) and any(l.endswith("Yes, I trust this folder") for l in rest)
-            and rest[-1].startswith("Enter to confirm") and cwd in "".join(lines))
+            and rest[-1].startswith("Enter to confirm") and folder == cwd)
 
 
 class Untrusted(RegistryError):
-    """Claude Code asks whether to trust the folder, and this start may not answer it."""
+    """Claude Code asks whether to trust the folder: a start leaves its claude waiting there."""
 
 
-def wait_started(e, timeout=40, trust=True):
-    """Wait for the claude of a just-started session; answer the trust prompt only for the
-    entry's own folder (Claude Code selects "No, exit" by default: press Down, check, Enter),
-    and only while no claude in the session has its session file yet. trust False: never
-    answer it (Untrusted when it shows)."""
+def wait_started(e, timeout=40):
+    """Wait for the claude of a just-started session: it, or None. Claude Code's trust prompt for
+    the entry's folder is never answered here (only asctl trust, on a person's word): Untrusted
+    once it shows, its claude left waiting at it."""
     end = time.time() + timeout
     while time.time() < end:
         time.sleep(0.5)
@@ -504,20 +514,92 @@ def wait_started(e, timeout=40, trust=True):
             return s
         if started_exit(e):  # claude ended already
             return None
-        screen = tmuxctl.capture(e["tmux"])
-        if trust_prompt(screen, e["cwd"]):
-            if not trust:
-                # the page reads the folder off these exact words (asc/web/app.js untrustedPath)
-                raise Untrusted(f"{e['cwd']} is not a trusted folder yet: Claude Code asks whether to trust it "
-                                f"(asctl new --trust answers yes for it)")
-            if "❯ Yes, I trust this folder" not in screen:
-                tmuxctl.send_key(e["tmux"], "Down")
-                time.sleep(0.5)
-            screen = tmuxctl.capture(e["tmux"])
-            if trust_prompt(screen, e["cwd"]) and "❯ Yes, I trust this folder" in screen and not live_in(e):
-                tmuxctl.send_key(e["tmux"], "Enter")
-                events.log("trusted", e, f"answered Claude Code's trust prompt for {e['cwd']}: yes")
+        if trust_prompt(tmuxctl.capture(e["tmux"]), e["cwd"]):
+            raise Untrusted(f"Claude Code asks whether to trust {e['cwd']}")
+    if tmuxctl.has_session(e["tmux"]) and not live_in(e) and trust_prompt(tmuxctl.capture(e["tmux"]), e["cwd"]):
+        raise Untrusted(f"Claude Code asks whether to trust {e['cwd']}")  # drawn as the wait ended
     return None
+
+
+def awaiting(e):
+    """True while the claude a start left at Claude Code's trust prompt may still wait there: the
+    entry marked by that start, the pane it started claude in still in its session (the same pane
+    id and PID: not a session of the same name made since), its claude not ended. (No live claude
+    in it is the caller's to check.)"""
+    m = e.get("awaiting_trust")
+    if not isinstance(m, dict) or started_exit(e):
+        return False
+    return any(p["pane_id"] == m.get("pane") and p["pane_pid"] == m.get("pane_pid") for p in tmuxctl.panes(e["tmux"]))
+
+
+def at_trust_prompt(e, lv=None):
+    """The pane %N where the entry's claude waits at Claude Code's trust prompt for the entry's
+    folder, else None: marked by its start (awaiting), the one pane of its session, no live claude
+    in it yet, the prompt the last lines on its screen, the pane not in copy mode (keys would
+    scroll it)."""
+    if not awaiting(e):
+        return None
+    ps = tmuxctl.panes(e["tmux"], strict=True)
+    if not ps or len(ps) != 1 or live_in(e, lv):
+        return None
+    return ps[0]["pane_id"] if trust_prompt(tmuxctl.capture_pane(ps[0]["pane_id"]), e["cwd"]) and not ps[0]["in_mode"] else None
+
+
+YES = "❯ Yes, I trust this folder"
+
+
+def yes_selected(screen):
+    """True when the trust prompt on screen has its Yes selected, and only it: looked for only in
+    the prompt's own lines, never in a transcript above it that quotes them."""
+    rest = _prompt_lines(screen)[1]
+    return rest is not None and [l for l in rest if l.startswith("❯")] == [YES]
+
+
+def cmd_trust(args):
+    e = registry.find(registry.load(), args.id)
+    with registry.entry_lock(e["id4"]):
+        return _trust(e["id4"])
+
+
+def _trust(id4):
+    """Yes to Claude Code's trust prompt for the entry's folder, in the pane where its start left
+    claude waiting (at_trust_prompt), then the rest of that start (_came_up). Claude Code selects
+    "No, exit" first: Down, the move seen, then Enter. The entry's lock held."""
+    e = registry.find(registry.load(), id4)
+    try:
+        ok = new_folder(e["cwd"]) == e["cwd"]
+    except (RegistryError, OSError) as x:
+        ok, why = False, str(x)
+    else:
+        why = f"{e['cwd']} is not its own real path"
+    if not ok:
+        raise RegistryError(f"asctl trusts only a folder New session would take: {why} "
+                            f"(trust it in its pane by hand, if you mean to)")
+    pane = at_trust_prompt(e)
+    if pane is None:
+        raise RegistryError(f"no claude of {e['tmux']} waits at Claude Code's trust prompt for {e['cwd']}"
+                            if not awaiting(e) else
+                            f"Claude Code's trust prompt for {e['cwd']} does not show in {e['tmux']!r} (its one "
+                            f"pane, not in copy mode), or its claude is up already: nothing answered")
+    if not yes_selected(tmuxctl.capture_pane(pane)):
+        tmuxctl.send_pane(pane, "Down")
+        time.sleep(0.5)
+    if at_trust_prompt(e) != pane or not yes_selected(tmuxctl.capture_pane(pane)):
+        raise ActionFailed("its trust prompt changed while it was answered; Enter not pressed (Down may have been)")
+    tmuxctl.send_pane(pane, "Enter")
+    events.log("trusted", e, f"answered Claude Code's trust prompt for {e['cwd']}: yes")
+    end = time.time() + 5  # the prompt goes once claude has the answer
+    while time.time() < end and trust_prompt(tmuxctl.capture_pane(pane), e["cwd"]):
+        time.sleep(0.25)
+    try:
+        s = wait_started(e)
+    except Untrusted:
+        raise ActionFailed("its trust prompt still shows: the answer was not taken")
+    mark = e["awaiting_trust"]
+    if not s:
+        return _not_up(e)
+    return _came_up(e, s, mark.get("mode") if isinstance(mark.get("mode"), str) else "?", mark.get("rc") is True,
+                    False, True)
 
 
 def cmd_on(args):
@@ -550,14 +632,14 @@ def ensure_server():
     return pid
 
 
-def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, resurrect=False, trust=None):
+def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, resurrect=False):
     """On, with the entry's lock held. pane, pane_pid: a pane %N of the entry's own tmux session
     whose claude ended, and the PID asctl-wrap left there (the watcher's restart): claude runs
     there again in place of its shell (the session and anyone attached stay), after the same
     checks and pane_free just before. starting: called once nothing can refuse any more.
-    resurrect: asctl boot's start (with rc when resurrect is on, as claude_argv says).
-    trust: whether Claude Code's trust prompt for its folder may be answered (wait_started); None:
-    only for a favorite whose claude has come up before ("ran"; entries from before have none)."""
+    resurrect: asctl boot's start (with rc when resurrect is on, as claude_argv says). A claude
+    that Claude Code asks whether to trust its folder is left waiting at that prompt, the entry
+    marked (awaiting_trust): asctl trust answers it."""
     e = registry.find(registry.load(), id4)
     if pane is not None:
         server = tmuxctl.server_pid()  # a pane to start in: its server, never a new one
@@ -588,6 +670,8 @@ def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, r
         e["want_on"], e["last_on"] = True, registry.now()
         argv = claude_argv(e, resurrect)
         e["started"] = True
+        e.pop("awaiting_trust", None)
+    mode, rc = argv[argv.index("--permission-mode") + 1], "--remote-control" in argv
     try:
         os.unlink(exit_file(e["id4"]))
     except FileNotFoundError:
@@ -612,34 +696,51 @@ def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, r
         if pane is None:
             tmuxctl.kill_session(e["tmux"])
         raise ActionFailed("the tmux server ended while starting; nothing was started (it is marked on)")
-    # a new favorite's claude never came up (asctl new killed part way): its folder may never
-    # have been trusted, so its prompt is answered only when told
     try:
-        s = wait_started(e, trust=e.get("ran", True) if trust is None else trust)
+        s = wait_started(e)
     except Untrusted:
-        if pane is None:
-            tmuxctl.kill_session(e["tmux"])  # its own session, claude at the prompt
-        raise
-    if not s:
-        ex = started_exit(e)
-        why = f"claude exited {ex[0]} {max(0, ex[1] - e['last_on'])} s after it started" if ex else "no claude came up"
-        msg = f"{e['tmux']}: tmux session started, but {why} (see: tmux attach -t ={e['tmux']})"
-        # on stderr, as every failure: the page shows it (stdout is for what was done)
-        print(f"asctl: {msg}", file=sys.stderr, flush=True)
-        events.log("failed", e, msg)
-        return 1
-    events.log("on", e, f"claude {s['pid']}, session {s['session_id']}" + (" (past the memory gate)" if force_memory else ""),
-               mode=argv[argv.index("--permission-mode") + 1], rc="--remote-control" in argv)
-    if not e.get("ran", True):
+        ps = tmuxctl.panes(e["tmux"], strict=True) or []
+        p = ps[0] if len(ps) == 1 else {}  # its pane, as started (another since: none, no trust)
         with registry.changing() as data:
-            registry.find(data, e["id4"])["ran"] = True
+            registry.find(data, e["id4"])["awaiting_trust"] = {"since": registry.now(), "mode": mode, "rc": rc,
+                                                               "pane": p.get("pane_id"), "pane_pid": p.get("pane_pid")}
+        msg = (f"{e['tmux']}: its claude waits: Claude Code asks whether to trust {e['cwd']}, not answered "
+               f"(Trust folder on the page, or asctl trust {e['id4']}; Off closes it)")
+        events.log("untrusted", e, msg)
+        if loud:
+            out(f"waiting: {msg}")
+        return 0
+    if not s:
+        return _not_up(e)
+    return _came_up(e, s, mode, rc, force_memory, loud)
+
+
+def _not_up(e):
+    """A start whose claude did not come up: said on stderr, logged; 1."""
+    ex = started_exit(e)
+    why = f"claude exited {ex[0]} {max(0, ex[1] - e['last_on'])} s after it started" if ex else "no claude came up"
+    msg = f"{e['tmux']}: tmux session started, but {why} (see: tmux attach -t ={e['tmux']})"
+    # on stderr, as every failure: the page shows it (stdout is for what was done)
+    print(f"asctl: {msg}", file=sys.stderr, flush=True)
+    events.log("failed", e, msg)
+    return 1
+
+
+def _came_up(e, s, mode, rc, force_memory, loud):
+    """The rest of a start once its claude s is up (On, or asctl trust after its prompt): logged,
+    the entry's mark gone, the session claude chose followed, the rc title sent; 0."""
+    events.log("on", e, f"claude {s['pid']}, session {s['session_id']}" + (" (past the memory gate)" if force_memory else ""),
+               mode=mode, rc=rc)
+    if e.get("awaiting_trust") is not None:
+        with registry.changing() as data:
+            registry.find(data, e["id4"]).pop("awaiting_trust", None)
     if s["session_id"] != e["session_id"]:
         with registry.changing() as data:
             x = registry.find(data, e["id4"])
             x["lineage"] = ([x["session_id"]] + x.get("lineage", []))[:5]
             x["session_id"] = s["session_id"]
         events.log("followed", e, f"session {e['session_id']} is now {s['session_id']} (claude chose it at start)")
-    if "--remote-control" in argv and (e.get("rc_title") or e["tmux"]) == e["tmux"]:
+    if rc and (e.get("rc_title") or e["tmux"]) == e["tmux"]:
         why = send_title(s, e["tmux"])
         if why:  # claude has the name (--name), its claude.ai session not yet: owed to it
             pending(e["id4"], e["tmux"], title=True)
@@ -702,13 +803,16 @@ def _off(id4, force, loud=True):
                             f"{live.where(away)['text']}; off ends only what runs in {e['tmux']!r}, so nothing "
                             f"was done (end it there, or asctl restart {e['id4']} moves it into "
                             f"{e['tmux']!r} once it is idle)")
-    if up and not force:
+    # its claude at the trust prompt its start left it at has done nothing yet: not busy
+    waiting = up and not s and at_trust_prompt(e, lv) is not None
+    if up and not force and not waiting:
         why = live.busy_reason(e["tmux"], lv, own_sid=e.get("session_id"))
         if why:
             raise RegistryError(f"busy: {why} (asctl off {e['id4']} --force ends it anyway)")
     with registry.changing() as data:
         x = registry.find(data, e["id4"])
         x["want_on"], x["last_off"] = False, registry.now()
+        x.pop("awaiting_trust", None)
     if s:
         job, s = (s, s["host"]) if s.get("host") else (None, s)  # the claude in the pane, not its job
         # Checked again just before the signal: the claude may have been moved out meanwhile.
@@ -729,7 +833,8 @@ def _off(id4, force, loud=True):
             out(ended)
     if up:
         tmuxctl.kill_session(e["tmux"])
-    events.log("off", e, (ended if s else "no claude ran") + (", forced" if force else ""))
+    events.log("off", e, (ended if s else "its claude closed at the trust prompt, not answered" if waiting
+                          else "no claude ran") + (", forced" if force else ""))
     if loud:
         out(f"off: {e['tmux']}")
     return 0
@@ -1022,9 +1127,11 @@ def main(argv=None):
     a.add_argument("--name")
     a.add_argument("--mode", choices=list(registry.MODES), default="auto")
     a.add_argument("--rc", action="store_true")
-    a.add_argument("--trust", action="store_true")
     a.add_argument("--force-memory", action="store_true")
     a.set_defaults(f=cmd_new)
+    a = sub.add_parser("trust")
+    a.add_argument("id")
+    a.set_defaults(f=cmd_trust)
     a = sub.add_parser("on")
     a.add_argument("id")
     a.add_argument("--force-memory", action="store_true")

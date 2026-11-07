@@ -36,7 +36,7 @@ MAX_BYTES = 2 << 20
 CHECK_BYTES = 16000  # a favorite's line is over 80 bytes: under this none can have KEEP_PER
 KINDS = {"fav", "new", "forget", "on", "off", "restart", "rename", "rc", "resurrect", "mode", "refused",
          "failed", "ended", "restarted", "followed", "waiting", "duplicate", "memory", "setting",
-         "setup", "trusted"}
+         "setup", "trusted", "untrusted"}
 BY = {"cli", "page", "watch", "boot"}
 
 

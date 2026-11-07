@@ -508,17 +508,20 @@ mkdir -p "$HOME/web" "$HOME/fresh2"; printf '%s\n' "$HOME/web" >> "$HOME/fake-tr
 n0=$(state | jq '.favorites | length')
 [ "$(post '{"action":"new","path":5}' | tail -1)" = 400 ] && ok "new: the path must be text" || bad "new: the path must be text" "a number taken as a path"
 [ "$(post '{"action":"new","path":"'"$HOME"'/web","mode":"skip"}' | tail -1)" = 400 ] && ok "new from the page: mode skip refused" || bad "new from the page: mode skip refused" "skip taken from the page"
-[ "$(post '{"action":"new","path":"'"$HOME"'/web","trust":"yes"}' | tail -1)" = 400 ] && ok "new: trust only when it is true (\"yes\" is not)" || bad "new: trust only when it is true (\"yes\" is not)" "trust taken from a non-boolean"
+[ "$(post '{"action":"new","path":"'"$HOME"'/web","rc":"yes"}' | tail -1)" = 400 ] && ok "new: rc only when it is true (\"yes\" is not)" || bad "new: rc only when it is true (\"yes\" is not)" "rc taken from a non-boolean"
 [ "$(post '{"action":"new","path":"'"$HOME"'/web","name":"Bad Name"}' | tail -1)" = 400 ] && ok "new: a bad name refused" || bad "new: a bad name refused" "a bad name taken"
 out=$(post '{"action":"new","path":"-x"}')
 [ "$(tail -1 <<<"$out")" = 409 ] && seen 'is not an absolute path' <<<"$out" && ok "new: a path starting with - stays a path" || bad "new: a path starting with - stays a path" "a dash path: $out"
-out=$(post '{"action":"new","path":"'"$HOME"'/fresh2"}')
-[ "$(tail -1 <<<"$out")" = 409 ] && seen -F "fresh2 is not a trusted folder yet: Claude Code asks whether to trust it (asctl new --trust answers yes for it)\"" <<<"$out" && [ "$(state | jq '.favorites | length')" = "$n0" ] \
-	&& ok "new from the page: an untrusted folder refused with the reason, nothing made" || bad "new from the page: an untrusted folder refused with the reason, nothing made" "untrusted: $out"
+# trust sent with new is not passed on: its claude waits at the prompt all the same
 out=$(post '{"action":"new","path":"'"$HOME"'/fresh2","trust":true}')
 idn=$(jq -r --arg c "$HOME/fresh2" '.entries[] | select(.cwd == $c) | .id4' "$REG")
-[ "$(tail -1 <<<"$out")" = 200 ] && [ -n "$idn" ] && state | jq -e --arg i "$idn" '.favorites[] | select(.id4 == $i) | .state == "on"' >/dev/null && lastargs | seen -- "--session-id " \
-	&& ok "new from the page, trust confirmed: on, started as new" || bad "new from the page, trust confirmed: on, started as new" "new with trust: $out"
+[ "$(tail -1 <<<"$out")" = 200 ] && [ -n "$idn" ] && seen "waiting: fresh2-$idn: its claude waits: Claude Code asks whether to trust $HOME/fresh2" <<<"$out" \
+	&& state | jq -e --arg i "$idn" '.favorites[] | select(.id4 == $i) | .state == "waiting for trust"' >/dev/null && ! seen -xF "$HOME/fresh2" "$HOME/fake-trusted" \
+	&& ok "new from the page, an untrusted folder: made, its claude waiting for trust, nothing answered" || bad "new from the page, an untrusted folder: made, its claude waiting for trust, nothing answered" "untrusted: $out"
+out=$(post '{"action":"trust","id":"'"$idn"'","tmux":"fresh2-'"$idn"'"}')
+[ "$(tail -1 <<<"$out")" = 200 ] && state | jq -e --arg i "$idn" '.favorites[] | select(.id4 == $i) | .state == "on"' >/dev/null \
+	&& seen -xF "$HOME/fresh2" "$HOME/fake-trusted" && lastargs | seen -- "--session-id " \
+	&& ok "trust from the page: the prompt answered for its folder, on, started as new" || bad "trust from the page: the prompt answered for its folder, on, started as new" "trust: $out"
 post '{"action":"off","force":true,"id":"'"$idn"'","tmux":"fresh2-'"$idn"'"}' >/dev/null
 post '{"action":"forget","id":"'"$idn"'","tmux":"fresh2-'"$idn"'"}' >/dev/null
 }
