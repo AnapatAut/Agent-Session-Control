@@ -513,7 +513,7 @@ n0=$(state | jq '.favorites | length')
 out=$(post '{"action":"new","path":"-x"}')
 [ "$(tail -1 <<<"$out")" = 409 ] && seen 'is not an absolute path' <<<"$out" && ok "new: a path starting with - stays a path" || bad "new: a path starting with - stays a path" "a dash path: $out"
 out=$(post '{"action":"new","path":"'"$HOME"'/fresh2"}')
-[ "$(tail -1 <<<"$out")" = 409 ] && seen 'is not a trusted folder yet' <<<"$out" && [ "$(state | jq '.favorites | length')" = "$n0" ] \
+[ "$(tail -1 <<<"$out")" = 409 ] && seen -F "fresh2 is not a trusted folder yet: Claude Code asks whether to trust it (asctl new --trust answers yes for it)\"" <<<"$out" && [ "$(state | jq '.favorites | length')" = "$n0" ] \
 	&& ok "new from the page: an untrusted folder refused with the reason, nothing made" || bad "new from the page: an untrusted folder refused with the reason, nothing made" "untrusted: $out"
 out=$(post '{"action":"new","path":"'"$HOME"'/fresh2","trust":true}')
 idn=$(jq -r --arg c "$HOME/fresh2" '.entries[] | select(.cwd == $c) | .id4' "$REG")

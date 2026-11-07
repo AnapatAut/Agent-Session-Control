@@ -102,10 +102,12 @@ A claude that ends at once is said in seconds, with its exit code (on stderr: th
 asctl live                  # running claudes: pid, session id, tmux session, folder
 asctl fav 12345 --name das  # favorite one (by pid, session id or pane %N); its tmux session becomes das-0421
 asctl list                  # favorites and their state
-asctl new ~/projects/app    # a new favorite in that folder (yours, in your home, not hidden, not
-                            # writable by others), started now as a new conversation (--name,
-                            # --mode, --rc); a folder Claude Code does not trust yet is refused
-                            # unless --trust, which answers its trust prompt for this start
+asctl new ~/projects/app    # a new favorite in that folder (in your home, not hidden; it and the
+                            # folders above it to your home yours, writable by no one else),
+                            # started now as a new conversation (--name, --mode, --rc); a folder
+                            # Claude Code does not trust yet is refused unless --trust, which
+                            # answers its trust prompt for this start; a claude that does not come
+                            # up leaves nothing (no favorite, no tmux session)
 asctl off 0421              # refuses while claude works or another pane runs something; --force
 asctl on 0421               # tmux session das-0421, claude --resume <id> --name das-0421
                             # (refused under 20% memory available, or if it would leave under 15%;

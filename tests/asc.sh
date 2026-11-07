@@ -460,8 +460,8 @@ asctl note "$id2" -- "-starts with a dash" >/dev/null && ok "a note may start wi
 case_new_session() {
 server_up
 echo "== new: a favorite in a folder given by path"
-mkdir -p "$HOME/proj" "$HOME/Proj Two" "$HOME/fresh" "$HOME/.hid" "$HOME/open"
-chmod o+w "$HOME/open"; : > "$HOME/nofile"; ln -s "$W" "$HOME/link"
+mkdir -p "$HOME/proj" "$HOME/Proj Two" "$HOME/fresh" "$HOME/.hid" "$HOME/open/sub" "$HOME/gw"
+chmod o+w "$HOME/open"; chmod g+w "$HOME/gw"; : > "$HOME/nofile"; ln -s "$W" "$HOME/link"
 printf '%s\n' "$HOME/proj" "$HOME/Proj Two" >> "$HOME/fake-trusted"
 nid() { jq -r --arg c "$1" '[.entries[] | select(.cwd == $c) | .id4] | last // empty' "$REG"; }
 asctl new "$HOME/proj" --name proj >/dev/null; idn=$(nid "$HOME/proj")
@@ -480,9 +480,22 @@ want="not the home folder itself"; refused "$HOME" && ok "new refused: the home 
 want="is a hidden folder, or in one"; refused "$HOME/.hid" && ok "new refused: a hidden folder" || bad "new refused: a hidden folder" "hidden: $out"
 want="is not a folder"; refused "$HOME/nofile" && ok "new refused: not a folder" || bad "new refused: not a folder" "not a folder: $out"
 want="is not yours, or others can write to it"; refused "$HOME/open" && ok "new refused: a folder others can write to" || bad "new refused: a folder others can write to" "o+w: $out"
-want="none a control character"; refused "$HOME/pr"$'\t'"oj" && ok "new refused: a control character in the path" || bad "new refused: a control character in the path" "control: $out"
+want="is not yours, or others can write to it"; refused "$HOME/open/sub" && ok "new refused: in a folder others can write to" || bad "new refused: in a folder others can write to" "in o+w: $out"
+want="none a control or format character"; refused "$HOME/pr"$'\t'"oj" && ok "new refused: a control character in the path" || bad "new refused: a control character in the path" "control: $out"
+want="none a control or format character"; refused "$HOME/proj"$'\u202e' && ok "new refused: a format character (bidi) in the path" || bad "new refused: a format character (bidi) in the path" "bidi: $out"
+# who owns a folder, and its group, as another user would see them (no second user here)
+nf() { python3 -I -c 'import os, sys; sys.path.insert(0, sys.argv[1]); from asc import cli, registry
+u, g = os.getuid(), os.getgid()
+os.getuid, os.getgid = (lambda: u + (sys.argv[3] == "uid")), (lambda: g + (sys.argv[3] == "gid"))
+try:
+    print("taken", cli.new_folder(sys.argv[2]))
+except registry.RegistryError as x:
+    print(x)' "$REPO" "$1" "${2:-}"; }
+nf "$HOME/proj" uid | seen "is not yours" && ok "new refused: a folder not yours" || bad "new refused: a folder not yours" "not yours: $(nf "$HOME/proj" uid)"
+nf "$HOME/gw" | seen "^taken $HOME/gw\$" && nf "$HOME/gw" gid | seen "is not yours, or others can write to it" \
+	&& ok "new: a folder its own group can write to is taken (umask 002), another group's not" || bad "new: a folder its own group can write to is taken (umask 002), another group's not" "g+w: $(nf "$HOME/gw") / $(nf "$HOME/gw" gid)"
 mem 32000000 1600000
-want="memory: 5.0% available"; refused "$HOME/proj" && ok "new refused when memory is short" || bad "new refused when memory is short" "memory: $out"
+want="memory: 5.0% available, a start needs 20% (asctl new --force-memory starts it anyway)"; refused "$HOME/proj" && ok "new refused when memory is short" || bad "new refused when memory is short" "memory: $out"
 mem 32000000 16000000
 echo "== new: a folder Claude Code does not trust yet"
 want="is not a trusted folder yet"; refused "$HOME/fresh" && ok "new refused: an untrusted folder, its trust prompt not answered" || bad "new refused: an untrusted folder, its trust prompt not answered" "untrusted: $out"
@@ -491,6 +504,18 @@ want="is not a trusted folder yet"; refused "$HOME/fresh" && ok "new refused: an
 asctl new "$HOME/fresh" --trust >/dev/null; id3n=$(nid "$HOME/fresh")
 [ -n "$id3n" ] && claude_now "fresh-$id3n" >/dev/null && seen -xF "$HOME/fresh" "$HOME/fake-trusted" && last trusted | seen "trust prompt for $HOME/fresh: yes" \
 	&& ok "new --trust: the trust prompt answered for its folder, logged" || bad "new --trust: the trust prompt answered for its folder, logged" "--trust: $id3n $(last trusted)"
+jqe ".entries[\"$id3n\"].ran" | seen -x true && ok "new: the favorite marked as run once its claude is up" || bad "new: the favorite marked as run once its claude is up" "ran: $(jqe ".entries[\"$id3n\"].ran")"
+# one whose claude never came up (asctl new killed part way): a later start answers no prompt
+asctl off "$id3n" --force >/dev/null; grep -vxF "$HOME/fresh" "$HOME/fake-trusted" > "$T/ft"; cp "$T/ft" "$HOME/fake-trusted"
+jq --arg i "$id3n" '.entries[$i].ran = false' "$REG" > "$T/reg.new" && cp "$T/reg.new" "$REG"
+out=$(errof on "$id3n")
+seen "is not a trusted folder yet" <<<"$out" && ! tm has-session -t "=fresh-$id3n" 2>/dev/null && ! seen -xF "$HOME/fresh" "$HOME/fake-trusted" \
+	&& ok "a new favorite that never ran: a later on answers no trust prompt, its session closed" || bad "a new favorite that never ran: a later on answers no trust prompt, its session closed" "never ran: $out"
+echo "== new: a claude that ends at once"
+n1=$(jq '.entries | length' "$REG"); touch "$HOME/fake-exit-at-once"
+out=$(errof new "$HOME/proj" --name gone); rm -f "$HOME/fake-exit-at-once"
+seen "claude exited 3" <<<"$out" && [ "$(jq '.entries | length' "$REG")" = "$n1" ] && ! tm ls -F '#{session_name}' | seen '^gone-' \
+	&& ok "new, its claude ending at once: no favorite or tmux session left" || bad "new, its claude ending at once: no favorite or tmux session left" "ended at once: $out / $(jq -c '[.entries[].tmux]' "$REG")"
 echo "== new: off and on before a first message"
 asctl off "$idn" >/dev/null; asctl on "$idn" >/dev/null
 claude_now "proj-$idn" >/dev/null && lastargs | seen -- "--session-id $sn " \

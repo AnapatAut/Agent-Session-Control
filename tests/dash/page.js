@@ -13,11 +13,15 @@ const ctx = vm.createContext({ document: stub, window: stub, navigator: {}, loca
 vm.runInContext(fs.readFileSync(path.join(process.argv[2], "asc/web/app.js"), "utf8"), ctx);
 const run = (code) => vm.runInContext(code, ctx);
 let fail = 0;
+const later = [];  // checks whose code gives a promise (act): judged once it settles, at the end
 const check = (name, code) => {
   let got;
   try { got = run(code); } catch (e) { got = e; }
-  if (got === true) console.log("  ok    page: " + name);
-  else { console.log("  FAIL  page: " + name + "\n" + String(got).replace(/^/gm, "        got: ")); fail++; }
+  const judge = (got) => {
+    if (got === true) console.log("  ok    page: " + name);
+    else { console.log("  FAIL  page: " + name + "\n" + String(got).replace(/^/gm, "        got: ")); fail++; }
+  };
+  if (got && typeof got.then === "function") later.push(got.then(judge, judge)); else judge(got);
 };
 
 // A home folder put together at run time, so the privacy check does not read it as a real one.
@@ -89,4 +93,24 @@ check("new: other refusals, other actions and a success ask nothing",
   && newRetry({ action: "on" }, { ok: false, error: "${UT}" }) === null && newRetry({ action: "new" }, { ok: true }) === null`);
 check("new: the trust confirm names the folder asctl named (its real path)", `untrustedPath("${UT}") === "${HOME}/real"`);
 check("new and trusted: in words", `evLabel({ kind: "new" }) === "Created" && evLabel({ kind: "trusted" }) === "Folder trusted"`);
-process.exit(fail ? 1 : 0);
+check("new: no folder read off another refusal, or off words that only look like asctl's",
+  `untrustedPath("${HOME}/f is not a folder") === "" && untrustedPath("${UT}x") === ""`);
+
+// act itself, with a fetch that refuses as asctl does and the confirm answered no, then yes:
+// trust is sent only after a yes, and for the folder the confirm named
+check("new: trust sent only after the confirm, for the folder it named", `(async () => {
+  const sent = [];
+  fetch = async (u, o) => {
+    if (o && o.body) sent.push(JSON.parse(o.body));
+    const j = o && o.body && JSON.parse(o.body).trust ? { ok: true, out: "made" } : { ok: false, error: "${UT}" };
+    return { status: 200, json: async () => j };
+  };
+  ask = async () => false;
+  await act({ action: "new", path: "~/x", mode: "auto", rc: false });
+  const no = sent.length === 1 && !("trust" in sent[0]);
+  sent.length = 0;
+  ask = async () => true;
+  await act({ action: "new", path: "~/x", mode: "auto", rc: false });
+  return no && sent.length === 2 && !("trust" in sent[0]) && sent[1].trust === true && sent[1].path === "${HOME}/real";
+})()`);
+Promise.all(later).then(() => process.exit(fail ? 1 : 0));

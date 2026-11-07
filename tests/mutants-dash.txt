@@ -93,9 +93,11 @@ asc/dash.py %%%             "outside": dict(live.where(s), busy=cli.outside_busy
 asc/dash.py %%%         return ["restart", ref, "--outside"] %%%         return ["restart", ref] %%% restart from the page only moves a claude outside its tmux session in (one in it: refused, left alone) %%% actions_fav
 asc/past.py %%%     ok = isinstance(x, dict) and all(type(x.get(k)) is int and x[k] >= 0 for k in ("ino", "size", "lines", "seen")) %%%     ok = isinstance(x, dict) %%% odd lengths: lines as a string, none shown %%% notices
 asc/cli.py %%%         print(f"asctl: {msg}", file=sys.stderr, flush=True) %%%         print(f"asctl: {msg}", flush=True) %%% on, a claude that ends at once: refused with its exit, not an unknown error %%% rc
-asc/dash.py %%%             raise RegistryError("new needs path: a folder's path") %%%             pass %%% new: the path must be text %%% actions_new
+asc/dash.py %%%         path = registry.check_path(a.get("path")) %%%         path = a.get("path") %%% new: the path must be text %%% actions_new
 asc/dash.py %%%         if a.get("mode", "auto") not in WEB_MODES: %%%         if False: %%% new from the page: mode skip refused %%% actions_new
 asc/dash.py %%%             if not isinstance(a.get(k, False), bool): %%%             if False: %%% new: trust only when it is true ("yes" is not) %%% actions_new
 asc/dash.py %%%         return argv + ["--", path] %%%         return argv + [path] %%% new: a path starting with - stays a path %%% actions_new
-asc/web/app.js %%%   if (!body.trust && /^.+ is not a trusted folder yet: / %%%   if (/^.+ is not a trusted folder yet: / %%% page: new: an untrusted folder is asked about before trust is sent, never again once sent %%% page
-asc/web/app.js %%% function untrustedPath(error) { return (error || "").split(" is not a trusted folder yet: ")[0]; } %%% function untrustedPath(error) { return error || ""; } %%% page: new: the trust confirm names the folder asctl named (its real path) %%% page
+asc/web/app.js %%%   if (!body.trust && untrustedPath(j.error)) return "trust"; %%%   if (untrustedPath(j.error)) return "trust"; %%% page: new: an untrusted folder is asked about before trust is sent, never again once sent %%% page
+asc/web/app.js %%% return t.endsWith(UNTRUSTED_END) ? t.slice(0, -UNTRUSTED_END.length) : ""; %%% return t.split(" is not a trusted folder yet: ")[0]; %%% page: new: no folder read off another refusal, or off words that only look like asctl's %%% page
+asc/web/app.js %%%     return act({ ...body, path: untrustedPath(j.error), trust: true }); %%%     return act({ ...body, trust: true }); %%% page: new: trust sent only after the confirm, for the folder it named %%% page
+asc/web/app.js %%%   if (retry === "trust" && await ask({ %%%   if (retry === "trust" && !await ask({ %%% page: new: trust sent only after the confirm, for the folder it named %%% page

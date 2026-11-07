@@ -14,6 +14,7 @@ import secrets
 import stat
 import tempfile
 import time
+import unicodedata
 
 VERSION = 1
 NAME_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,30}")
@@ -163,6 +164,15 @@ def _plain(text, what, limit):
     if not isinstance(text, str) or len(text) > limit or any(ord(c) < 32 or 0x7f <= ord(c) < 0xa0 for c in text):
         raise RegistryError(f"bad {what}: at most {limit} characters, no control characters")
     return text
+
+
+def check_path(path):
+    """A path given by hand: 1 to 4096 characters, none a control character (C0, C1) or a Unicode
+    format character (bidi and others: a path shown in a confirm must read as it is)."""
+    if (not isinstance(path, str) or not 0 < len(path) <= 4096
+            or any(ord(c) < 32 or 0x7f <= ord(c) < 0xa0 or unicodedata.category(c) == "Cf" for c in path)):
+        raise RegistryError("the folder must be a path of 1 to 4096 characters, none a control or format character")
+    return path
 
 
 def check_title(title):

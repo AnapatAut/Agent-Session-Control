@@ -7,9 +7,10 @@
                                    tmux pane %N), or a past conversation (REF: its session id)
   asctl new FOLDER [--name N] [--mode auto|manual|skip] [--rc] [--trust] [--force-memory]
                                    a new favorite in FOLDER (a path in your home, ~/ too: not
-                                   hidden, yours, not writable by others), started as On does;
-                                   a folder Claude Code does not trust yet is refused unless
-                                   --trust, which answers its trust prompt for this start
+                                   hidden; it and the folders above it yours, writable by no one
+                                   else), started as On does, or nothing left; a folder Claude
+                                   Code does not trust yet is refused unless --trust, which
+                                   answers its trust prompt for this start
   asctl on ID [--force-memory]     start it: a tmux session NAME-ID in its folder, resumed;
                                    refused when memory is short (asc/memory.py) unless forced
   asctl off ID [--force]           end it: claude gets SIGTERM, then its tmux session closes
@@ -392,11 +393,11 @@ def cmd_fav(args):
 
 def new_folder(path):
     """The folder of a new favorite, checked: an absolute path (or ~/...), its real path a folder
-    in the user's home (not the home itself), no part of it hidden, and it and every folder from
-    the home down to it the user's own and not writable by others (no one else can swap what
-    claude then runs in). Else RegistryError."""
-    if not isinstance(path, str) or not 0 < len(path) <= 4096 or any(ord(c) < 32 or ord(c) == 127 for c in path):
-        raise RegistryError("the folder must be a path of 1 to 4096 characters, none a control character")
+    in the user's home (not the home itself), no part of it hidden, and the home and every folder
+    from it down to this one the user's own and writable by no one else (others not at all, the
+    group only when it is the user's own: no one else can swap what claude then runs in). Else
+    RegistryError."""
+    registry.check_path(path)
     p = os.path.expanduser(path) if path == "~" or path.startswith("~/") else path
     if not os.path.isabs(p):
         raise RegistryError(f"{path!r} is not an absolute path (or ~/...)")
@@ -411,10 +412,10 @@ def new_folder(path):
         raise RegistryError(f"{real} is a hidden folder, or in one")
     if not os.path.isdir(real):
         raise RegistryError(f"{real} is not a folder")
-    for i in range(len(parts)):
-        d = os.path.join(home, *parts[:i + 1])
+    for i in range(len(parts) + 1):
+        d = os.path.join(home, *parts[:i])
         st = os.lstat(d)
-        if st.st_uid != os.getuid() or st.st_mode & 0o002:
+        if st.st_uid != os.getuid() or st.st_mode & 0o002 or (st.st_mode & 0o020 and st.st_gid != os.getgid()):
             raise RegistryError(f"{d} is not yours, or others can write to it")
     return real
 
@@ -436,21 +437,38 @@ def cmd_new(args):
         t = registry.now()
         data["entries"][id4] = {
             "id4": id4, "name": name, "tmux": tmux, "cwd": cwd, "session_id": sid, "lineage": [],
-            "started": False, "rc": args.rc, "rc_title": tmux, "mode": args.mode,
+            "started": False, "ran": False, "rc": args.rc, "rc_title": tmux, "mode": args.mode,
             "resurrect": False, "want_on": False, "note": "", "created": t, "last_on": None, "last_off": None,
         }
         e = dict(data["entries"][id4])
     say("new", e, f"new session {id4} {tmux} ({cwd})", session=sid)
-    with registry.entry_lock(id4):
+    # all or nothing: a new favorite whose claude did not come up goes again, with its session
+    with registry.entry_lock(id4, wait=True):
         try:
-            return _on(id4, args.force_memory, trust=args.trust)
+            r = _on(id4, args.force_memory, trust=args.trust)
         except Untrusted:
-            # its tmux session (claude at the prompt) and the favorite go: nothing was started
-            tmuxctl.kill_session(tmux)
-            with registry.changing() as data:
-                data["entries"].pop(id4, None)
-            events.log("forget", e, f"forgot {id4} {tmux}: not started, its folder not trusted yet")
+            _drop_new(e, "not started, its folder not trusted yet")
             raise
+        except BaseException:
+            _drop_new(e, "its start failed")
+            raise
+        if r != 0:
+            _drop_new(e, "its claude did not come up")
+        return r
+
+
+def _drop_new(e, why):
+    """A new favorite that did not start, and its tmux session (claude at a prompt, or the shell
+    asctl-wrap left), gone again. Its exit record goes too (harmless if written after: a start
+    counts only its own pane's)."""
+    tmuxctl.kill_session(e["tmux"])
+    with registry.changing() as data:
+        data["entries"].pop(e["id4"], None)
+    try:
+        os.unlink(exit_file(e["id4"]))
+    except FileNotFoundError:
+        pass
+    events.log("forget", e, f"forgot {e['id4']} {e['tmux']}: {why}")
 
 
 def trust_prompt(screen, cwd):
@@ -489,6 +507,7 @@ def wait_started(e, timeout=40, trust=True):
         screen = tmuxctl.capture(e["tmux"])
         if trust_prompt(screen, e["cwd"]):
             if not trust:
+                # the page reads the folder off these exact words (asc/web/app.js untrustedPath)
                 raise Untrusted(f"{e['cwd']} is not a trusted folder yet: Claude Code asks whether to trust it "
                                 f"(asctl new --trust answers yes for it)")
             if "❯ Yes, I trust this folder" not in screen:
@@ -531,13 +550,14 @@ def ensure_server():
     return pid
 
 
-def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, resurrect=False, trust=True):
+def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, resurrect=False, trust=None):
     """On, with the entry's lock held. pane, pane_pid: a pane %N of the entry's own tmux session
     whose claude ended, and the PID asctl-wrap left there (the watcher's restart): claude runs
     there again in place of its shell (the session and anyone attached stay), after the same
     checks and pane_free just before. starting: called once nothing can refuse any more.
     resurrect: asctl boot's start (with rc when resurrect is on, as claude_argv says).
-    trust: whether Claude Code's trust prompt for its folder may be answered (wait_started)."""
+    trust: whether Claude Code's trust prompt for its folder may be answered (wait_started); None:
+    only for a favorite whose claude has come up before ("ran"; entries from before have none)."""
     e = registry.find(registry.load(), id4)
     if pane is not None:
         server = tmuxctl.server_pid()  # a pane to start in: its server, never a new one
@@ -592,7 +612,14 @@ def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, r
         if pane is None:
             tmuxctl.kill_session(e["tmux"])
         raise ActionFailed("the tmux server ended while starting; nothing was started (it is marked on)")
-    s = wait_started(e, trust=trust)
+    # a new favorite's claude never came up (asctl new killed part way): its folder may never
+    # have been trusted, so its prompt is answered only when told
+    try:
+        s = wait_started(e, trust=e.get("ran", True) if trust is None else trust)
+    except Untrusted:
+        if pane is None:
+            tmuxctl.kill_session(e["tmux"])  # its own session, claude at the prompt
+        raise
     if not s:
         ex = started_exit(e)
         why = f"claude exited {ex[0]} {max(0, ex[1] - e['last_on'])} s after it started" if ex else "no claude came up"
@@ -603,6 +630,9 @@ def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, r
         return 1
     events.log("on", e, f"claude {s['pid']}, session {s['session_id']}" + (" (past the memory gate)" if force_memory else ""),
                mode=argv[argv.index("--permission-mode") + 1], rc="--remote-control" in argv)
+    if not e.get("ran", True):
+        with registry.changing() as data:
+            registry.find(data, e["id4"])["ran"] = True
     if s["session_id"] != e["session_id"]:
         with registry.changing() as data:
             x = registry.find(data, e["id4"])

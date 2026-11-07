@@ -393,7 +393,8 @@ async function act(body) {
   if (retry === "trust" && await ask({ title: "Trust this folder?", ok: "Trust and start", danger: true,
     text: `Claude Code will be able to read, edit, and execute files in ${tilde(untrustedPath(j.error))}.\n\n` +
           "Only trust a folder whose contents you know: a project you made, or code from someone you trust." })) {
-    return act({ ...body, trust: true });
+    pending.delete(id);
+    return act({ ...body, path: untrustedPath(j.error), trust: true });  // the folder the confirm named
   }
   if ((retry === "memory" || (!j.ok && body.action === "on" && !body.force_memory && /^memory:/.test(j.error || ""))) &&
       await ask({ title: "Memory is short", text: `${j.error}\n\nStart ${body.tmux || "it"} anyway? earlyoom may then end other sessions.`,
@@ -411,12 +412,14 @@ async function act(body) {
 // before trust is sent, never sent unasked), or memory short; else null.
 function newRetry(body, j) {
   if (j.ok || body.action !== "new") return null;
-  if (!body.trust && /^.+ is not a trusted folder yet: /.test(j.error || "")) return "trust";
+  if (!body.trust && untrustedPath(j.error)) return "trust";
   if (!body.force_memory && /^memory:/.test(j.error || "")) return "memory";
   return null;
 }
-// The folder asctl named as not trusted: its real path, which the confirm shows (a link resolved)
-function untrustedPath(error) { return (error || "").split(" is not a trusted folder yet: ")[0]; }
+// The folder asctl named as not trusted: its real path (a link resolved), which the confirm shows
+// and trust is then sent for. asctl's words end the message, so they are taken off its end.
+const UNTRUSTED_END = " is not a trusted folder yet: Claude Code asks whether to trust it (asctl new --trust answers yes for it)";
+function untrustedPath(error) { const t = error || ""; return t.endsWith(UNTRUSTED_END) ? t.slice(0, -UNTRUSTED_END.length) : ""; }
 
 async function refresh() {
   const rf = $("rf");
@@ -737,12 +740,16 @@ function newSheet() {
         toggle("Remote control", () => f.rc, () => { f.rc = !f.rc; }))),
     err,
     kids(el("div", null, "acts"), btn("Create and start", "p", async () => {
+      if (pending.has(f.path)) return;  // one already on its way (the sheet closed and opened again)
       if (!f.path) { err.textContent = "Paste the folder's path first."; return; }
       if (f.name && !/^[a-z0-9][a-z0-9-]{0,30}$/.test(f.name)) {
         err.textContent = "Name: a-z, 0-9 and -, starting with a letter or digit, up to 31"; return;
       }
       const j = await act({ action: "new", path: f.path, mode: f.mode, rc: f.rc, ...(f.name ? { name: f.name } : {}) });
-      if (j.ok) { Object.assign(newForm, { path: "", name: "", mode: "auto", rc: false }); closeSheet(); }
+      if (j.ok) {
+        Object.assign(newForm, { path: "", name: "", mode: "auto", rc: false });
+        if (sheetOf && sheetOf.kind === "new") closeSheet();  // not another sheet opened meanwhile
+      }
     }))];
 }
 

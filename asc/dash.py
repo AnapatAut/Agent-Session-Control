@@ -416,9 +416,7 @@ def action_argv(a):
         # the folder pasted on the page; asctl new checks it (a folder of the user's own, in the
         # home, not hidden), and answers Claude Code's trust prompt only with trust: true, which
         # the page sends after its own warning was confirmed
-        path = a.get("path")
-        if not isinstance(path, str) or not 0 < len(path) <= 4096 or any(ord(c) < 32 or ord(c) == 127 for c in path):
-            raise RegistryError("new needs path: a folder's path")
+        path = registry.check_path(a.get("path"))
         argv = ["new"]
         if a.get("name") not in (None, ""):
             argv += ["--name", registry.check_name(_text(a["name"]))]
