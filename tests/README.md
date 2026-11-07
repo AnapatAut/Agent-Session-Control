@@ -67,12 +67,14 @@ exit 2, no verdicts). Then each mutant, `MUTANT_JOBS` (default 3) at a time, in 
 own: its case alone, stopped at its check (`TEST_STOP_AT`); that check failing twice is CAUGHT.
 Else the whole suite (`(full)`): failing twice, CAUGHT; the check `ok`, every case done and the
 baseline's checks, SURVIVED; anything else (a FAIL elsewhere only, flaky, its case failing it
-once, its case run cut short before its check) UNCLEAR. A run over its time limit, or with memory
+once, its case run cut short before its check) UNCLEAR. A run over its time limit, or with
 pressure from a second before it to
 a second after (available memory under 15%, tasks stalled on memory 0.1 s or more (PSI "full"),
 a kernel OOM kill, a line in earlyoom's kill file if it can be read, the sampler stalled, the
-clock set back, PSI or the OOM count no longer readable), never gives a verdict: UNCLEAR; and
-once there is pressure no more mutants start (the rest UNCLEAR). Each mutant's verdict is followed
+clock set back, PSI or the OOM count no longer readable, `/tmp` with under 1024 MiB or 10000
+inodes free: a write failing there would look like a check failing), never gives a verdict:
+UNCLEAR; and once there is pressure no more mutants start (the rest UNCLEAR). It is refused at
+the start when `/tmp` is that short of space. Each mutant's verdict is followed
 by its runs' times (`runs: 8.1 s, 8.3 s`; its case's runs, then the whole suite's), to see
 where the time goes. The suites' own folders and
 tmux sockets (`TMPDIR`, `TMUX_TMPDIR`) are in its folder. It holds a lock (one mutant run at a

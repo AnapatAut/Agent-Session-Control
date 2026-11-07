@@ -13,14 +13,16 @@
 # FAIL once, or its case run was cut short: a setup stop, its check not reached); anything else
 # UNCLEAR; each verdict is followed by its runs' times. A change not found exactly once, that no
 # longer parses, or whose module then fails at import (tests/mutantlint.py): BROKEN. A run counts
-# only when trusted: under its time limit, no memory pressure from a second before it to a second
+# only when trusted: under its time limit, no pressure from a second before it to a second
 # after (a sampler, each second: available memory under 15%, tasks stalled on memory for 0.1 s or
 # more (PSI "full", as asc/memory.py counts it), a kernel OOM kill, a line in earlyoom's kill file
 # if one is readable, a stall of more than 3 s between its samples, the clock set back, PSI or the
-# OOM count readable at the start and no longer), no check name printed twice; an untrusted run
-# makes the mutant UNCLEAR, never a verdict (each mutant's runs are checked at the end, one wait
-# for the sampler for all).
-# Memory pressure, or the sampler gone, and no more runs start: the rest are UNCLEAR.
+# OOM count readable at the start and no longer, /tmp with under 1024 MiB or 10000 inodes free:
+# a write that fails there would look like a check failing), no check name printed twice; an
+# untrusted run makes the mutant UNCLEAR, never a verdict (each mutant's runs are checked at the
+# end, one wait for the sampler for all).
+# Pressure, or the sampler gone, and no more runs start: the rest are UNCLEAR. Refused at the start
+# when /tmp is that short of space.
 # The run restarts itself with a clean environment, holds a lock (one mutant run at a time), works
 # in /tmp/asc-mut.<run id> (a copy of the tracked files; the suites' own folders and tmux sockets
 # in it too: TMPDIR and TMUX_TMPDIR, so a tmux the suites start never reaches the user's server),
@@ -41,9 +43,10 @@ if [ -z "${ASC_MUT_RUN-}" ]; then
 	# kept: the user's systemd manager, when there is one (tmux puts each pane in a scope of its
 	# own through it, which tests/asc.sh checks: without it that check is a skip, and the baseline
 	# refused); and, for tests/mutate-test.sh only and said in the first line: ASC_MUT_PROC, a
-	# folder that stands in for /proc's meminfo and vmstat, holds the earlyoom kill file and the
-	# lock; ASC_MUT_MINLIMIT, the least time limit of a case (else 240 s: a mutant may make asctl
-	# wait its longest, boot's 120 s for claude.ai, twice before its check; a whole suite: 5 times it)
+	# folder that stands in for /proc's meminfo and vmstat and for /tmp's free space (its file
+	# disk), holds the earlyoom kill file and the lock; ASC_MUT_MINLIMIT, the least time limit of
+	# a case (else 240 s: a mutant may make asctl wait its longest, boot's 120 s for claude.ai,
+	# twice before its check; a whole suite: 5 times it)
 	keep=()
 	for v in XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS; do [ -z "${!v-}" ] || keep+=("$v=${!v}"); done
 	if [ -n "${ASC_MUT_PROC-}" ]; then
@@ -145,6 +148,24 @@ if [ "$PROC" = /proc ]; then
 			&& echo "mutate: left by an earlier run (remove it): $d" >&2
 	done
 fi
+# disk: /tmp's free space, as "<MiB> <inodes>" (a toy run: its file disk), else nothing
+disk() {
+	local a b i
+	if [ "$PROC" = /proc ]; then read -r a b i < <(stat -f -c '%a %S %d' /tmp 2>/dev/null)
+	else read -r a i 2>/dev/null < "$PROC/disk"; b=1048576; fi
+	[[ $a =~ ^[0-9]+$ && $b =~ ^[0-9]+$ && $i =~ ^[0-9]+$ ]] && echo "$((a * b / 1048576)) $i"
+}
+# lowdisk: why /tmp is short of space for a run (one at 3 at a time takes about 35 MB, and others
+# may write there meanwhile), else nothing
+lowdisk() {
+	local m i
+	read -r m i < <(disk)
+	if [ -z "$i" ]; then echo "free space in /tmp not readable"
+	elif [ "$m" -lt 1024 ]; then echo "$m MiB free in /tmp (1024 MiB needed)"
+	elif [ "$i" -lt 10000 ]; then echo "$i inodes free in /tmp (10000 needed)"
+	else return 1; fi
+}
+why=$(lowdisk) && die "disk: $why"
 mkdir -m 700 "$W" || die "cannot make $W"
 LOCKED=1
 mkdir "$W/base" "$W/out" "$W/res" "$W/t" "$W/lim" || die "work folder"
@@ -156,12 +177,13 @@ B=$W/base
 # The sampler: a line "<from> <to> <why>" in $W/pressure for each second with memory under 15%,
 # 0.1 s or more of PSI "full" (a counter: a squeeze between two samples is seen too), an OOM kill
 # or a new line in earlyoom's kill file since its last sample, or more than 3 s since that sample
-# (the machine stalled, it may have missed one); $W/beat: its last sample's time.
+# (the machine stalled, it may have missed one), or /tmp short of space (lowdisk); $W/beat: its
+# last sample's time.
 oom() { awk '$1 == "oom_kill" {print $2}' "$PROC/vmstat" 2>/dev/null; }
 psi() { awk '$1 == "full" {for (i = 2; i <= NF; i++) if ($i ~ /^total=[0-9]+$/) print substr($i, 7)}' "$PROC/pressure/memory" 2>/dev/null; }
 klines() { [ -r "$KILLS" ] && wc -l < "$KILLS" || echo none; }
 sampler() {
-	local o0 o k0 k f0 f p t a m
+	local o0 o k0 k f0 f p t a m d
 	o0=$(oom) k0=$(klines) f0=$(psi) p=$(now)
 	while :; do
 		t=$(now)
@@ -177,6 +199,7 @@ sampler() {
 		[ -n "$o" ] || [ -z "$o0" ] || echo "$p $t the OOM kill count no longer readable" >> "$W/pressure"
 		[ -z "$o0" ] || [ -z "$o" ] || [ "$o" = "$o0" ] || { echo "$p $t a kernel OOM kill (oom_kill $o0 -> $o)" >> "$W/pressure"; o0=$o; }
 		k=$(klines); [ "$k" = "$k0" ] || { echo "$p $t a line in earlyoom's kill file" >> "$W/pressure"; k0=$k; }
+		d=$(lowdisk) && echo "$t $t disk: $d" >> "$W/pressure"
 		echo "$t" > "$W/beat.new" && mv -f "$W/beat.new" "$W/beat"
 		p=$t
 		sleep 1
@@ -212,7 +235,7 @@ calm() {
 	[ "$3" -ge $(($2 + 1000)) ] || { echo "the pressure sampler stopped"; return 1; }
 }
 trusted() { calm "$1" "$2" "$(settle $(($2 + 1000)))"; }
-# halted <since>: why no more runs may start (memory pressure since then, or the sampler gone or
+# halted <since>: why no more runs may start (pressure since then, or the sampler gone or
 # stuck: no sample for 5 s)
 halted() {
 	local why b
@@ -220,7 +243,7 @@ halted() {
 	b=$(cat "$W/beat" 2>/dev/null)
 	[ -n "$b" ] && [ $(($(now) - b)) -lt 5000 ] || { echo "the pressure sampler stuck (no sample for 5 s)"; return 0; }
 	why=$(pressure "$1")
-	[ -n "$why" ] && echo "memory pressure: $why"
+	[ -n "$why" ] && echo "pressure: $why"
 }
 # untimed <exit> <limit>: why a run's exit leaves it without a verdict (`timeout`: 124 over the
 # limit, 137 its KILL after the TERM, 125 to 127 it could not run the suite), else nothing

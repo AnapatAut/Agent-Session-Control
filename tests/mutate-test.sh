@@ -2,9 +2,10 @@
 # tests/mutate.sh on toy repos of its own (run by tests/lint.sh, about 40 s): every verdict
 # (CAUGHT in its case, CAUGHT only by the whole suite, SURVIVED, a FAIL elsewhere only, flaky once,
 # a case run cut short, a check printed twice, a time limit, memory pressure and no more mutants
-# started, an OOM kill, PSI gone, a kill seen only after the run ended, BROKEN at import), the
-# suites' tmux folder in the work folder, every refusal (a bad list, ASC_ONLY, a run id or setting
-# not its own, a baseline with a FAIL, a skip or a check not run, a second run), an interrupt in a
+# started, an OOM kill, PSI gone, a kill seen only after the run ended, /tmp short of space,
+# BROKEN at import), the suites' tmux folder in the work folder, every refusal (a bad list,
+# ASC_ONLY, a run id or setting not its own, /tmp short of space or inodes, a baseline with a
+# FAIL, a skip or a check not run, a second run), an interrupt in a
 # mutant's run and in the baseline, and after each run: no process of it left (refused runs too),
 # its work folder gone, and no toy suite's folder left (only its EXIT trap removes it: a suite cut short by a
 # SIGKILL, or a second TERM, leaves it). A toy repo holds the real runner and its readers,
@@ -89,6 +90,7 @@ toy() {
 	printf '%s\n' 'asc/prod.sh %%% echo 2 %%% echo 8 %%% b is 2 here %%% only' > "$r/tests/mutants-dash.txt"
 	printf '%s\n' 'MemTotal: 1000000 kB' 'MemAvailable: 900000 kB' > "$r/proc/meminfo"
 	echo "oom_kill 0" > "$r/proc/vmstat"
+	echo "900000 900000" > "$r/proc/disk"
 	mkdir "$r/proc/pressure"; psi_total "$r" 0
 }
 psi_total() { printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=%s\n' "$2" > "$1/proc/pressure/memory"; }
@@ -200,7 +202,13 @@ toy mem
 printf '%s\n' 'asc/prod.sh %%% a() { echo 1; } %%% a() { printf "MemTotal: 1000000 kB\nMemAvailable: 1000 kB\n" > "$ASC_MUT_PROC/meminfo"; sleep 2; echo 9; } %%% a is 1 %%% one' > "$T/mem/tests/mutants-asc.txt"
 run mem MUTANT_JOBS=1
 result "memory under 15% while a run goes: UNCLEAR, and no more mutants started" 1 "UNCLEAR: pressure: memory: 1000 of 1000000 kB available" \
-	"UNCLEAR: not run: memory pressure: memory: 1000 of 1000000 kB available" "2 unclear"
+	"UNCLEAR: not run: pressure: memory: 1000 of 1000000 kB available" "2 unclear"
+
+toy disk
+printf '%s\n' 'asc/prod.sh %%% a() { echo 1; } %%% a() { echo "500 900000" > "$ASC_MUT_PROC/disk"; sleep 2; echo 9; } %%% a is 1 %%% one' > "$T/disk/tests/mutants-asc.txt"
+run disk MUTANT_JOBS=1
+result "/tmp under 1024 MiB free while a run goes: UNCLEAR, and no more mutants started" 1 "UNCLEAR: pressure: disk: 500 MiB free in /tmp (1024 MiB needed)" \
+	"UNCLEAR: not run: pressure: disk: 500 MiB free in /tmp (1024 MiB needed)" "2 unclear"
 
 toy oom
 printf '%s\n' 'asc/prod.sh %%% a() { echo 1; } %%% a() { echo "oom_kill 1" > "$ASC_MUT_PROC/vmstat"; sleep 2; echo 9; } %%% a is 1 %%% one' > "$T/oom/tests/mutants-asc.txt"
@@ -249,6 +257,18 @@ run only MUTANT_JOBS=0
 result "MUTANT_JOBS=0: refused, exit 2" 2 "MUTANT_JOBS must be 1 to 99"
 run only MUTANTS_FULL=2
 result "MUTANTS_FULL=2: refused, exit 2" 2 "MUTANTS_FULL must be 0 or 1"
+toy lowmb
+echo "1023 900000" > "$T/lowmb/proc/disk"
+run lowmb
+result "/tmp under 1024 MiB free at the start: refused, exit 2" 2 "mutate: disk: 1023 MiB free in /tmp (1024 MiB needed)"
+toy lowino
+echo "900000 9999" > "$T/lowino/proc/disk"
+run lowino
+result "/tmp under 10000 inodes free at the start: refused, exit 2" 2 "mutate: disk: 9999 inodes free in /tmp (10000 needed)"
+toy nodisk
+rm "$T/nodisk/proc/disk"
+run nodisk
+result "/tmp's free space not readable at the start: refused, exit 2" 2 "mutate: disk: free space in /tmp not readable"
 
 toy basefail
 sed -i 's/\[ "$(b)" = 2 \] && ok "b is 2 here"/[ "$(b)" = 3 ] \&\& ok "b is 2 here"/' "$T/basefail/tests/dash.sh"
