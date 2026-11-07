@@ -38,9 +38,10 @@
 # to (/cd). $HOME/fake-hog: it takes 400 MB at once (the sandbox's real OOM kill; the flag is
 # removed first, so a claude started again does not do it too).
 # A conversation is taken up only from its transcript (~/.claude/projects/*/<id>.jsonl, written at
-# its first message): --resume of one with none says so and exits 1 at once, as Claude Code does;
-# --session-id of one that has one too (stricter than may be needed: a start never takes a
-# conversation up as new by mistake). $HOME/fake-exit-at-once: it exits 3 at once.
+# its first message, or at a /rename): --resume of one with none, and --session-id of one that
+# has one, say so and exit 1 at once, as Claude Code 2.1.319 does (tried). It looks in every
+# folder of ~/.claude/projects, as asctl does; whether Claude Code looks only in its cwd's is not
+# known. $HOME/fake-exit-at-once: it exits 3 at once.
 # Every start is logged to $HOME/claude-args.log. `claude stop JOB` (a background session) sends
 # SIGTERM to the claude whose session file names that jobId, and fails for a job none names
 # ($HOME/fake-stop-fails: it fails anyway).

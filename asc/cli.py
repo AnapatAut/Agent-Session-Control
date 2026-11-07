@@ -115,6 +115,16 @@ def last_exit_full(id4):
         return None
 
 
+def started_exit(e):
+    """The exit record of the claude this start ran: written by the asctl-wrap of a pane of the
+    entry's session (the pane PID it records, which it keeps), else None. A wrap of the session
+    before (a restart's off) may write its record late, after the start removed the old one."""
+    ex = last_exit_full(e["id4"])
+    if ex and ex[3] is not None and any(p["pane_pid"] == ex[3] for p in tmuxctl.panes(e["tmux"])):
+        return ex
+    return None
+
+
 TYPING_S = 120  # a client with a key this recent: someone may be typing in that pane
 
 
@@ -401,7 +411,7 @@ def wait_started(e, timeout=40):
         s = live_in(e)
         if s:
             return s
-        if os.path.exists(exit_file(e["id4"])):  # claude ended already (asctl-wrap's record)
+        if started_exit(e):  # claude ended already
             return None
         screen = tmuxctl.capture(e["tmux"])
         if trust_prompt(screen, e["cwd"]):
@@ -506,7 +516,7 @@ def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, r
         raise ActionFailed("the tmux server ended while starting; nothing was started (it is marked on)")
     s = wait_started(e)
     if not s:
-        ex = last_exit_full(e["id4"])
+        ex = started_exit(e)
         why = f"claude exited {ex[0]} {max(0, ex[1] - e['last_on'])} s after it started" if ex else "no claude came up"
         msg = f"{e['tmux']}: tmux session started, but {why} (see: tmux attach -t ={e['tmux']})"
         # on stderr, as every failure: the page shows it (stdout is for what was done)
@@ -618,7 +628,7 @@ def _off(id4, force, loud=True):
 
 
 def _restart(id4, outside=False):
-    """Off and on again, on the same conversation (--resume of its session id), so claude takes
+    """Off and on again, on the same conversation (its session id), so claude takes
     up a new name and rc title. Only when its claude is idle and runs nothing: no command, also
     none in the background, and no subagent (live.busy_reason). A claude of the entry that runs
     outside its tmux session is moved into it (_move_in); outside: only that. The entry's lock

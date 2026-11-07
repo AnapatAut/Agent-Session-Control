@@ -19,7 +19,7 @@ asc/cli.py %%%     if live_for(e): %%%     if False: %%% on refused while a live
 asc/cli.py %%%             if "❯ Yes, I trust this folder" not in screen: %%%             if False: %%% on in a folder not trusted yet: the prompt answered %%% main
 asc/cli.py %%% ["--resume", e["session_id"]] if has_transcript(e["session_id"]) else %%% ["--session-id", e["session_id"]] if has_transcript(e["session_id"]) else %%% a conversation with a transcript: started with --resume %%% on_gates
 asc/cli.py %%%  if has_transcript(e["session_id"]) else %%%  if e.get("started") else %%% no transcript yet: started with --session-id, --name and the mode %%% main
-asc/cli.py %%%         if os.path.exists(exit_file(e["id4"])):  # claude ended already %%%         if False:  # claude ended already %%% on, a claude that ends at once: said in seconds on stderr, with its exit %%% on_gates
+asc/cli.py %%%         if started_exit(e):  # claude ended already %%%         if False:  # claude ended already %%% on, a claude that ends at once: said in seconds on stderr, with its exit %%% on_gates
 asc/cli.py %%%         print(f"asctl: {msg}", file=sys.stderr, flush=True) %%%         print(f"asctl: {msg}", flush=True) %%% on, a claude that ends at once: said in seconds on stderr, with its exit %%% on_gates
 asc/registry.py %%% fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB) %%% fcntl.LOCK_EX %%% on refused while another asctl holds the entry %%% shared_stale
 asc/registry.py %%% MODES = {"auto": "auto", "manual": "manual", "skip": "bypassPermissions"} %%% MODES = {"auto": "auto", "manual": "manual", "skip": "auto"} %%% mode skip starts with bypassPermissions %%% main
@@ -214,3 +214,4 @@ asc/past.py %%%     return max(sorted(paths), key=mtime) if paths else None %%% 
 asc/past.py %%%             if isinstance(k, str) and _entry(v) and v["size"] == v["seen"]} %%%             if isinstance(k, str) and _entry(v)} %%% lengths: counted on from where the last count stopped; a replaced, shrunk or symlinked transcript handled %%% events
 asc/boot.py %%%             _status([], "", done=True) %%%             pass %%% boot.json once boot ends: done %%% boot
 asc/boot.py %%%         _status(todo, why) %%%         pass %%% boot.json while boot runs (its lock held): what it still brings back, and why it waits (0600) %%% boot
+asc/cli.py %%%  and any(p["pane_pid"] == ex[3] for p in tmuxctl.panes(e["tmux"])): %%%  and True: %%% an exit record of another pane (one the session before wrote late) is not this start's %%% on_gates

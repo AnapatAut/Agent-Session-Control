@@ -417,6 +417,10 @@ t0=$(date +%s); out=$(errof on "$id2"); t1=$(date +%s)
 rm -f "$HOME/fake-exit-at-once"
 seen "^asctl: chat-$id2: tmux session started, but claude exited 3 [0-9]* s after it started" <<<"$out" && [ $((t1 - t0)) -lt 20 ] \
 	&& ok "on, a claude that ends at once: said in seconds on stderr, with its exit" || bad "on, a claude that ends at once: said in seconds on stderr, with its exit" "after $((t1 - t0)) s: $out"
+xf="$HOME/.local/state/agent-session-control/exit/$id2"
+sx() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import cli, registry; print(cli.started_exit(registry.find(registry.load(), sys.argv[2])))' "$REPO" "$id2"; }
+a=$(sx); read -r xc xt xb _ < "$xf"; echo "$xc $xt $xb 1" > "$xf"; b=$(sx)
+[[ $a == "(3, "* && $b == None ]] && ok "an exit record of another pane (one the session before wrote late) is not this start's" || bad "an exit record of another pane (one the session before wrote late) is not this start's" "this pane's: $a; another's: $b"
 asctl off "$id2" --force >/dev/null
 
 echo "== memory gate"
