@@ -172,8 +172,11 @@ runs "$pid" && bad "claude ended" "claude still runs after off" || ok "claude en
 asctl list | seen "^$id .* off " && ok "list: off" || bad "list: off" "list: not off"
 
 echo "== on"
+# claude up 1.5 s late: an on that does not wait returns before it, every time
+touch "$HOME/fake-slow-start"
 asctl on "$id" >/dev/null && ok "on" || bad "on" "on failed"
 claude_now "das-$id" >/dev/null && ok "on returns only once its claude is up" || bad "on returns only once its claude is up" "no claude in das-$id as on returned"
+rm -f "$HOME/fake-slow-start"
 pid=$(claude_in "das-$id") && ok "claude up in das-<id>" || bad "claude up in das-<id>" "no claude in das-$id"
 # tmux with systemd moves each pane into a scope of its own just after starting it; claude must
 # be forked after that, in the wrapper's scope, not left in the server's cgroup.
