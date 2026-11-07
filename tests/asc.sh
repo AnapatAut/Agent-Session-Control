@@ -482,7 +482,8 @@ want="is not a folder"; refused "$HOME/nofile" && ok "new refused: not a folder"
 want="is not yours, or others can write to it"; refused "$HOME/open" && ok "new refused: a folder others can write to" || bad "new refused: a folder others can write to" "o+w: $out"
 want="is not yours, or others can write to it"; refused "$HOME/open/sub" && ok "new refused: in a folder others can write to" || bad "new refused: in a folder others can write to" "in o+w: $out"
 want="none a control or format character"; refused "$HOME/pr"$'\t'"oj" && ok "new refused: a control character in the path" || bad "new refused: a control character in the path" "control: $out"
-want="none a control or format character"; refused "$HOME/proj"$'\u202e' && ok "new refused: a format character (bidi) in the path" || bad "new refused: a format character (bidi) in the path" "bidi: $out"
+want="none a control or format character"; refused "$HOME/proj"$'\xe2\x80\xae' && ok "new refused: a format character (bidi) in the path" || bad "new refused: a format character (bidi) in the path" "bidi: $out"
+# (U+202E right-to-left override, as its UTF-8 bytes: \u needs a UTF-8 locale, the sandbox has none)
 # who owns a folder, and its group, as another user would see them (no second user here)
 nf() { python3 -I -c 'import os, sys; sys.path.insert(0, sys.argv[1]); from asc import cli, registry
 u, g = os.getuid(), os.getgid()
