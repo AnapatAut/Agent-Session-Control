@@ -106,6 +106,10 @@ details.top[open] summary::after { transform: rotate(90deg); }
 .proc.sum { font-weight: 600; }
 
 @media (max-width: 760px) {
+  /* the date is too long beside the title: its own line under the host; the login stays top right */
+  header { flex-wrap: wrap; row-gap: 0; } .title { flex: 1; }
+  .side { display: contents; } .mew { flex: 0 1 auto; max-width: 45%; } .me { max-width: 100%; }
+  .upd { order: 3; flex-basis: 100%; margin-top: 6px; }
   .row { grid-template-columns: minmax(0, 1fr) 24px; grid-template-areas: "head sw" "meta meta" "note note";
          row-gap: 6px; padding: 11px 14px; align-items: start; }
   .meta, .note { padding-left: 20px; }
