@@ -92,8 +92,11 @@ toy() {
 	echo "oom_kill 0" > "$r/proc/vmstat"
 	echo "900000 900000" > "$r/proc/disk"
 	mkdir "$r/proc/pressure"; psi_total "$r" 0
+	printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n' > "$r/proc/pressure/io"
 }
 psi_total() { printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=%s\n' "$2" > "$1/proc/pressure/memory"; }
+# stall_io <toy>: a line for its product that makes tasks stall on I/O for 150 ms (PSI full) as it runs
+stall_io() { printf '%s\n' 'stall_io() { sed -i "s/^full\(.*\)total=[0-9]*/full\1total=150000/" "$ASC_MUT_PROC/pressure/io"; sleep 2; }' >> "$T/$1/asc/prod.sh"; }
 # run <name> [VAR=value...]: the runner in toy repo <name>, its files git-added now; the result
 # after it starts it.
 PENDING=() NV=0
@@ -122,7 +125,8 @@ left_of() {
 	[ ! -e "/tmp/asc-mut.$1" ] || left+=" /tmp/asc-mut.$1"
 }
 has() { grep -qF -- "$1" <<<"$out"; }
-# result <name> <want rc> <text>...: the run's exit status, each text in its output, nothing left.
+# result <name> <want rc> <text>...: the run's exit status, each text in its output ("!text": not
+# in it), nothing left.
 # The run before it, if one waits, in the background (at most 6 at a time); else the run just
 # made here. Its check goes to a file of its own, $T/v.<n>.
 result() {
@@ -140,7 +144,9 @@ judge() {
 	local name=$1 want=$2 t why=''
 	shift 2
 	[ "$rc" = "$want" ] || why+="exit $rc, not $want; "
-	for t; do has "$t" || why+="no \"$t\"; "; done
+	for t; do  # "!text": not in its output
+		if [ "${t#!}" != "$t" ]; then ! has "${t#!}" || why+="has \"${t#!}\"; "; else has "$t" || why+="no \"$t\"; "; fi
+	done
 	[ -z "$left" ] || why+="left: $left; "
 	[ -z "$why" ] && ok "$name" || bad "$name" "$why"$'\n'"$out"
 }
@@ -161,6 +167,16 @@ printf '%s\n' 'asc/prod.sh %%% # the toy product %%% # the toy product, changed 
 run surv
 result "a change its check does not see: SURVIVED, exit 1" 1 "SURVIVED: a is 1 ok, the whole suite as its baseline" "1 survived"
 
+toy survio; stall_io survio
+printf '%s\n' 'asc/prod.sh %%% a() { echo 1; } %%% a() { stall_io; echo 1; } %%% a is 1 %%% one' > "$T/survio/tests/mutants-asc.txt"
+run survio
+result "tasks stalled on I/O while a mutant survives: told next to it and in all, still SURVIVED" 1 "SURVIVED: a is 1 ok, the whole suite as its baseline" \
+	"        I/O: tasks stalled on I/O for 150 ms in its runs (PSI full; told, not judged)" "mutate: I/O: tasks stalled on I/O for 150 ms in all" "1 survived"
+toy caughtio; stall_io caughtio
+printf '%s\n' 'asc/prod.sh %%% a() { echo 1; } %%% a() { stall_io; echo 9; } %%% a is 1 %%% one' > "$T/caughtio/tests/mutants-asc.txt"
+run caughtio
+result "tasks stalled on I/O while a mutant is caught: still CAUGHT (never judged), told in all" 0 "caught by: a is 1 (one)" \
+	"2 mutants: 2 caught" "mutate: I/O: tasks stalled on I/O for 150 ms in all" "!ms in its runs (PSI full"
 toy else
 printf '%s\n' 'asc/prod.sh %%% echo 2 %%% echo 7 %%% a is 1 %%% one' > "$T/else/tests/mutants-asc.txt"
 run else
@@ -270,10 +286,11 @@ rm "$T/nodisk/proc/disk"
 run nodisk
 result "/tmp's free space not readable at the start: refused, exit 2" 2 "mutate: disk: free space in /tmp not readable"
 
-toy basefail
-sed -i 's/\[ "$(b)" = 2 \] && ok "b is 2 here"/[ "$(b)" = 3 ] \&\& ok "b is 2 here"/' "$T/basefail/tests/dash.sh"
+toy basefail; stall_io basefail
+sed -i 's/\[ "$(b)" = 2 \] && ok "b is 2 here"/echo "a line before it"; stall_io; [ "$(b)" = 3 ] \&\& ok "b is 2 here"/' "$T/basefail/tests/dash.sh"
 run basefail
-result "a baseline with a FAIL: refused, exit 2" 2 "baseline dash only: exit 1"
+result "a baseline with a FAIL: refused, exit 2, its case's output and the I/O stalls in it told" 2 "baseline dash only: exit 1" \
+	"== the baseline's output of dash only (its last 200 lines)" "a line before it" "        I/O: tasks stalled on I/O for 150 ms around it (PSI full; told, not judged)"
 toy baseskip
 sed -i 's/^run_cases dash only$/case_more() { skip "c" "not here"; }\nrun_cases dash only more/' "$T/baseskip/tests/dash.sh"
 run baseskip

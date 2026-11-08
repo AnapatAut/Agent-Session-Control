@@ -23,6 +23,10 @@
 # end, one wait for the sampler for all).
 # Pressure, or the sampler gone, and no more runs start: the rest are UNCLEAR. Refused at the start
 # when /tmp is that short of space.
+# I/O pressure (tasks stalled on I/O for 0.1 s or more between two samples: PSI "full" of
+# /proc/pressure/io) is only told, never judged (this machine has it often): next to each verdict
+# that is not CAUGHT, with a failed baseline, and in all at the end. A failed baseline also shows
+# the last 200 lines of its case's output (its folder is removed on exit).
 # The run restarts itself with a clean environment, holds a lock (one mutant run at a time), works
 # in /tmp/asc-mut.<run id> (a copy of the tracked files; the suites' own folders and tmux sockets
 # in it too: TMPDIR and TMUX_TMPDIR, so a tmux the suites start never reaches the user's server),
@@ -181,10 +185,11 @@ B=$W/base
 # last sample's time.
 oom() { awk '$1 == "oom_kill" {print $2}' "$PROC/vmstat" 2>/dev/null; }
 psi() { awk '$1 == "full" {for (i = 2; i <= NF; i++) if ($i ~ /^total=[0-9]+$/) print substr($i, 7)}' "$PROC/pressure/memory" 2>/dev/null; }
+iopsi() { awk '$1 == "full" {for (i = 2; i <= NF; i++) if ($i ~ /^total=[0-9]+$/) print substr($i, 7)}' "$PROC/pressure/io" 2>/dev/null; }
 klines() { [ -r "$KILLS" ] && wc -l < "$KILLS" || echo none; }
 sampler() {
-	local o0 o k0 k f0 f p t a m d
-	o0=$(oom) k0=$(klines) f0=$(psi) p=$(now)
+	local o0 o k0 k f0 f i0 i p t a m d
+	o0=$(oom) k0=$(klines) f0=$(psi) i0=$(iopsi) p=$(now)
 	while :; do
 		t=$(now)
 		[ $((t - p)) -le 3000 ] || echo "$p $t no sample for $(((t - p) / 1000)) s (the machine stalled)" >> "$W/pressure"
@@ -195,6 +200,9 @@ sampler() {
 		[ -n "$f" ] || [ -z "$f0" ] || echo "$p $t PSI no longer readable" >> "$W/pressure"
 		[ -z "$f" ] || [ -z "$f0" ] || [ $((f - f0)) -lt 100000 ] || echo "$p $t tasks stalled on memory for $(((f - f0) / 1000)) ms (PSI full)" >> "$W/pressure"
 		[ -z "$f" ] || f0=$f
+		i=$(iopsi)  # told, not judged: "<from> <to> <ms>" in $W/io
+		[ -z "$i" ] || [ -z "$i0" ] || [ $((i - i0)) -lt 100000 ] || echo "$p $t $(((i - i0) / 1000))" >> "$W/io"
+		[ -z "$i" ] || i0=$i
 		o=$(oom); [ -n "$o0" ] || o0=$o  # readable only now: watched from now on
 		[ -n "$o" ] || [ -z "$o0" ] || echo "$p $t the OOM kill count no longer readable" >> "$W/pressure"
 		[ -z "$o0" ] || [ -z "$o" ] || [ "$o" = "$o0" ] || { echo "$p $t a kernel OOM kill (oom_kill $o0 -> $o)" >> "$W/pressure"; o0=$o; }
@@ -208,10 +216,18 @@ sampler() {
 earlyoom=none
 pgrep -x earlyoom >/dev/null && { [ -r "$KILLS" ] && earlyoom="earlyoom kills read from $KILLS" || earlyoom="earlyoom runs, its kills not seen"; }
 [ -n "$(psi)" ] || earlyoom+="; PSI not readable"
+[ -n "$(iopsi)" ] || earlyoom+="; I/O PSI not readable (told only)"
 [ -n "$(oom)" ] || earlyoom+="; the OOM kill count not readable"
 [ "$PROC" = /proc ] || earlyoom+=" (TEST: $PROC, least time limit $MIN s)"
-: > "$W/pressure"; now > "$W/beat"
+: > "$W/pressure"; : > "$W/io"; now > "$W/beat"
 sampler 9>&- & SAMPLER=$!
+# iostall <t0> <t1>...: the ms tasks stalled on I/O in the sampler's stalls of 0.1 s or more from a
+# second before each run to a second after (each pair a run); empty when none
+iostall() {
+	local a=() w
+	for w; do a+=("$w"); done
+	awk -v ws="${a[*]}" 'BEGIN {n = split(ws, w, " ")} {for (k = 1; k <= n; k += 2) if ($1 <= w[k + 1] + 1000 && $2 >= w[k] - 1000) {ms += $3; break}} END {if (ms) print ms}' "$W/io"
+}
 # pressure <from>: its first line about a time from then on (empty: none)
 pressure() { awk -v a="$1" '$2 >= a {$1 = $2 = ""; print substr($0, 3); exit}' "$W/pressure"; }
 # settle <t>: the time of the sampler's first sample from t on (waited for, up to 10 s), else of
@@ -315,7 +331,7 @@ for s in "${SUITES[@]}"; do
 	for c in ${CASES[$s]//,/ }; do
 		read -r rc t0 t1 < "$W/out/base.$s/$c.rc" || die "baseline $s $c: no result"
 		why=$(trusted "$t0" "$t1") || die "baseline $s $c: not trusted: $why"
-		[ "$rc" = 0 ] || die "baseline $s $c: exit $rc$(why=$(untimed "$rc" 900) && echo " ($why)")"$'\n'"$(grep -A3 '^  FAIL\|^setup:' "$W/out/base.$s/$c.out" | head -20)"
+		[ "$rc" = 0 ] || die "baseline $s $c: exit $rc$(why=$(untimed "$rc" 900) && echo " ($why)")"$'\n'"$(grep -A3 '^  FAIL\|^setup:' "$W/out/base.$s/$c.out" | head -20)"$'\n'"$(io=$(iostall "$t0" "$t1"); [ -z "$io" ] || echo "        I/O: tasks stalled on I/O for $io ms around it (PSI full; told, not judged)")"$'\n'"== the baseline's output of $s $c (its last 200 lines)"$'\n'"$(tail -n 200 "$W/out/base.$s/$c.out")"
 		sec=$(((t1 - t0 + 999) / 1000)); tot=$((tot + sec))
 		LIMIT[$s.$c]=$((sec * 4 > MIN ? sec * 4 : MIN))
 	done
@@ -417,7 +433,14 @@ for ((i = 0; i < N; i++)); do
 	spent=''
 	for w in $wins; do [[ ${w%:*} =~ ^[0-9]+$ && ${w#*:} =~ ^[0-9]+$ ]] && spent+="${spent:+, }$(secs $((${w#*:} - ${w%:*})))"; done
 	[ -z "$spent" ] || echo "        runs: $spent"
+	if [ "$v" != CAUGHT ]; then
+		ws=(); for w in $wins; do [[ ${w%:*} =~ ^[0-9]+$ && ${w#*:} =~ ^[0-9]+$ ]] && ws+=("${w%:*}" "${w#*:}"); done
+		io=$([ ${#ws[@]} = 0 ] || iostall "${ws[@]}")
+		[ -z "$io" ] || echo "        I/O: tasks stalled on I/O for $io ms in its runs (PSI full; told, not judged)"
+	fi
 done
 [ "$FULL" = 1 ] && full="each on the whole suite" || full="$full only by the whole suite"
+io=$(awk '{ms += $3} END {print ms + 0}' "$W/io")
+[ -z "$(iopsi)" ] || echo "mutate: I/O: tasks stalled on I/O for $io ms in all, in stalls of 0.1 s or more (PSI full; told, not judged)"
 echo "mutate: $N mutants: ${COUNT[CAUGHT]} caught ($full), ${COUNT[SURVIVED]} survived, ${COUNT[UNCLEAR]} unclear, ${COUNT[BROKEN]} broken; $(took "$START") in all"
 [ "${COUNT[CAUGHT]}" = "$N" ]
