@@ -96,6 +96,8 @@ function bootWhy(why) {
 function look(e) {
   const st = e.state || "";
   const code = (st.match(/\((\d+)\)/) || [])[1];
+  if (st === "unknown") return { group: "attention", dot: "wait", label: "Unknown",
+    why: "tmux did not answer, so whether it runs is not known. Nothing is changed until tmux answers." };
   if (st === "on") {
     if (e.claudes > 1) return { group: "attention", dot: "bad", label: e.claudes + " claudes",
       why: `${e.claudes} claudes run in its tmux session; Off would end them all.` };
@@ -231,7 +233,8 @@ function draw() {
 
   const warn = [];
   if (m.warn) warn.push("Memory is over 85% used; a start needs it at most 80% used.");
-  if (!s.server) warn.push("No tmux server is running.");
+  if (s.tmux_error) warn.push(s.tmux_error + ". What runs is not known; nothing is changed until tmux answers.");
+  else if (!s.server) warn.push("No tmux server is running.");
   if (s.unknown_files) warn.push(`${s.unknown_files} session file(s) in a format asctl does not know.`);
   $("banner").hidden = !warn.length;
   $("banner").textContent = warn.join(" ");
@@ -613,6 +616,7 @@ function favSheet(e) {
   const o = e.outside, bg = o && o.how === "background";
   // its claude at Claude Code's trust prompt: its tmux session is up, so the power button turns it off
   const waiting = e.state === "waiting for trust", up = on || waiting;
+  const unknown = e.state === "unknown";  // tmux did not answer: neither on nor off is known
   const pwb = btn("", "pw " + (up ? "on" : "off"), async () => {
     if (up) {
       if (!await ask({ title: `Turn ${e.tmux} off?`, ok: "Turn off", danger: true,
@@ -622,10 +626,10 @@ function favSheet(e) {
     } else {
       await act({ action: "on", ...ref });
     }
-  }, wait || (o && !(bg && !o.busy)));
+  }, wait || unknown || (o && !(bg && !o.busy)));
   pwb.append(powerIcon());
-  pwb.setAttribute("aria-label", up ? "On: turn it off" : "Off: turn it on");
-  pwb.title = o && !(bg && !o.busy) ? "Runs outside its tmux session: restart it in tmux, or end it there" : up ? "Turn off" : "Turn on";
+  pwb.setAttribute("aria-label", unknown ? "Unknown: tmux did not answer" : up ? "On: turn it off" : "Off: turn it on");
+  pwb.title = unknown ? "tmux did not answer: whether it runs is not known" : o && !(bg && !o.busy) ? "Runs outside its tmux session: restart it in tmux, or end it there" : up ? "Turn off" : "Turn on";
   out.push(kids(el("div", null, "btns"), pwb, rcb));  // the power button tells on or off
   if (l.why) out.push(el("div", l.why, "warn " + (l.dot === "bad" ? "bad" : "")));
   if (waiting) out.push(kids(el("div", null, "acts"), btn("Trust folder", "danger", () => trustFolder(e), wait)));

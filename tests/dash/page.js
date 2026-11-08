@@ -84,6 +84,9 @@ check("repeats in a row fold into one line, from the first",
 check("waiting for trust: needs attention, names the folder", `(() => { const l = look({ state: "waiting for trust", cwd: "${HOME}/fresh" });
   return l.group === "attention" && l.label === "Waiting for trust"
     && l.why === "Claude Code asks whether to trust ~/fresh. Trust folder lets claude start there; Off closes it."; })()`);
+check("unknown (tmux did not answer): needs attention, says nothing is changed", `(() => { const l = look({ state: "unknown" });
+  return l.group === "attention" && l.label === "Unknown" && !isOn({ state: "unknown" })
+    && l.why === "tmux did not answer, so whether it runs is not known. Nothing is changed until tmux answers."; })()`);
 check("new, trusted, untrusted: in words",
   `evLabel({ kind: "new" }) === "Created" && evLabel({ kind: "trusted" }) === "Folder trusted" && evLabel({ kind: "untrusted" }) === "Waiting for trust"`);
 

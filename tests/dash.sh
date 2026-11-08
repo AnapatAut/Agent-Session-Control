@@ -615,12 +615,23 @@ out=$(post '{"action":"fav","ref":"99999999-aaaa-4bbb-8ccc-dddddddddddd","name":
 
 case_tmux_hang() {
 echo "== a tmux server that does not answer"
-dash_up
+dash_up; trio_fav; dev_up
+mkdir -p "$HOME/.claude/projects/-hang"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SID" > "$HOME/.claude/projects/-hang/$SID.jsonl"
 srv=$(tm display-message -p '#{pid}')
 kill -STOP "$srv"
-t0=$(date +%s); r=$(dc -m 90 -o /dev/null -w '%{http_code}' http://x/api/state); t1=$(date +%s)
+t0=$(date +%s); r=$(dc -m 90 -o "$T/hung" -w '%{http_code}' http://x/api/state); t1=$(date +%s)
+pj=$(dc -m 90 http://x/api/past)
 kill -CONT "$srv"
 [ "$r" = 200 ] && [ $((t1 - t0)) -lt 80 ] && ok "state still answers while tmux hangs" || bad "state still answers while tmux hangs" "state with a hung tmux: $r after $((t1 - t0)) s"
+# not "no server", and no state guessed: what tmux would say is not known
+jq -e '.tmux_error == "tmux did not answer: no answer in 5 s" and .server == null and .active == []
+	and (.favorites | length > 0 and all(.state == "unknown" and .pid == null))' "$T/hung" >/dev/null \
+	&& ok "state while tmux hangs: said, not taken for no server, every favorite unknown" || bad "state while tmux hangs: said, not taken for no server, every favorite unknown" "state: $(jq -c '{tmux_error, server, active, favorites: [.favorites[] | {state, pid}]}' "$T/hung")"
+jq -e --arg s "$SID" '[.past[].session_id] | index($s) == null' <<<"$pj" >/dev/null \
+	&& ok "past while tmux hangs: a live claude's conversation still not listed" || bad "past while tmux hangs: a live claude's conversation still not listed" "past: $(jq -c '[.past[].session_id]' <<<"$pj")"
+jq -e '.tmux_error == "" and .server == true and any(.favorites[]; .state == "on")' <<<"$(state)" >/dev/null \
+	&& ok "state once tmux answers again: as before" || bad "state once tmux answers again: as before" "state: $(state | jq -c '{tmux_error, server}')"
 pgrep -P "$DPID" -x tmux >/dev/null && bad "no tmux client left waiting" "tmux clients left behind" || ok "no tmux client left waiting"
 }
 

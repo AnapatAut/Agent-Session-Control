@@ -57,7 +57,8 @@ def _state(d):
             "dups": [x for x in s.get("dups", []) if isinstance(x, str)] if isinstance(s.get("dups"), list) else [],
             "ended": {k: x for k, x in d("ended").items() if ok(x)},
             "rename_tries": {k: v for k, v in d("rename_tries").items() if type(v) is int},
-            "failed": {k: v for k, v in d("failed").items() if isinstance(v, str)}}
+            "failed": {k: v for k, v in d("failed").items() if isinstance(v, str)},
+            "tmux": s.get("tmux") if isinstance(s.get("tmux"), str) else ""}
 
 
 def run():
@@ -86,6 +87,18 @@ def _run(st):
     data = registry.load()
     for k in ("ended", "rename_tries", "failed"):  # forgotten favorites
         st[k] = {i: v for i, v in st[k].items() if i in data["entries"]}
+    try:
+        _favorites(st, data, samples)
+    except tmuxctl.NoAnswer as x:
+        if st["tmux"] != str(x):  # said once, until tmux answers again
+            events.log("failed", None, f"watch: {x}; nothing done this run")
+        st["tmux"] = str(x)
+        return
+    st["tmux"] = ""
+
+
+def _favorites(st, data, samples):
+    """One look at every favorite. tmux not answering stops it (NoAnswer), for all of them."""
     if not tmuxctl.server_running():
         return
     lv = live.live()
@@ -108,6 +121,8 @@ def _run(st):
                 else:
                     st["ended"].pop(e["id4"], None)
             st["failed"].pop(e["id4"], None)
+        except tmuxctl.NoAnswer:
+            raise
         except registry.RegistryError:
             continue  # an action holds it (or it was forgotten): the next run looks again
         except Exception as x:

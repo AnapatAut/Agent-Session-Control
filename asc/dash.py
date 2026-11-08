@@ -322,14 +322,18 @@ _snap = threading.Lock()
 
 def snapshot():
     with _snap:  # one at a time: many open pages never mean many /proc walks and tmux calls
-        return _snapshot()
+        try:
+            return _snapshot()
+        except tmuxctl.NoAnswer as x:  # made again with no tmux call: what tmux would say is not known
+            return _snapshot(str(x))
 
 
-def _snapshot():
+def _snapshot(tmux_error=""):
     data = registry.load()
-    pane_list = tmuxctl.panes()
-    lv = live.live(pane_list=pane_list)
-    up = set(tmuxctl.sessions())
+    pane_list = [] if tmux_error else tmuxctl.panes()
+    seen = live.live(pane_list=pane_list)  # with no tmux answer: no panes known, so none shown
+    lv = [] if tmux_error else seen
+    up = set() if tmux_error else set(tmuxctl.sessions())
     kids = live.children_map()
     by_session = {}
     for p in pane_list:
@@ -343,7 +347,7 @@ def _snapshot():
     favs, fav_sids, fav_tmux = [], set(), set()
     lens = past.lengths(registry.state_dir())
     for e in sorted(data["entries"].values(), key=lambda e: e["tmux"]):
-        st, s = cli.state_of(e, lv, up)
+        st, s = ("unknown", None) if tmux_error else cli.state_of(e, lv, up)
         if s and count.get(s["session_id"], 0) > 1:
             st = "duplicate"
         panes = by_session.get(e["tmux"], [])
@@ -386,11 +390,12 @@ def _snapshot():
     settings = data.get("settings") if isinstance(data.get("settings"), dict) else {}
     mem = memory.meminfo()
     return {"time": int(time.time()), "memory": mem, "top": top_processes(mem),
-            "server": bool(pane_list) or tmuxctl.server_running(),
+            "server": None if tmux_error else bool(pane_list) or tmuxctl.server_running(),
+            "tmux_error": tmux_error,
             "favorites": favs, "active": active, "unknown_files": unknown,
             "boot": boot_status(), "watch_at": watch_at(), "setup": set_up(), "events_v": events_version(),
             "settings": {"auto_restart": settings.get("auto_restart") is True},
-            "on": sum(1 for f in favs if f["state"] == "on")}, fav_sids | {s["session_id"] for s in lv}
+            "on": sum(1 for f in favs if f["state"] == "on")}, fav_sids | {s["session_id"] for s in seen}
 
 
 # --- actions -------------------------------------------------------------------------------

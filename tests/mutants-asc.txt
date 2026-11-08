@@ -10,7 +10,7 @@ asc/live.py %%%         if (st and is_claude(pid, st[0])) or %%%         if Fals
 asc/cli.py %%%     if away: %%%     if False: %%% off refused: its claude now runs in another session %%% shared_stale
 asc/cli.py %%%     return live_in(e, lv) or next( %%%     return live_in(e, lv) or None and next( %%% on refused while a live claude holds the session id %%% main
 asc/cli.py %%%     return (any(l.endswith("No, exit") %%%     return True or (any(l.endswith("No, exit") %%% on with the trust prompt quoted in a transcript: its claude up, not taken for the prompt %%% guards
-asc/tmuxctl.py %%%     return run("has-session", "-t", "=" + name) %%%     return run("has-session", "-t", name) %%% on while a longer-named session das-<id>x exists %%% main
+asc/tmuxctl.py %%%     r = run("has-session", "-t", "=" + name) %%%     r = run("has-session", "-t", name) %%% on while a longer-named session das-<id>x exists %%% main
 asc/tmuxctl.py %%% "-s", name, "-c", cwd.replace("#", "##") %%% "-s", name, "-c", cwd %%% claude started in the literal folder (tmux formats not expanded) %%% on_gates
 asc/live.py %%%         if s["live"]: %%%         if s["ok"]: %%% on refused: a well-formed file of a running claude does not check out %%% guards
 asc/cli.py %%%             if owner: %%%             if False: %%% fav refused: the claude runs in another favorite's tmux session %%% guards
@@ -253,3 +253,14 @@ asc/cli.py %%% p["pane_id"] == m.get("pane") and p["pane_pid"] == m.get("pane_pi
 asc/cli.py %%% and folder == cwd) %%% and cwd in folder) %%% trust refused: a prompt naming another folder (its own path the start of it), nothing answered %%% new_session
 asc/cli.py %%%     if not ok:⏎        raise RegistryError(f"asctl trusts only %%%     if False:⏎        raise RegistryError(f"asctl trusts only %%% trust refused: a folder others can write to, nothing answered %%% new_session
 asc/cli.py %%%  and not ps[0]["in_mode"] else None %%%  else None %%% trust refused: its pane in copy mode, nothing answered %%% new_session
+asc/tmuxctl.py %%% r"no server running on |error connecting %%% r"error connecting %%% list: a socket that refuses is no server %%% tmux_silent
+asc/tmuxctl.py %%% |error connecting to .* \(No such file or directory\)$" %%% " %%% list works with nothing set up %%% no_tmux_server
+asc/tmuxctl.py %%%     if _no_server(r):⏎        return None⏎    raise no_answer(r) %%%     return None %%% tmuxctl: each reader raises NoAnswer when tmux does not answer %%% tmux_silent
+asc/tmuxctl.py %%%     if _no_server(r):⏎        return []⏎    raise no_answer(r) %%%     return [] %%% new: refused before any favorite is made %%% tmux_silent
+asc/tmuxctl.py %%%     if _not_there(r):⏎        return False⏎    raise no_answer(r) %%%     return False %%% tmuxctl: each reader raises NoAnswer when tmux does not answer %%% tmux_silent
+asc/tmuxctl.py %%%         if _not_there(r):⏎            return out⏎        raise no_answer(r) %%%         return out %%% tmuxctl: each reader raises NoAnswer when tmux does not answer %%% tmux_silent
+asc/tmuxctl.py %%% r.stderr.strip() == "no current target" %%% False %%% tmuxctl: a server with no session: no session, no panes %%% tmux_silent
+asc/tmuxctl.py %%% ("can't find session: ", "can't find window: ") %%% ("can't find session: ",) %%% tmuxctl: another session there: still no session x, no panes of it %%% tmux_silent
+asc/watch.py %%%         if st["tmux"] != str(x):  # said once, until tmux answers again %%%         if True:  # said once, until tmux answers again %%% watch: tmux not answering: nothing done, said once %%% tmux_silent
+asc/watch.py %%%     st["tmux"] = "" %%%     pass %%% watch: said again once tmux answered in between %%% tmux_silent
+asc/watch.py %%% "tmux": s.get("tmux") if isinstance(s.get("tmux"), str) else "" %%% "tmux": "" %%% watch: tmux not answering: nothing done, said once %%% tmux_silent

@@ -5,7 +5,15 @@ also matches a longer name that starts with it). $ASC_TMUX_SOCKET picks a `tmux 
 (the tests use their own server).
 """
 import os
+import re
 import subprocess
+
+from .registry import RegistryError
+
+
+class NoAnswer(RegistryError):
+    """tmux failed for another reason than "no server": nothing may take that for no server
+    (or no session), so a reader that cannot tell raises this, and nothing acts on it."""
 
 
 def _base():
@@ -19,15 +27,40 @@ def run(*args, check=False, timeout=5):
         return subprocess.run(_base() + list(args), capture_output=True, text=True, check=check,
                               timeout=timeout, stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired:
-        return subprocess.CompletedProcess(args, 124, "", "tmux did not answer in time")
+        return subprocess.CompletedProcess(args, 124, "", f"no answer in {timeout} s")
     except OSError as e:  # no tmux on PATH
         return subprocess.CompletedProcess(args, 127, "", f"tmux: {e}")
 
 
+# What tmux says when no server runs: its socket refuses (a server that ended) or is not there.
+NO_SERVER = re.compile(r"no server running on |error connecting to .* \(No such file or directory\)$")
+
+
+def _no_server(r):
+    return r.returncode != 0 and bool(NO_SERVER.match(r.stderr.strip()))
+
+
+def _not_there(r):
+    """No server, or no such session (has-session says session, list-panes -s window; with a
+    server but no session at all, both say "no current target")."""
+    return (_no_server(r) or r.stderr.strip() == "no current target"
+            or r.stderr.startswith(("can't find session: ", "can't find window: ")))
+
+
+def no_answer(r):
+    """NoAnswer for a failed call r (tmux did not answer, or did not say why)."""
+    why = r.stderr.strip() or f"exit {r.returncode}"
+    return NoAnswer(f"tmux did not answer: {why}")
+
+
 def server_pid():
-    """The tmux server's PID, or None when none runs."""
+    """The tmux server's PID, or None when none runs; NoAnswer when tmux failed otherwise."""
     r = run("display-message", "-p", "#{pid}")
-    return int(r.stdout) if r.returncode == 0 and r.stdout.strip().isdigit() else None
+    if r.returncode == 0 and r.stdout.strip().isdigit():
+        return int(r.stdout)
+    if _no_server(r):
+        return None
+    raise no_answer(r)
 
 
 def server_running():
@@ -42,23 +75,37 @@ def start_server():
 
 
 def has_session(name):
-    return run("has-session", "-t", "=" + name).returncode == 0
+    r = run("has-session", "-t", "=" + name)
+    if r.returncode == 0:
+        return True
+    if _not_there(r):
+        return False
+    raise no_answer(r)
 
 
 def sessions():
     r = run("list-sessions", "-F", "#{session_name}")
-    return r.stdout.split() if r.returncode == 0 else []
+    if r.returncode == 0:
+        return r.stdout.split()
+    if _no_server(r):
+        return []
+    raise no_answer(r)
 
 
 def panes(session=None, strict=False):
-    """Panes as dicts: pane_id, pane_pid, session, command, in_mode. When tmux fails: [], or
-    None if strict (a caller about to act must not take "no answer" for "no panes")."""
+    """Panes as dicts: pane_id, pane_pid, session, command, in_mode. When tmux fails: None if
+    strict (a caller about to act must not take "no answer" for "no panes"); else [] with no
+    server (or no such session), NoAnswer otherwise."""
     fmt = "#{pane_id}\t#{pane_pid}\t#{session_name}\t#{pane_current_command}\t#{pane_in_mode}"
     args = ["list-panes", "-F", fmt] + (["-s", "-t", "=" + session] if session else ["-a"])
     r = run(*args)
     out = []
     if r.returncode != 0:
-        return None if strict else out
+        if strict:
+            return None
+        if _not_there(r):
+            return out
+        raise no_answer(r)
     for line in r.stdout.splitlines():
         p = line.split("\t")
         if len(p) == 5 and p[1].isdigit():

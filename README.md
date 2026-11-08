@@ -213,7 +213,10 @@ not run for 5 min; Settings has the out-of-memory auto-restart switch. New sessi
 favorite in a folder pasted by path (`asctl new`). A claude that Claude Code asks whether to
 trust its folder waits at that prompt, its card "Waiting for trust": Trust folder, after the
 page's own warning, sends asctl only which favorite (asctl trust answers for the folder it has).
-Every request needs that login and host; every action the page's token and Origin; the config
+When tmux does not answer (a hang, or a client that cannot reach its server), asctl never takes
+that for "no server": the page says "tmux did not answer: ...", every card "Unknown" and its
+power button off; On, new, boot and asctl tmux-server refuse (none starts a server), and the
+watcher does nothing that run, logging it once until tmux answers again. Every request needs that login and host; every action the page's token and Origin; the config
 must be its user's and writable only by them. A refused page shows only its title and icon;
 the manifest's `x_title` names it for readers that list serve ports. See `asc/dash.py`;
 tests: `tests/dash.sh`.

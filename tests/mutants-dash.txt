@@ -102,3 +102,10 @@ asc/web/app.js %%%   if (st === "waiting for trust") return %%%   if (st === "wa
 asc/web/app.js %%%   if (!await ask({ title: "Trust this folder?" %%%   if (await ask({ title: "Trust this folder?" %%% page: trust folder: sent only after a yes to a warning that names the folder, with only which favorite %%% page
 asc/web/app.js %%%   return act({ action: "trust", id: e.id4, tmux: e.tmux }); %%%   return act({ action: "trust", id: e.id4, tmux: e.tmux, path: e.cwd }); %%% page: trust folder: sent only after a yes to a warning that names the folder, with only which favorite %%% page
 asc/web/app.js %%% (body.action === "on" || body.action === "new") && !body.force_memory %%% body.action === "on" && !body.force_memory %%% page: new: memory short asks to force it, sent forced only after a yes %%% page
+asc/dash.py %%%             return _snapshot(str(x)) %%%             raise %%% state still answers while tmux hangs %%% tmux_hang
+asc/dash.py %%%     lv = [] if tmux_error else seen %%%     lv = seen %%% state while tmux hangs: said, not taken for no server, every favorite unknown %%% tmux_hang
+asc/dash.py %%% st, s = ("unknown", None) if tmux_error else cli.state_of(e, lv, up) %%% st, s = cli.state_of(e, lv, up) %%% state while tmux hangs: said, not taken for no server, every favorite unknown %%% tmux_hang
+asc/dash.py %%% "tmux_error": tmux_error, %%% "tmux_error": "", %%% state while tmux hangs: said, not taken for no server, every favorite unknown %%% tmux_hang
+asc/dash.py %%% "server": None if tmux_error else %%% "server": False if tmux_error else %%% state while tmux hangs: said, not taken for no server, every favorite unknown %%% tmux_hang
+asc/dash.py %%% fav_sids | {s["session_id"] for s in seen} %%% fav_sids | {s["session_id"] for s in lv} %%% past while tmux hangs: a live claude's conversation still not listed %%% tmux_hang
+asc/web/app.js %%%   if (st === "unknown") return %%%   if (false) return %%% page: unknown (tmux did not answer): needs attention, says nothing is changed %%% page

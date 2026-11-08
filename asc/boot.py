@@ -84,7 +84,11 @@ def _run(deadline, wait, net_wait):
     said, started = {}, []
     while todo:
         e = registry.load()["entries"].get(todo[0])
-        why = _skip(e)
+        try:
+            why = _skip(e)
+        except tmuxctl.NoAnswer as x:  # what runs is not known: nothing more is started
+            events.log("failed", e, f"boot: {x}; nothing more started")
+            raise
         if why is not None:
             if why:
                 cli.out(f"boot: {e['tmux']}: {why}")

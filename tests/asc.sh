@@ -50,7 +50,8 @@ cleanup() {
 	timeout -k 2 10 tmux -L "$ASC_TMUX_SOCKET" -f /dev/null kill-server 2>/dev/null
 	# shellcheck disable=SC2086  # pids
 	end_pids $panes
-	rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$ASC_TMUX_SOCKET"; rm -rf "$T"
+	timeout -k 2 10 tmux -L "asc-empty-$$" -f /dev/null kill-server 2>/dev/null  # case tmux_silent's, if it stopped
+	rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/"{"$ASC_TMUX_SOCKET","asc-empty-$$","asc-silent-$$","asc-stale-$$"}; rm -rf "$T"
 }
 trap cleanup EXIT
 pass=0 fail=0
@@ -1798,7 +1799,86 @@ ud() { HOME="$H2" XDG_CONFIG_HOME="$1" python3 -I -c 'import sys; sys.path.inser
 rm "$F2/environment"
 }
 
-run_cases asc no_tmux_server main shared_stale guards on_gates new_session rc_now rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot asctl_setup trust_watch
+# A tmux that does not answer (as on 2026-11-07, when every tmux run from a systemd unit got
+# "server exited unexpectedly"): a socket that hangs up on each client says just that. It is never
+# taken for "no server": nothing starts one, nothing acts, and what is not known is said.
+# shellcheck disable=SC2329  # helpers run only through poll
+case_tmux_silent() {
+echo "== a tmux that does not answer"
+server_up
+# First what tmux says with a server but no session, or no such session: none, not an error
+Q3="asc-empty-$$"
+tmux -L "$Q3" -f /dev/null start-server \; set -g exit-empty off || stop "a tmux server with no session"
+qe() { ASC_TMUX_SOCKET=$Q3 python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import tmuxctl
+sys.exit(0 if tmuxctl.has_session("x") is False and len(tmuxctl.panes()) == int(sys.argv[2]) and tmuxctl.panes("x") == [] and tmuxctl.server_pid() else 1)' "$REPO" "$1"; }
+qe 0 && ok "tmuxctl: a server with no session: no session, no panes" || bad "tmuxctl: a server with no session: no session, no panes" "$(qe 0 2>&1)"
+tmux -L "$Q3" -f /dev/null new-session -d -s a -- sleep 600 || stop "a session on that server"
+qe 1 && ok "tmuxctl: another session there: still no session x, no panes of it" || bad "tmuxctl: another session there: still no session x, no panes of it" "$(qe 1 2>&1)"
+timeout -k 2 10 tmux -L "$Q3" -f /dev/null kill-server; rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$Q3"
+Q="asc-silent-$$" Q2="asc-stale-$$"
+QS="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$Q" QS2="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$Q2"
+python3 -I -c 'import socket, sys
+s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.listen(8)
+while True: s.accept()[0].close()' "$QS" & qp=$!
+silent_up() { [ -S "$QS" ]; }
+poll 5 silent_up || stop "a tmux socket that hangs up"
+S1=cccccccc-0000-4000-8000-000000000001
+mkdir -p "$HOME/.claude/projects/-silent"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$S1" > "$HOME/.claude/projects/-silent/$S1.jsonl"
+asctl fav "$S1" --name quiet >/dev/null || stop "a favorite for the silent tmux"
+idq=$(jq -r --arg s "$S1" '.entries[] | select(.session_id == $s) | .id4' "$REG")
+q() { ASC_TMUX_SOCKET=$Q "$REPO/bin/asctl" "$@"; }
+SC="$HOME/systemctl.log"; rm -f "$SC"
+out=$(q list 2>&1); r=$?
+[ "$r" = 1 ] && seen 'tmux did not answer: server exited unexpectedly' <<<"$out" && ! seen quiet <<<"$out" \
+	&& ok "list: tmux not answering said, nothing listed as off" || bad "list: tmux not answering said, nothing listed as off" "list: $r $out"
+out=$(q on "$idq" 2>&1); r=$?
+[ "$r" = 1 ] && seen 'tmux did not answer' <<<"$out" && [ ! -e "$SC" ] && last refused | seen '"on: tmux did not answer: server exited unexpectedly"' \
+	&& ok "on: refused and logged, asctl-tmux.service not started" || bad "on: refused and logged, asctl-tmux.service not started" "on: $r $out / $(cat "$SC" 2>/dev/null) / $(last refused)"
+out=$(q tmux-server 2>&1); r=$?
+[ "$r" = 1 ] && seen 'tmux did not answer' <<<"$out" && ! seen started <<<"$out" \
+	&& ok "tmux-server: no server started over one that does not answer" || bad "tmux-server: no server started over one that does not answer" "tmux-server: $r $out"
+mkdir -p "$HOME/qnew"; n0=$(jqe '.entries | length') e0=$(evn new)
+out=$(q new "$HOME/qnew" 2>&1); r=$?
+[ "$r" = 1 ] && seen 'tmux did not answer' <<<"$out" && [ "$(jqe '.entries | length')" = "$n0" ] && [ "$(evn new)" = "$e0" ] \
+	&& ok "new: refused before any favorite is made" || bad "new: refused before any favorite is made" "new: $r $out / $(jqe '.entries | length') entries, $n0 before / $(last new)"
+# Each tmux reader: "no server" and "no such session" only when tmux says so, else NoAnswer
+ASC_TMUX_SOCKET=$Q python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import tmuxctl
+for f in (tmuxctl.server_pid, tmuxctl.sessions, tmuxctl.panes, lambda: tmuxctl.has_session("x"), lambda: tmuxctl.panes("x")):
+    try:
+        f(); sys.exit(1)
+    except tmuxctl.NoAnswer:
+        pass
+sys.exit(0 if tmuxctl.panes("x", strict=True) is None else 1)' "$REPO" \
+	&& ok "tmuxctl: each reader raises NoAnswer when tmux does not answer" || bad "tmuxctl: each reader raises NoAnswer when tmux does not answer" "a reader took it for no server"
+said() { jq -s '[.[] | select(.kind == "failed" and (.text | startswith("watch: tmux did not answer")))] | length' "$SD/events.jsonl"; }
+f0=$(said)
+ASC_TMUX_SOCKET=$Q ASC_BY=watch "$REPO/bin/asctl" watch; r1=$?
+ASC_TMUX_SOCKET=$Q ASC_BY=watch "$REPO/bin/asctl" watch; r2=$?
+[ "$r1 $r2" = "0 0" ] && [ "$(said)" = $((f0 + 1)) ] && last failed | seen '"watch: tmux did not answer: server exited unexpectedly; nothing done this run"' \
+	&& ok "watch: tmux not answering: nothing done, said once" || bad "watch: tmux not answering: nothing done, said once" "watch: $r1 $r2, said $(($(said) - f0)) times: $(last failed)"
+watch
+ASC_TMUX_SOCKET=$Q ASC_BY=watch "$REPO/bin/asctl" watch
+[ "$(said)" = $((f0 + 2)) ] && ok "watch: said again once tmux answered in between" || bad "watch: said again once tmux answered in between" "said $(($(said) - f0)) times"
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import registry
+with registry.changing() as d: d["entries"][sys.argv[2]].update(resurrect=True, want_on=True)' "$REPO" "$idq" || stop "the favorite set to come back at boot"
+out=$(ASC_TMUX_SOCKET=$Q "$REPO/bin/asctl" boot --wait 0 --net-wait 0 2>&1); r=$?
+[ "$r" = 1 ] && [ ! -e "$SC" ] && last failed | seen '"boot: tmux did not answer: server exited unexpectedly"' \
+	&& ok "boot: tmux not answering logged, asctl-tmux.service not started" || bad "boot: tmux not answering logged, asctl-tmux.service not started" "boot: $r $out / $(cat "$SC" 2>/dev/null) / $(last failed)"
+kill "$qp"; wait "$qp" 2>/dev/null; rm -f "$QS"
+# A socket left by a server that ended refuses: no server, as before
+python3 -I -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$QS2" || stop "a socket left by a server that ended"
+ASC_TMUX_SOCKET=$Q2 "$REPO/bin/asctl" list >/dev/null 2>"$T/err" && ok "list: a socket that refuses is no server" || bad "list: a socket that refuses is no server" "list: $(cat "$T/err")"
+rm -f "$QS2"
+# A server that hangs: 5 s, then said
+srv=$(tm display -p '#{pid}'); kill -STOP "$srv"
+out=$(asctl list 2>&1); r=$?
+kill -CONT "$srv"
+[ "$r" = 1 ] && seen 'tmux did not answer: no answer in 5 s' <<<"$out" && ok "list: a server that hangs is said, not taken for none" || bad "list: a server that hangs is said, not taken for none" "list: $r $out"
+asctl forget "$idq" >/dev/null
+}
+
+run_cases asc no_tmux_server main shared_stale guards on_gates new_session rc_now rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot asctl_setup trust_watch tmux_silent
 
 echo "asc: $pass passed, $fail failed"
 [ "$fail" = 0 ]
