@@ -506,7 +506,8 @@ echo "== actions: a new session in a folder pasted by path"
 dash_up
 mkdir -p "$HOME/web" "$HOME/fresh2"; printf '%s\n' "$HOME/web" >> "$HOME/fake-trusted"
 n0=$(state | jq '.favorites | length')
-[ "$(post '{"action":"new","path":5}' | tail -1)" = 400 ] && ok "new: the path must be text" || bad "new: the path must be text" "a number taken as a path"
+out=$(post '{"action":"new","name":"web","path":5}')
+[ "$(tail -1 <<<"$out")" = 400 ] && seen "the folder must be a path of 1 to 4096 characters" <<<"$out" && ok "new: the path must be text" || bad "new: the path must be text" "a number taken as a path: $out"
 [ "$(post '{"action":"new","name":"web","path":"'"$HOME"'/web","mode":"manual"}' | tail -1)" = 400 ] && ok "new from the page: auto mode only (manual refused)" || bad "new from the page: auto mode only (manual refused)" "manual taken from the page"
 out=$(post '{"action":"new","path":"'"$HOME"'/web"}')
 [ "$(tail -1 <<<"$out")" = 400 ] && seen "new needs name" <<<"$out" && ok "new: a name is needed" || bad "new: a name is needed" "no name: $out"
