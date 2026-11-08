@@ -98,6 +98,45 @@ if ! grep -qxF "$PWD" "$trusted" 2>/dev/null; then
 	done
 	clear
 fi
+# $HOME/fake-mcp, a server name: Claude Code's prompt for one new MCP server of the project, as
+# 2.1.319 draws it ("Continue without" selected first; $HOME/fake-mcp-sel: 0 or 1 selected
+# instead), once a folder (its answer kept in $HOME/fake-mcp-done); $HOME/fake-mcp-many: its prompt
+# for several at once instead. Up/Down move, Enter answers (logged), Esc: no.
+mcpdone="$HOME/fake-mcp-done"
+if [ -e "$HOME/fake-mcp" ] && ! grep -qxF "$PWD" "$mcpdone" 2>/dev/null; then
+	sel=2; [ -e "$HOME/fake-mcp-sel" ] && sel=$(cat "$HOME/fake-mcp-sel")
+	opts=("Use this MCP server" "Use this and all future MCP servers in this project" "Continue without using this MCP server")
+	draw() {
+		clear
+		printf '─%.0s' $(seq 1 80); echo
+		if [ -e "$HOME/fake-mcp-many" ]; then
+			printf '%s\n' "  2 new MCP servers found in this project" "" "  Select any you wish to enable." "" \
+				"  ❯ ◯ $(cat "$HOME/fake-mcp")" "    ◯ other" "" "  Space to select · Enter to confirm · Esc to reject all"
+			return
+		fi
+		printf '%s\n' "  New MCP server found in this project: $(cat "$HOME/fake-mcp")" "" \
+			"  MCP servers may execute code or access system resources. All tool calls" \
+			"  require approval. Learn more in the MCP documentation." ""
+		local i; for i in 0 1 2; do
+			if [ "$i" = "$sel" ]; then echo "  ❯ ${opts[$i]}"; else echo "    ${opts[$i]}"; fi
+		done
+		printf '%s\n' "" "  Enter to confirm · Esc to cancel"
+	}
+	draw
+	while IFS= read -rsn1 k; do
+		if [ "$k" = $'\e' ]; then
+			read -rsn2 -t 0.1 k2
+			case "$k2" in "[B") [ "$sel" -lt 2 ] && sel=$((sel + 1)) ;; "[A") [ "$sel" -gt 0 ] && sel=$((sel - 1)) ;; *) sel=esc ;; esac
+			[ "$sel" = esc ] && { echo "pid=$$ mcp: esc" >> "$log"; break; }
+			draw
+		elif [ -z "$k" ]; then
+			if [ -e "$HOME/fake-mcp-many" ]; then echo "pid=$$ mcp: many enter" >> "$log"; else echo "pid=$$ mcp: $sel" >> "$log"; fi
+			break
+		fi
+	done
+	echo "$PWD" >> "$mcpdone"
+	clear
+fi
 if [ -e "$HOME/fake-quote" ]; then
 	printf '%s\n' " > what does this prompt mean? $PWD" " Accessing workspace:" " Quick safety check: Is this a project you created or one you trust?" \
 		" ❯ No, exit" " ❯ Yes, I trust this folder" " Enter to confirm · Esc to cancel" "" " It asks whether to trust the folder." " >"

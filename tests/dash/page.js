@@ -84,11 +84,20 @@ check("repeats in a row fold into one line, from the first",
 check("waiting for trust: needs attention, names the folder", `(() => { const l = look({ state: "waiting for trust", cwd: "${HOME}/fresh" });
   return l.group === "attention" && l.label === "Waiting for trust"
     && l.why === "Claude Code asks whether to trust ~/fresh. Trust folder lets claude start there; Off closes it."; })()`);
+check("waiting at a prompt: needs attention, says what Claude Code asks and where to answer", `(() => {
+  const l = look({ state: "waiting at a prompt", tmux: "fresh-0007", prompt: "2 new MCP servers found in this project" });
+  const n = look({ state: "waiting at a prompt", tmux: "fresh-0007", prompt: "" });
+  return l.group === "attention" && l.label === "Waiting at a prompt" && !isOn({ state: "waiting at a prompt" })
+    && l.why === "Claude Code asks: “2 new MCP servers found in this project”. Answer it in its pane (tmux attach -t =fresh-0007); Off closes it."
+    && n.why === "Its claude has not come up: Claude Code may ask something in its pane (tmux attach -t =fresh-0007); Off closes it."; })()`);
 check("unknown (tmux did not answer): needs attention, says nothing is changed", `(() => { const l = look({ state: "unknown" });
   return l.group === "attention" && l.label === "Unknown" && !isOn({ state: "unknown" })
     && l.why === "tmux did not answer, so whether it runs is not known. Nothing is changed until tmux answers."; })()`);
 check("new, trusted, untrusted: in words",
   `evLabel({ kind: "new" }) === "Created" && evLabel({ kind: "trusted" }) === "Folder trusted" && evLabel({ kind: "untrusted" }) === "Waiting for trust"`);
+check("MCP server not used, another prompt: in words, the server named",
+  `evLabel({ kind: "mcp", text: "Claude Code asked whether to use MCP server supa of ${HOME}/x/.mcp.json: continued without it" }) === "MCP server supa not used"
+    && evLabel({ kind: "mcp", text: "" }) === "MCP server not used" && evLabel({ kind: "prompt" }) === "Waiting at a prompt"`);
 
 // act and Trust folder themselves, with a fetch that records what is sent and the confirm
 // answered no, then yes; one after the other (chain): each sets the page's fetch and ask

@@ -365,6 +365,8 @@ def _snapshot(tmux_error=""):
             "mode_next": cli.start_mode(e),
             "want_on": bool(e.get("want_on")), "note": e.get("note") or "",
             "last_on": e.get("last_on"), "last_off": e.get("last_off"), "state": st,
+            # what Claude Code asks, while its start left its claude at a prompt other than trust
+            "prompt": cli.prompt_title(tmuxctl.capture(e["tmux"])) if st == "waiting at a prompt" else "",
             "pid": s["pid"] if s else None, "status": shown(s)[0] if s else None, "task": s["task"] if s else "",
             "waiting_for": s["waiting_for"] if s else "", "status_at": shown(s)[1] if s else None,
             "busy": live.busy_reason(e["tmux"], lv, kids, panes, e.get("session_id")) if e["tmux"] in up else "",

@@ -527,6 +527,18 @@ out=$(post '{"action":"trust","id":"'"$idn"'","tmux":"fresh2-'"$idn"'"}')
 	&& ok "trust from the page: the prompt answered for its folder, on, started as new" || bad "trust from the page: the prompt answered for its folder, on, started as new" "trust: $out"
 post '{"action":"off","force":true,"id":"'"$idn"'","tmux":"fresh2-'"$idn"'"}' >/dev/null
 post '{"action":"forget","id":"'"$idn"'","tmux":"fresh2-'"$idn"'"}' >/dev/null
+# trusted, then Claude Code asks something asctl does not answer: the card says what
+mkdir -p "$HOME/fresh3"; printf '{"mcpServers":{"supa":{}}}\n' > "$HOME/fresh3/.mcp.json"; echo supa > "$HOME/fake-mcp"; touch "$HOME/fake-mcp-many"
+post '{"action":"new","name":"fresh3","path":"'"$HOME"'/fresh3"}' >/dev/null
+idp=$(jq -r --arg c "$HOME/fresh3" '.entries[] | select(.cwd == $c) | .id4' "$REG")
+out=$(post '{"action":"trust","id":"'"$idp"'","tmux":"fresh3-'"$idp"'"}'); rm -f "$HOME/fake-mcp" "$HOME/fake-mcp-many"
+[ "$(tail -1 <<<"$out")" = 200 ] && seen "Claude Code asks: '2 new MCP servers found in this project'" <<<"$out" \
+	&& state | jq -e --arg i "$idp" '.favorites[] | select(.id4 == $i) | .state == "waiting at a prompt" and .prompt == "2 new MCP servers found in this project"' >/dev/null \
+	&& state | jq -e '[.favorites[] | select(.state != "waiting at a prompt") | .prompt] | all(. == "")' >/dev/null \
+	&& ok "trust from the page, then another prompt: waiting at a prompt, what it asks in the state" || bad "trust from the page, then another prompt: waiting at a prompt, what it asks in the state" "trust: $out / $(state | jq -c '.favorites[] | {state, prompt}')"
+post '{"action":"off","force":true,"id":"'"$idp"'","tmux":"fresh3-'"$idp"'"}' >/dev/null
+post '{"action":"forget","id":"'"$idp"'","tmux":"fresh3-'"$idp"'"}' >/dev/null
+rm -f "$HOME/fake-mcp-done"
 }
 
 case_past() {

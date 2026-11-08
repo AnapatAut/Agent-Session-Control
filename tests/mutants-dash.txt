@@ -110,3 +110,5 @@ asc/dash.py %%% fav_sids | {s["session_id"] for s in seen} %%% fav_sids | {s["se
 asc/web/app.js %%%   if (st === "unknown") return %%%   if (false) return %%% page: unknown (tmux did not answer): needs attention, says nothing is changed %%% page
 asc/dash.py %%%         if not isinstance(a.get("name"), str) or not a["name"]: %%%         if False: %%% new: a name is needed %%% actions_new
 asc/dash.py %%%         if a.get("mode", "auto") != "auto":  # the page has no mode switch for a new session %%%         if False:  # the page has no mode switch for a new session %%% new from the page: auto mode only (manual refused) %%% actions_new
+asc/dash.py %%% "prompt": cli.prompt_title(tmuxctl.capture(e["tmux"])) if st == "waiting at a prompt" else "", %%% "prompt": "", %%% trust from the page, then another prompt: waiting at a prompt, what it asks in the state %%% actions_new
+asc/web/app.js %%%     why: (e.prompt ?  %%%     why: (false ?  %%% page: waiting at a prompt: needs attention, says what Claude Code asks and where to answer %%% page

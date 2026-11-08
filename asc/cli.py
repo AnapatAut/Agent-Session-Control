@@ -53,6 +53,7 @@ import glob
 import json
 import os
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -324,8 +325,8 @@ def state_of(e, lv, up_sessions=None):
         return "on", s
     if s:
         return "on (outside its tmux session)", s
-    if up and awaiting(e):
-        return "waiting for trust", None
+    if up and awaiting(e):  # its start left its claude at a prompt: which one, as its screen shows now
+        return ("waiting for trust" if trust_prompt(tmuxctl.capture(e["tmux"]), e["cwd"]) else "waiting at a prompt"), None
     ex = last_exit(e["id4"])
     if up:
         if ex and ex[0] in (137, 143):
@@ -496,15 +497,97 @@ def trust_prompt(screen, cwd):
             and rest[-1].startswith("Enter to confirm") and folder == cwd)
 
 
-class Untrusted(RegistryError):
+def _dialog(screen):
+    """The lines of the dialog Claude Code shows as the last lines on screen (its footer, "Enter to
+    confirm ...", the last line), from the line after the last rule above it, within the last 20
+    lines; else None. Lines stripped, the empty ones left out."""
+    lines = [l.strip() for l in screen.splitlines() if l.strip()][-20:]
+    if not lines or "Enter to confirm" not in lines[-1]:
+        return None
+    r = next((k for k in range(len(lines) - 1, -1, -1) if set(lines[k]) == {"─"}), -1)
+    return lines[r + 1:] if len(lines) - r > 2 else None  # a title and the footer at least
+
+
+def prompt_title(screen):
+    """The first line of the dialog of Claude Code's on screen (its title, as "New MCP server found
+    in this project: x"), cut to 200 characters; "" when none shows."""
+    d = _dialog(screen)
+    return d[0][:200] if d else ""
+
+
+MCP_MAX = 1 << 20
+MCP_TITLE = "New MCP server found in this project: "
+MCP_USE = ("Use this MCP server", "Use this and all future MCP servers in this project")
+MCP_NO = "Continue without using this MCP server"
+
+
+def mcp_servers(cwd):
+    """The names of the MCP servers the folder's .mcp.json declares ("mcpServers"); none when it is
+    missing, not a regular file (a FIFO there is never waited on), over MCP_MAX bytes, or not that
+    JSON."""
+    try:
+        with open(os.open(os.path.join(cwd, ".mcp.json"), os.O_RDONLY | os.O_NONBLOCK), "rb") as f:
+            st = os.fstat(f.fileno())
+            if not stat.S_ISREG(st.st_mode) or st.st_size > MCP_MAX:
+                return set()
+            servers = json.loads(f.read(MCP_MAX + 1)).get("mcpServers")
+    except (OSError, ValueError, AttributeError, RecursionError):
+        return set()
+    return set(servers) if isinstance(servers, dict) else set()
+
+
+def mcp_prompt(screen, cwd):
+    """The server Claude Code's MCP prompt asks about, when that prompt is the dialog on screen for
+    one server the folder's .mcp.json declares, with "Continue without using this MCP server"
+    selected and only it; else None. Its fixed lines as Claude Code 2.1.319 draws them: the title
+    naming the server, the three choices, the footer. (Its prompt for several servers at once is
+    another dialog: not this.)"""
+    d = _dialog(screen)
+    if not d or not d[0].startswith(MCP_TITLE):
+        return None
+    name = d[0][len(MCP_TITLE):]
+    marked = [l[1:].strip() for l in d if l.startswith("❯")]
+    choices = {l.lstrip("❯").strip() for l in d}
+    if marked != [MCP_NO] or not choices >= {*MCP_USE, MCP_NO} or not d[-1].startswith("Enter to confirm"):
+        return None
+    return name if name in mcp_servers(cwd) else None
+
+
+class AtPrompt(RegistryError):
+    """Claude Code asks something at start that asctl does not answer: a start leaves its claude
+    waiting there. title: the prompt's first line ("trust" for the trust prompt)."""
+
+    def __init__(self, msg, title):
+        super().__init__(msg)
+        self.title = title
+
+
+class Untrusted(AtPrompt):
     """Claude Code asks whether to trust the folder: a start leaves its claude waiting there."""
+
+    def __init__(self, cwd):
+        super().__init__(f"Claude Code asks whether to trust {cwd}", "trust")
+
+
+def _stopped_at(e, screen, sure):
+    """Untrusted at the trust prompt for the entry's folder; AtPrompt at another dialog of Claude
+    Code's, once sure (the same one in two looks running, or as the wait ended); else its title."""
+    if trust_prompt(screen, e["cwd"]):
+        raise Untrusted(e["cwd"])
+    title = prompt_title(screen)
+    if title and sure(title):
+        raise AtPrompt(f"Claude Code asks: {title!r}", title)
+    return title
 
 
 def wait_started(e, timeout=40):
     """Wait for the claude of a just-started session: it, or None. Claude Code's trust prompt for
     the entry's folder is never answered here (only asctl trust, on a person's word): Untrusted
-    once it shows, its claude left waiting at it."""
+    once it shows. Its MCP prompt for a server of the folder's .mcp.json is answered "Continue
+    without" (MCP servers off first), once a server (mcp_no). Any other dialog of Claude Code's:
+    AtPrompt. Its claude is left waiting at the prompt it stopped at."""
     end = time.time() + timeout
+    seen, said = "", set()
     while time.time() < end:
         time.sleep(0.5)
         if not tmuxctl.has_session(e["tmux"]):
@@ -514,15 +597,46 @@ def wait_started(e, timeout=40):
             return s
         if started_exit(e):  # claude ended already
             return None
-        if trust_prompt(tmuxctl.capture(e["tmux"]), e["cwd"]):
-            raise Untrusted(f"Claude Code asks whether to trust {e['cwd']}")
-    if tmuxctl.has_session(e["tmux"]) and not live_in(e) and trust_prompt(tmuxctl.capture(e["tmux"]), e["cwd"]):
-        raise Untrusted(f"Claude Code asks whether to trust {e['cwd']}")  # drawn as the wait ended
+        screen = tmuxctl.capture(e["tmux"])
+        name = mcp_prompt(screen, e["cwd"])
+        if name is not None and name not in said:
+            said.add(name)
+            mcp_no(e, name)
+            seen = ""
+            continue
+        prev = seen
+        seen = _stopped_at(e, screen, lambda t: t == prev)  # one look could catch it half drawn
+    if tmuxctl.has_session(e["tmux"]) and not live_in(e) and not started_exit(e):
+        _stopped_at(e, tmuxctl.capture(e["tmux"]), lambda t: True)  # drawn as the wait ended
     return None
 
 
+def mcp_no(e, name):
+    """"Continue without using this MCP server" at Claude Code's MCP prompt for server name: Enter
+    only, as it is selected already (the selection is never moved), in the one pane of the entry's
+    session, not in copy mode, the prompt checked again there just before; logged. AtPrompt when
+    that is not so (nothing pressed), or when the prompt still shows 5 s later."""
+    title = MCP_TITLE + name
+    ps = tmuxctl.panes(e["tmux"], strict=True)
+    pane = ps[0]["pane_id"] if ps and len(ps) == 1 and not ps[0]["in_mode"] else None
+    if pane is None or mcp_prompt(tmuxctl.capture_pane(pane), e["cwd"]) != name:
+        raise AtPrompt(f"Claude Code asks: {title!r} (not answered: its session is not that one pane, the "
+                       f"pane is in copy mode, or the prompt changed)", title)
+    tmuxctl.send_pane(pane, "Enter")
+    events.log("mcp", e, f"Claude Code asked whether to use MCP server {name} of {e['cwd']}/.mcp.json: "
+                         f"continued without it (MCP servers off first; /mcp in claude turns it on)")
+    end = time.time() + 5  # the prompt goes once claude has the answer
+    while time.time() < end:
+        if mcp_prompt(tmuxctl.capture_pane(pane), e["cwd"]) != name:
+            return
+        time.sleep(0.25)
+    raise AtPrompt(f"Claude Code asks: {title!r} (still shown 5 s after Continue without: the answer was not "
+                   f"taken)", title)
+
+
 def awaiting(e):
-    """True while the claude a start left at Claude Code's trust prompt may still wait there: the
+    """True while the claude a start left at a prompt of Claude Code's (the trust prompt, or another:
+    the mark, awaiting_trust, keeps the name it got for the trust prompt) may still wait there: the
     entry marked by that start, the pane it started claude in still in its session (the same pane
     id and PID: not a session of the same name made since), its claude not ended. (No live claude
     in it is the caller's to check.)"""
@@ -543,6 +657,18 @@ def at_trust_prompt(e, lv=None):
     if not ps or len(ps) != 1 or live_in(e, lv):
         return None
     return ps[0]["pane_id"] if trust_prompt(tmuxctl.capture_pane(ps[0]["pane_id"]), e["cwd"]) and not ps[0]["in_mode"] else None
+
+
+def at_start_prompt(e, lv=None):
+    """True while the entry's claude waits at the prompt of Claude Code's its start left it at (the
+    trust prompt or another): marked by that start (awaiting), the one pane of its session, no live
+    claude in it yet, a dialog of Claude Code's the last lines on its screen."""
+    if not awaiting(e):
+        return False
+    ps = tmuxctl.panes(e["tmux"], strict=True)
+    if not ps or len(ps) != 1 or live_in(e, lv):
+        return False
+    return _dialog(tmuxctl.capture_pane(ps[0]["pane_id"])) is not None
 
 
 YES = "❯ Yes, I trust this folder"
@@ -591,15 +717,17 @@ def _trust(id4):
     end = time.time() + 5  # the prompt goes once claude has the answer
     while time.time() < end and trust_prompt(tmuxctl.capture_pane(pane), e["cwd"]):
         time.sleep(0.25)
+    mark = e["awaiting_trust"]
+    mode, rc = mark.get("mode") if isinstance(mark.get("mode"), str) else "?", mark.get("rc") is True
     try:
         s = wait_started(e)
     except Untrusted:
         raise ActionFailed("its trust prompt still shows: the answer was not taken")
-    mark = e["awaiting_trust"]
+    except AtPrompt as x:  # trusted; Claude Code asks something more
+        return _left_waiting(e, mode, rc, x, True)
     if not s:
         return _not_up(e)
-    return _came_up(e, s, mark.get("mode") if isinstance(mark.get("mode"), str) else "?", mark.get("rc") is True,
-                    False, True)
+    return _came_up(e, s, mode, rc, False, True)
 
 
 def cmd_on(args):
@@ -698,21 +826,33 @@ def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, r
         raise ActionFailed("the tmux server ended while starting; nothing was started (it is marked on)")
     try:
         s = wait_started(e)
-    except Untrusted:
-        ps = tmuxctl.panes(e["tmux"], strict=True) or []
-        p = ps[0] if len(ps) == 1 else {}  # its pane, as started (another since: none, no trust)
-        with registry.changing() as data:
-            registry.find(data, e["id4"])["awaiting_trust"] = {"since": registry.now(), "mode": mode, "rc": rc,
-                                                               "pane": p.get("pane_id"), "pane_pid": p.get("pane_pid")}
-        msg = (f"{e['tmux']}: its claude waits: Claude Code asks whether to trust {e['cwd']}, not answered "
-               f"(Trust folder on the page, or asctl trust {e['id4']}; Off closes it)")
-        events.log("untrusted", e, msg)
-        if loud:
-            out(f"waiting: {msg}")
-        return 0
+    except AtPrompt as x:
+        return _left_waiting(e, mode, rc, x, loud)
     if not s:
         return _not_up(e)
     return _came_up(e, s, mode, rc, force_memory, loud)
+
+
+def _left_waiting(e, mode, rc, x, loud):
+    """A start whose claude Claude Code keeps at a prompt (x: Untrusted, or another AtPrompt): the
+    entry marked (awaiting_trust) with the start's mode and rc, its pane as started, and the prompt
+    ("trust", or its title), so the watcher leaves it and the page tells; logged; 0."""
+    ps = tmuxctl.panes(e["tmux"], strict=True) or []
+    p = ps[0] if len(ps) == 1 else {}  # its pane, as started (another since: none, no trust)
+    with registry.changing() as data:
+        registry.find(data, e["id4"])["awaiting_trust"] = {"since": registry.now(), "mode": mode, "rc": rc,
+                                                           "pane": p.get("pane_id"), "pane_pid": p.get("pane_pid"),
+                                                           "prompt": x.title}
+    if isinstance(x, Untrusted):
+        kind, msg = "untrusted", (f"{e['tmux']}: its claude waits: Claude Code asks whether to trust {e['cwd']}, not "
+                                  f"answered (Trust folder on the page, or asctl trust {e['id4']}; Off closes it)")
+    else:
+        kind, msg = "prompt", (f"{e['tmux']}: its claude waits: {x}; answer it in its pane (tmux attach -t "
+                               f"={e['tmux']}); Off closes it")
+    events.log(kind, e, msg)
+    if loud:
+        out(f"waiting: {msg}")
+    return 0
 
 
 def _not_up(e):
@@ -803,8 +943,8 @@ def _off(id4, force, loud=True):
                             f"{live.where(away)['text']}; off ends only what runs in {e['tmux']!r}, so nothing "
                             f"was done (end it there, or asctl restart {e['id4']} moves it into "
                             f"{e['tmux']!r} once it is idle)")
-    # its claude at the trust prompt its start left it at has done nothing yet: not busy
-    waiting = up and not s and at_trust_prompt(e, lv) is not None
+    # its claude at the prompt its start left it at (trust, or another) has done nothing yet: not busy
+    waiting = up and not s and at_start_prompt(e, lv)
     if up and not force and not waiting:
         why = live.busy_reason(e["tmux"], lv, own_sid=e.get("session_id"))
         if why:
@@ -833,7 +973,7 @@ def _off(id4, force, loud=True):
             out(ended)
     if up:
         tmuxctl.kill_session(e["tmux"])
-    events.log("off", e, (ended if s else "its claude closed at the trust prompt, not answered" if waiting
+    events.log("off", e, (ended if s else "its claude closed at Claude Code's prompt, not answered" if waiting
                           else "no claude ran") + (", forced" if force else ""))
     if loud:
         out(f"off: {e['tmux']}")

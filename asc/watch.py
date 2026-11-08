@@ -12,10 +12,10 @@ Each run, one at a time (watch.lock; a run that finds another still going does n
       also, after a restart, the name to its claude.ai session (rename_title: a resumed
       claude.ai session keeps its old title, though claude has the name);
     - an exit record older than that claude dropped (it ended before this claude was started);
-    - the mark of a start that left it at Claude Code's trust prompt (awaiting_trust) dropped:
-      the prompt was answered in its pane;
- 4. a favorite whose claude waits at that trust prompt: left as it is (not an end; only asctl
-    trust answers it);
+    - the mark of a start that left it at a prompt of Claude Code's (awaiting_trust: the trust
+      prompt, or another) dropped: the prompt was answered in its pane;
+ 4. a favorite whose claude waits at that prompt: left as it is (not an end; only asctl trust, or
+    a person in its pane, answers it);
     a favorite that is wanted on whose claude ended while its tmux session stayed: logged once
     with its exit code and the memory evidence. Started again (in its own pane, which keeps the
     session and anyone attached) only when every one holds (plan row 7): auto-restart is on
@@ -115,7 +115,7 @@ def _favorites(st, data, samples):
                 if s:
                     _running(st, e, s, lv, kids)
                 elif e["tmux"] in up and cli.awaiting(e):
-                    st["ended"].pop(e["id4"], None)  # its claude waits at the trust prompt: not ended
+                    st["ended"].pop(e["id4"], None)  # its claude waits at a prompt of Claude Code's: not ended
                 elif e.get("want_on") and e["tmux"] in up:
                     _ended(st, e, samples, run)
                 else:
@@ -187,8 +187,13 @@ def _duplicates(st, lv, data):
 
 def _running(st, e, s, lv, kids):
     st["ended"].pop(e["id4"], None)
-    if e.get("awaiting_trust") is not None and _set(e, {"awaiting_trust": e["awaiting_trust"]}, {"awaiting_trust": None}):
-        events.log("trusted", e, "its claude came up past Claude Code's trust prompt, answered in its pane (not by asctl)")
+    m = e.get("awaiting_trust")
+    if m is not None and _set(e, {"awaiting_trust": m}, {"awaiting_trust": None}):
+        p = m.get("prompt", "trust") if isinstance(m, dict) else "trust"  # a mark from before "prompt": trust
+        if p == "trust":
+            events.log("trusted", e, "its claude came up past Claude Code's trust prompt, answered in its pane (not by asctl)")
+        else:
+            events.log("on", e, f"its claude came up past Claude Code's prompt {p!r}, answered in its pane (not by asctl)")
     if sum(1 for x in lv if x["pane"] and x["pane"]["session"] == e["tmux"]) != 1:
         return  # not only its own claude in the session: nothing here is sure to be about it
     panes = tmuxctl.panes(e["tmux"], strict=True)

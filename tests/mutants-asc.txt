@@ -230,21 +230,21 @@ asc/cli.py %%%         if r != 0:⏎            _drop_new(e, %%%         if Fals
 asc/cli.py %%%     tmuxctl.kill_session(e["tmux"])⏎    with registry.changing() as data:⏎        data["entries"].pop(e["id4"], None) %%%     pass⏎    with registry.changing() as data:⏎        data["entries"].pop(e["id4"], None) %%% new, its claude ending at once: no favorite or tmux session left %%% new_session
 asc/cli.py %%%     with registry.changing() as data:⏎        data["entries"].pop(e["id4"], None) %%%     with registry.changing() as data:⏎        pass %%% new, its claude ending at once: no favorite or tmux session left %%% new_session
 asc/cli.py %%%     if not yes_selected(tmuxctl.capture_pane(pane)):⏎        tmuxctl.send_pane(pane, "Down") %%%     if False:⏎        tmuxctl.send_pane(pane, "Down") %%% trust: the prompt answered yes (Down, check, Enter), its claude up %%% main
-asc/cli.py %%%             raise Untrusted(f"Claude Code asks %%%             None and Untrusted(f"Claude Code asks %%% new, an untrusted folder: its claude left at the trust prompt at once, nothing answered, logged %%% new_session
-asc/cli.py %%%         events.log("untrusted", e, msg) %%%         None and events.log("untrusted", e, msg) %%% new, an untrusted folder: its claude left at the trust prompt at once, nothing answered, logged %%% new_session
-asc/cli.py %%%             out(f"waiting: {msg}")⏎        return 0 %%%             out(f"waiting: {msg}")⏎        return 1 %%% new, an untrusted folder: its claude left at the trust prompt at once, nothing answered, logged %%% new_session
+asc/cli.py %%%         raise Untrusted(e["cwd"]) %%%         None and Untrusted(e["cwd"]) %%% new, an untrusted folder: its claude left at the trust prompt at once, nothing answered, logged %%% new_session
+asc/cli.py %%%     events.log(kind, e, msg) %%%     None and events.log(kind, e, msg) %%% new, an untrusted folder: its claude left at the trust prompt at once, nothing answered, logged %%% new_session
+asc/cli.py %%%         out(f"waiting: {msg}")⏎    return 0 %%%         out(f"waiting: {msg}")⏎    return 1 %%% new, an untrusted folder: its claude left at the trust prompt at once, nothing answered, logged %%% new_session
 asc/cli.py %%% ["awaiting_trust"] = {"since" %%% ["awaiting_trust_"] = {"since" %%% new, an untrusted folder: marked waiting for trust, with its start's mode and rc %%% new_session
 asc/cli.py %%% "mode": mode, "rc": rc, %%% "mode": "auto", "rc": rc, %%% new, an untrusted folder: marked waiting for trust, with its start's mode and rc %%% new_session
 asc/cli.py %%% "mode": mode, "rc": rc, %%% "mode": mode, "rc": True, %%% new, an untrusted folder: marked waiting for trust, with its start's mode and rc %%% new_session
-asc/cli.py %%%     if up and awaiting(e):⏎        return "waiting for trust", None %%%     if False:⏎        return "waiting for trust", None %%% new, an untrusted folder: marked waiting for trust, with its start's mode and rc %%% new_session
+asc/cli.py %%%     if up and awaiting(e):  # %%%     if False:  # %%% new, an untrusted folder: marked waiting for trust, with its start's mode and rc %%% new_session
 asc/watch.py %%%                 elif e["tmux"] in up and cli.awaiting(e): %%%                 elif False: %%% watch: a claude at the trust prompt is not an end, its mark kept %%% trust_watch
-asc/cli.py %%%     if not ps or len(ps) != 1 or live_in(e, lv): %%%     if not ps or live_in(e, lv): %%% trust refused: its session not that one pane, nothing answered %%% new_session
+asc/cli.py %%%     if not ps or len(ps) != 1 or live_in(e, lv):⏎        return None %%%     if not ps or live_in(e, lv):⏎        return None %%% trust refused: its session not that one pane, nothing answered %%% new_session
 asc/cli.py %%%     if not awaiting(e):⏎        return None %%%     if False:⏎        return None %%% trust refused: a prompt that no start of asctl's left (not marked), nothing answered %%% new_session
 asc/cli.py %%%     events.log("trusted", e, f"answered %%%     None and events.log("trusted", e, f"answered %%% trust: the prompt answered for its folder, its claude up, logged %%% new_session
 asc/cli.py %%%             registry.find(data, e["id4"]).pop("awaiting_trust", None) %%%             registry.find(data, e["id4"]).get("awaiting_trust", None) %%% trust: the mark gone once its claude is up %%% new_session
-asc/cli.py %%%     waiting = up and not s and at_trust_prompt(e, lv) is not None %%%     waiting = False %%% off of a claude at the trust prompt: closed without --force, the mark gone, nothing trusted %%% new_session
+asc/cli.py %%%     waiting = up and not s and at_start_prompt(e, lv) %%%     waiting = False %%% off of a claude at the trust prompt: closed without --force, the mark gone, nothing trusted %%% new_session
 asc/cli.py %%%         x.pop("awaiting_trust", None) %%%         x.get("awaiting_trust", None) %%% off of a claude at the trust prompt: closed without --force, the mark gone, nothing trusted %%% new_session
-asc/watch.py %%%     if e.get("awaiting_trust") is not None and _set( %%%     if False and _set( %%% watch: a trust prompt answered in its pane: the mark dropped, logged %%% trust_watch
+asc/watch.py %%%     if m is not None and _set( %%%     if False and _set( %%% watch: a trust prompt answered in its pane: the mark dropped, logged %%% trust_watch
 asc/cli.py %%%     if not isinstance(m, dict) or started_exit(e): %%%     if not isinstance(m, dict): %%% a claude at the trust prompt that ended (No, in its pane): ended, not waiting %%% new_session
 asc/cli.py %%%         e.pop("awaiting_trust", None)⏎    mode, rc %%%         e.get("awaiting_trust", None)⏎    mode, rc %%% on: a start drops the mark of the one before %%% new_session
 asc/cli.py %%%     return rest is not None and [l for l in rest if l.startswith("❯")] == [YES] %%%     return YES in screen %%% trust: the prompt answered yes (Down, check, Enter), its claude up %%% main
@@ -252,7 +252,7 @@ asc/cli.py %%%     registry.check_path(real)  # a link %%%     pass  # a link %%
 asc/cli.py %%% p["pane_id"] == m.get("pane") and p["pane_pid"] == m.get("pane_pid") %%% p["pane_id"] == m.get("pane") %%% trust refused: the mark of another pane (a session of the same name made since), nothing answered %%% new_session
 asc/cli.py %%% and folder == cwd) %%% and cwd in folder) %%% trust refused: a prompt naming another folder (its own path the start of it), nothing answered %%% new_session
 asc/cli.py %%%     if not ok:⏎        raise RegistryError(f"asctl trusts only %%%     if False:⏎        raise RegistryError(f"asctl trusts only %%% trust refused: a folder others can write to, nothing answered %%% new_session
-asc/cli.py %%%  and not ps[0]["in_mode"] else None %%%  else None %%% trust refused: its pane in copy mode, nothing answered %%% new_session
+asc/cli.py %%% e["cwd"]) and not ps[0]["in_mode"] else None %%% e["cwd"]) else None %%% trust refused: its pane in copy mode, nothing answered %%% new_session
 asc/tmuxctl.py %%% r"no server running on |error connecting %%% r"error connecting %%% list: a socket that refuses is no server %%% tmux_silent
 asc/tmuxctl.py %%% |error connecting to .* \(No such file or directory\)$" %%% " %%% list works with nothing set up %%% no_tmux_server
 asc/tmuxctl.py %%%     if _no_server(r):⏎        return None⏎    raise no_answer(r) %%%     return None %%% tmuxctl: each reader raises NoAnswer when tmux does not answer %%% tmux_silent
@@ -265,3 +265,12 @@ asc/watch.py %%%         if st["tmux"] != str(x):  # said once, until tmux answe
 asc/watch.py %%%     st["tmux"] = "" %%%     pass %%% watch: said again once tmux answered in between %%% tmux_silent
 asc/watch.py %%% "tmux": s.get("tmux") if isinstance(s.get("tmux"), str) else "" %%% "tmux": "" %%% watch: tmux not answering: nothing done, said once %%% tmux_silent
 asc/cli.py %%%     a.add_argument("--name", required=True) %%%     a.add_argument("--name") %%% new refused: no name (never made up from the folder) %%% new_session
+asc/cli.py %%%         if name is not None and name not in said: %%%         if False: %%% on: Claude Code's MCP prompt for a server of .mcp.json: continued without it, its claude up, logged %%% mcp_prompt
+asc/cli.py %%%     events.log("mcp", e, %%%     None and events.log("mcp", e, %%% on: Claude Code's MCP prompt for a server of .mcp.json: continued without it, its claude up, logged %%% mcp_prompt
+asc/cli.py %%%     if marked != [MCP_NO] or  %%%     if  %%% on: an MCP prompt with another choice selected: left, nothing pressed (the selection never moved) %%% mcp_prompt
+asc/cli.py %%%     return name if name in mcp_servers(cwd) else None %%%     return name %%% on: an MCP prompt for a server .mcp.json does not declare: left, named, nothing pressed %%% mcp_prompt
+asc/cli.py %%%  or st.st_size > MCP_MAX: %%% : %%% mcp_servers: .mcp.json read; a FIFO never waited on, one over 1 MB or too deep not read %%% mcp_prompt
+asc/cli.py %%% ("waiting for trust" if trust_prompt(tmuxctl.capture(e["tmux"]), e["cwd"]) else "waiting at a prompt") %%% ("waiting for trust") %%% on: an MCP prompt for a server .mcp.json does not declare: left, named, nothing pressed %%% mcp_prompt
+asc/cli.py %%%                                                            "prompt": x.title} %%%                                                            } %%% on: an MCP prompt for a server .mcp.json does not declare: left, named, nothing pressed %%% mcp_prompt
+asc/cli.py %%%         return _left_waiting(e, mode, rc, x, True) %%%         raise %%% trust, then another prompt: trusted, left at it, named (not "waiting for trust") %%% mcp_prompt
+asc/watch.py %%%         if p == "trust": %%%         if True: %%% watch: another prompt answered in its pane: the mark dropped, logged %%% mcp_prompt

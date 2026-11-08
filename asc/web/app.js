@@ -115,6 +115,10 @@ function look(e) {
     why: `Claude was ended by a signal (${code}); its tmux session is still up. Turn it on to start claude again.` };
   if (st === "waiting for trust") return { group: "attention", dot: "wait", label: "Waiting for trust",
     why: `Claude Code asks whether to trust ${tilde(e.cwd)}. Trust folder lets claude start there; Off closes it.` };
+  if (st === "waiting at a prompt") return { group: "attention", dot: "wait", label: "Waiting at a prompt",
+    why: (e.prompt ? `Claude Code asks: “${e.prompt}”. Answer it in its pane`
+                   : "Its claude has not come up: Claude Code may ask something in its pane")
+         + ` (tmux attach -t =${e.tmux}); Off closes it.` };
   if (st.startsWith("tmux up")) return { group: "attention", dot: "wait", label: "Claude ended",
     why: `Claude ended${code ? " (exit " + code + ")" : ""}; its tmux session is still up.` };
   const boot = S && S.boot ? S.boot.todo : [];
@@ -517,7 +521,8 @@ function kv(pairs) {
 const EV_KIND = { on: "Turned on", off: "Turned off", restart: "Restarted", restarted: "Restarted after an out-of-memory kill",
   ended: "Claude ended", refused: "Refused", failed: "Failed", followed: "Followed", rename: "Renamed", resurrect: "Resurrect",
   rc: "Remote control", fav: "Favorited", mode: "Permissions", waiting: "Waiting", duplicate: "Two claudes", setting: "Setting",
-  new: "Created", trusted: "Folder trusted", untrusted: "Waiting for trust" };
+  new: "Created", trusted: "Folder trusted", untrusted: "Waiting for trust", mcp: "MCP server not used",
+  prompt: "Waiting at a prompt" };
 const EV_BY = { cli: "asctl", page: "page", watch: "watcher", boot: "boot" };
 const UUID_G = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 function evLabel(x) {
@@ -531,6 +536,10 @@ function evLabel(x) {
     const m = t.match(/^renamed(?: to|:) ([a-z0-9-]+?)(?:-\d{4})?(?:[;,. ]|$)/);
     return "Renamed" + (m ? " to " + m[1] : "");
   }
+  if (x.kind === "mcp") {
+    const m = t.match(/ MCP server (.+?) of /);
+    return m ? `MCP server ${m[1]} not used` : EV_KIND.mcp;
+  }
   return EV_KIND[x.kind] || x.kind;
 }
 // The why of a refusal, a failure or a wait, short: its prefixes (on:, boot:, NAME-ID:) and
@@ -543,7 +552,7 @@ function evDetail(x) {
     return /chose it at start/.test(t) ? "Claude started in another conversation" : "A branch, a rewind, /clear or /resume inside claude";
   }
   const named = x.kind === "rc" && !/: rc (on|off)\b/.test(t);  // its name not sent to claude.ai, and why
-  if (!named && !["refused", "failed", "waiting", "ended", "restarted", "duplicate", "mode"].includes(x.kind)) return "";
+  if (!named && !["refused", "failed", "waiting", "ended", "restarted", "duplicate", "mode", "prompt"].includes(x.kind)) return "";
   if (x.kind === "ended") t = t.split(";")[0].replace(/^claude ended, /, "");
   t = t.replace(/^(?:(?:boot|watch|on|off|rename|rc|resurrect|mode|forget|restart|fav|new|note|start again after exit \d+)(?: [\w.-]+)?: |[a-z0-9][a-z0-9-]*-\d{4}: )+/, "");
   t = t.replace(/^\d{4} is being started or stopped by another asctl; try again$/, "busy with another start or stop");
@@ -614,13 +623,14 @@ function favSheet(e) {
   // its claude outside its tmux session: Off reaches only a background session (Claude Code's
   // own stop), and only when idle; Restart in tmux moves any idle one in
   const o = e.outside, bg = o && o.how === "background";
-  // its claude at Claude Code's trust prompt: its tmux session is up, so the power button turns it off
-  const waiting = e.state === "waiting for trust", up = on || waiting;
+  // its claude at a prompt of Claude Code's (trust, or another): its tmux session is up, so the power button turns it off
+  const trust = e.state === "waiting for trust", waiting = trust || e.state === "waiting at a prompt", up = on || waiting;
   const unknown = e.state === "unknown";  // tmux did not answer: neither on nor off is known
   const pwb = btn("", "pw " + (up ? "on" : "off"), async () => {
     if (up) {
       if (!await ask({ title: `Turn ${e.tmux} off?`, ok: "Turn off", danger: true,
-        text: waiting ? "Its claude, still at the trust prompt, closes. Nothing is trusted."
+        text: trust ? "Its claude, still at the trust prompt, closes. Nothing is trusted."
+            : waiting ? "Its claude, still at Claude Code's prompt, closes. Nothing is answered."
             : bg ? "Its background session stops (claude stop). The conversation is kept." : "What runs in its tmux session ends." })) return;
       await act({ action: "off", ...ref });
     } else {
@@ -632,7 +642,7 @@ function favSheet(e) {
   pwb.title = unknown ? "tmux did not answer: whether it runs is not known" : o && !(bg && !o.busy) ? "Runs outside its tmux session: restart it in tmux, or end it there" : up ? "Turn off" : "Turn on";
   out.push(kids(el("div", null, "btns"), pwb, rcb));  // the power button tells on or off
   if (l.why) out.push(el("div", l.why, "warn " + (l.dot === "bad" ? "bad" : "")));
-  if (waiting) out.push(kids(el("div", null, "acts"), btn("Trust folder", "danger", () => trustFolder(e), wait)));
+  if (trust) out.push(kids(el("div", null, "acts"), btn("Trust folder", "danger", () => trustFolder(e), wait)));
   if (o && o.busy) out.push(el("div", "Restart in tmux once it is idle: " + o.busy.replace(/^its claude is /, "it is ") + ".", "warn"));
   if (o && !o.busy) out.push(kids(el("div", null, "acts"), btn("Restart in tmux", "p", async () => {
     if (!await ask({ title: `Restart ${e.tmux} in tmux?`, ok: "Restart in tmux",

@@ -130,6 +130,14 @@ asctl forget 0421
 asctl events 0421           # what happened to it (on, off, rename, refused, ended, ...): its last 200
 ```
 
+MCP servers are off first: when a start meets Claude Code's prompt for a new server of the
+folder's `.mcp.json`, asctl answers "Continue without using this MCP server" (Enter only, when that
+choice is already the one selected; logged). Claude Code keeps that choice for the project; `/mcp`
+in claude turns the server on. Any other prompt at start (Claude Code's prompt for several new
+servers at once among them) is not answered: the start leaves its claude waiting there
+(`asctl list`: "waiting at a prompt"; the page also says what it asks); answer it in its pane
+(`tmux attach -t =NAME`), or Off closes it.
+
 Every action is logged in `~/.local/state/agent-session-control/events.jsonl` (0600; one JSON
 line each: time, who (cli, page, watch, boot), what, text). A refused action is logged as
 `refused`, one that went wrong after changing something as `failed`. Each favorite keeps its
@@ -215,6 +223,7 @@ not run for 5 min; Settings has the out-of-memory auto-restart switch. New sessi
 favorite from its name and a folder pasted by path (`asctl new`), in auto mode. A claude that Claude Code asks whether to
 trust its folder waits at that prompt, its card "Waiting for trust": Trust folder, after the
 page's own warning, sends asctl only which favorite (asctl trust answers for the folder it has).
+One that Claude Code asks something else at start shows "Waiting at a prompt" and what it asks.
 When tmux does not answer (a hang, or a client that cannot reach its server), asctl never takes
 that for "no server": the page says "tmux did not answer: ...", every card "Unknown" and its
 power button off; On, new, boot and asctl tmux-server refuse (none starts a server), and the

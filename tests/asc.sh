@@ -564,7 +564,7 @@ untrust() { grep -vxF "$HOME/fresh" "$HOME/fake-trusted" > "$T/ft"; cp "$T/ft" "
 asctl off "$id3n" --force >/dev/null; untrust
 out=$(asctl on "$id3n"); seen "^waiting: " <<<"$out" || stop "on of a favorite in a folder not trusted waits at the prompt" "$out"
 asctl off "$id3n" >/dev/null && ! tm has-session -t "=fresh-$id3n" 2>/dev/null && [ "$(jqe ".entries[\"$id3n\"].awaiting_trust")" = null ] \
-	&& last off | seen "its claude closed at the trust prompt, not answered" && ! seen -xF "$HOME/fresh" "$HOME/fake-trusted" \
+	&& last off | seen "its claude closed at Claude Code's prompt, not answered" && ! seen -xF "$HOME/fresh" "$HOME/fake-trusted" \
 	&& ok "off of a claude at the trust prompt: closed without --force, the mark gone, nothing trusted" || bad "off of a claude at the trust prompt: closed without --force, the mark gone, nothing trusted" "off: $(last off) / $(jqe ".entries[\"$id3n\"].awaiting_trust")"
 # No at the prompt, in its pane: its claude ended, not waiting any more
 out=$(asctl on "$id3n"); seen "^waiting: " <<<"$out" || stop "on of a favorite in a folder not trusted waits at the prompt, again" "$out"
@@ -1805,6 +1805,79 @@ rm "$F2/environment"
 # "server exited unexpectedly"): a socket that hangs up on each client says just that. It is never
 # taken for "no server": nothing starts one, nothing acts, and what is not known is said.
 # shellcheck disable=SC2329  # helpers run only through poll
+case_mcp_prompt() {
+server_up
+echo "== Claude Code's MCP prompt at start: continued without; any other prompt left, named"
+mkdir -p "$HOME/mcpa" "$HOME/mcpb" "$HOME/mcpc"
+printf '%s\n' "$HOME/mcpa" >> "$HOME/fake-trusted"
+for d in mcpa mcpb mcpc; do printf '{"mcpServers":{"supa":{"command":"x"}}}\n' > "$HOME/$d/.mcp.json"; done
+echo supa > "$HOME/fake-mcp"
+mid() { jq -r --arg c "$1" '[.entries[] | select(.cwd == $c) | .id4] | last // empty' "$REG"; }
+mkeys() { grep -c ' mcp: ' "$HOME/claude-args.log"; }
+k0=$(mkeys); out=$(asctl new "$HOME/mcpa" --name mcpa); ida=$(mid "$HOME/mcpa")
+[ -n "$ida" ] && claude_now "mcpa-$ida" >/dev/null && [ "$(mkeys)" = $((k0 + 1)) ] && grep ' mcp: ' "$HOME/claude-args.log" | tail -1 | seen ' mcp: 2$' \
+	&& last mcp | seen "MCP server supa of $HOME/mcpa/.mcp.json: continued without it" && asctl list | seen -E "^$ida  mcpa-$ida +on " \
+	&& ok "on: Claude Code's MCP prompt for a server of .mcp.json: continued without it, its claude up, logged" || bad "on: Claude Code's MCP prompt for a server of .mcp.json: continued without it, its claude up, logged" "new: $out / $(last mcp) / $(grep ' mcp: ' "$HOME/claude-args.log")"
+# again with the prompt shown each start (as for a new server): one way or another, never answered
+again() { asctl off "$ida" --force >/dev/null; grep -vxF "$HOME/mcpa" "$HOME/fake-mcp-done" > "$T/md"; cp "$T/md" "$HOME/fake-mcp-done"; k0=$(mkeys); out=$(asctl on "$ida"); }
+left() {  # $1: what Claude Code asks; left at it, nothing pressed, marked, logged, listed
+	seen -xF "waiting: mcpa-$ida: its claude waits: Claude Code asks: '$1'; answer it in its pane (tmux attach -t =mcpa-$ida); Off closes it" <<<"$out" \
+		&& [ "$(mkeys)" = "$k0" ] && ! claude_now "mcpa-$ida" >/dev/null && [ "$(jqe ".entries[\"$ida\"].awaiting_trust.prompt")" = "$1" ] \
+		&& last prompt | seen -F "Claude Code asks: '$1'" && asctl list | seen -E "^$ida  mcpa-$ida +waiting at a prompt "; }
+echo other > "$HOME/fake-mcp"; again; echo supa > "$HOME/fake-mcp"
+left "New MCP server found in this project: other" && ok "on: an MCP prompt for a server .mcp.json does not declare: left, named, nothing pressed" || bad "on: an MCP prompt for a server .mcp.json does not declare: left, named, nothing pressed" "$out / $(mkeys) / $(last prompt) / $(asctl list)"
+endsof() { jq -s --arg i "$ida" '[.[] | select(.kind == "ended" and .id4 == $i)] | length' "$SD/events.jsonl"; }
+ne=$(endsof); watch
+[ "$(endsof)" = "$ne" ] && [ "$(jqe ".entries[\"$ida\"].awaiting_trust.prompt")" = "New MCP server found in this project: other" ] \
+	&& ok "watch: a claude at another prompt of Claude Code's is not an end, its mark kept" || bad "watch: a claude at another prompt of Claude Code's is not an end, its mark kept" "watch: $(last ended) / $(jqe ".entries[\"$ida\"].awaiting_trust")"
+asctl off "$ida" >/dev/null && ! tm has-session -t "=mcpa-$ida" 2>/dev/null && [ "$(jqe ".entries[\"$ida\"].awaiting_trust")" = null ] \
+	&& last off | seen "its claude closed at Claude Code's prompt, not answered" \
+	&& ok "off of a claude at another prompt: closed without --force, the mark gone" || bad "off of a claude at another prompt: closed without --force, the mark gone" "off: $(last off) / $(jqe ".entries[\"$ida\"].awaiting_trust")"
+echo 0 > "$HOME/fake-mcp-sel"; again; rm -f "$HOME/fake-mcp-sel"
+left "New MCP server found in this project: supa" && ok "on: an MCP prompt with another choice selected: left, nothing pressed (the selection never moved)" || bad "on: an MCP prompt with another choice selected: left, nothing pressed (the selection never moved)" "$out / $(mkeys) / $(asctl list)"
+mv "$HOME/mcpa/.mcp.json" "$HOME/mcpa/mcp.away"; again; mv "$HOME/mcpa/mcp.away" "$HOME/mcpa/.mcp.json"
+left "New MCP server found in this project: supa" && ok "on: an MCP prompt in a folder with no .mcp.json: left, nothing pressed" || bad "on: an MCP prompt in a folder with no .mcp.json: left, nothing pressed" "$out / $(mkeys)"
+touch "$HOME/fake-mcp-many"; again; rm -f "$HOME/fake-mcp-many"
+left "2 new MCP servers found in this project" && ok "on: Claude Code's prompt for several new MCP servers: left, named, nothing pressed" || bad "on: Claude Code's prompt for several new MCP servers: left, named, nothing pressed" "$out / $(mkeys) / $(asctl list)"
+tm send-keys -t "=mcpa-$ida:" Enter  # answered by hand in its pane
+claude_in "mcpa-$ida" >/dev/null || stop "its claude up after the MCP prompt was answered by hand"
+watch
+[ "$(jqe ".entries[\"$ida\"].awaiting_trust")" = null ] && last on | seen -F "came up past Claude Code's prompt '2 new MCP servers found in this project', answered in its pane (not by asctl)" \
+	&& ok "watch: another prompt answered in its pane: the mark dropped, logged" || bad "watch: another prompt answered in its pane: the mark dropped, logged" "watch: $(jqe ".entries[\"$ida\"].awaiting_trust") / $(last on)"
+echo "== a folder not trusted yet, with an MCP server: trust, then the MCP prompt"
+out=$(asctl new "$HOME/mcpb" --name mcpb); idb=$(mid "$HOME/mcpb")
+asctl list | seen -E "^$idb  mcpb-$idb +waiting for trust " || stop "a new favorite waiting for trust" "$out / $(asctl list)"
+k0=$(mkeys); asctl trust "$idb" >/dev/null && claude_now "mcpb-$idb" >/dev/null && [ "$(mkeys)" = $((k0 + 1)) ] \
+	&& last mcp | seen "MCP server supa of $HOME/mcpb/.mcp.json: continued without it" && [ "$(jqe ".entries[\"$idb\"].awaiting_trust")" = null ] \
+	&& ok "trust, then Claude Code's MCP prompt: continued without, its claude up, the mark gone" || bad "trust, then Claude Code's MCP prompt: continued without, its claude up, the mark gone" "trust: $(last mcp) / $(last failed) / $(asctl list)"
+touch "$HOME/fake-mcp-many"
+out=$(asctl new "$HOME/mcpc" --name mcpc); idc=$(mid "$HOME/mcpc")
+asctl list | seen -E "^$idc  mcpc-$idc +waiting for trust " || stop "another new favorite waiting for trust" "$out / $(asctl list)"
+k0=$(mkeys); out=$(asctl trust "$idc"); rc=$?; rm -f "$HOME/fake-mcp-many"
+[ $rc = 0 ] && seen -F "waiting: mcpc-$idc: its claude waits: Claude Code asks: '2 new MCP servers found in this project'" <<<"$out" \
+	&& seen -xF "$HOME/mcpc" "$HOME/fake-trusted" && [ "$(mkeys)" = "$k0" ] && asctl list | seen -E "^$idc  mcpc-$idc +waiting at a prompt " \
+	&& [ "$(jqe ".entries[\"$idc\"].awaiting_trust.prompt")" = "2 new MCP servers found in this project" ] \
+	&& ok "trust, then another prompt: trusted, left at it, named (not \"waiting for trust\")" || bad "trust, then another prompt: trusted, left at it, named (not \"waiting for trust\")" "trust $rc: $out / $(asctl list)"
+out=$(errof trust "$idc")
+seen "does not show in 'mcpc-$idc'" <<<"$out" && ok "trust refused at another prompt: nothing answered" || bad "trust refused at another prompt: nothing answered" "trust again: $out"
+# what is read as Claude Code's MCP prompt, and .mcp.json, from screens and files
+mp() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import cli
+s = sys.stdin.read(); print(cli.mcp_prompt(s, sys.argv[2]), "|", cli.prompt_title(s))' "$REPO" "$1"; }
+scr() { printf '%s\n' "────────" "New MCP server found in this project: supa" "MCP servers may execute code." "${1:-  Use this MCP server}" \
+	"  Use this and all future MCP servers in this project" "${2:-❯ Continue without using this MCP server}" "" "Enter to confirm · Esc to cancel" "${3:-}"; }
+[ "$(scr | mp "$HOME/mcpa")" = "supa | New MCP server found in this project: supa" ] && [ "$(scr "❯ Use this MCP server" | mp "$HOME/mcpa")" = "None | New MCP server found in this project: supa" ] \
+	&& [ "$(scr "" "" " > quoted above the box" | mp "$HOME/mcpa")" = "None | " ] && [ "$(scr | mp "$HOME/mcpb/nothing")" = "None | New MCP server found in this project: supa" ] \
+	&& ok "mcp_prompt: only the prompt as the last lines, Continue without the one selected, the server one of .mcp.json's" || bad "mcp_prompt: only the prompt as the last lines, Continue without the one selected, the server one of .mcp.json's" "$(scr | mp "$HOME/mcpa") / $(scr "❯ Use this MCP server" | mp "$HOME/mcpa") / $(scr "" "" " > quoted" | mp "$HOME/mcpa")"
+mkdir -p "$HOME/mcpf" "$HOME/mcpg" "$HOME/mcph"; mkfifo "$HOME/mcpf/.mcp.json"
+printf '{"mcpServers":{"supa":{}}}' > "$HOME/mcpg/.mcp.json"; head -c $((1 << 20)) /dev/zero | tr '\0' ' ' >> "$HOME/mcpg/.mcp.json"
+printf '[%.0s' $(seq 1 5000) > "$HOME/mcph/.mcp.json"
+ms() { timeout 5 python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import cli; print(sorted(cli.mcp_servers(sys.argv[2])))' "$REPO" "$1"; }
+[ "$(ms "$HOME/mcpa")" = "['supa']" ] && [ "$(ms "$HOME/mcpf")" = "[]" ] && [ "$(ms "$HOME/mcpg")" = "[]" ] && [ "$(ms "$HOME/mcph")" = "[]" ] \
+	&& ok "mcp_servers: .mcp.json read; a FIFO never waited on, one over 1 MB or too deep not read" || bad "mcp_servers: .mcp.json read; a FIFO never waited on, one over 1 MB or too deep not read" "$(ms "$HOME/mcpa") / $(ms "$HOME/mcpf") / $(ms "$HOME/mcpg") / $(ms "$HOME/mcph")"
+rm -f "$HOME/fake-mcp" "$HOME/fake-mcp-done"
+for x in "$ida" "$idb" "$idc"; do asctl off "$x" --force >/dev/null; asctl forget "$x" >/dev/null; done
+}
+
 case_tmux_silent() {
 echo "== a tmux that does not answer"
 server_up
@@ -1822,6 +1895,7 @@ QS="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$Q" QS2="${TMUX_TMPDIR:-/tmp}/tmux-$(id -
 python3 -I -c 'import socket, sys
 s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.listen(8)
 while True: s.accept()[0].close()' "$QS" & qp=$!
+# shellcheck disable=SC2329  # run only through poll
 silent_up() { [ -S "$QS" ]; }
 poll 5 silent_up || stop "a tmux socket that hangs up"
 S1=cccccccc-0000-4000-8000-000000000001
@@ -1880,7 +1954,7 @@ kill -CONT "$srv"
 asctl forget "$idq" >/dev/null
 }
 
-run_cases asc no_tmux_server main shared_stale guards on_gates new_session rc_now rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot asctl_setup trust_watch tmux_silent
+run_cases asc no_tmux_server main shared_stale guards on_gates new_session rc_now rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot asctl_setup trust_watch mcp_prompt tmux_silent
 
 echo "asc: $pass passed, $fail failed"
 [ "$fail" = 0 ]
