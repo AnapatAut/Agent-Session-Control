@@ -95,8 +95,9 @@ check("unknown (tmux did not answer): needs attention, says nothing is changed",
     && l.why === "tmux did not answer, so whether it runs is not known. Nothing is changed until tmux answers."; })()`);
 check("new, trusted, untrusted: in words",
   `evLabel({ kind: "new" }) === "Created" && evLabel({ kind: "trusted" }) === "Folder trusted" && evLabel({ kind: "untrusted" }) === "Waiting for trust"`);
-check("MCP server not used, another prompt: in words, the server named",
-  `evLabel({ kind: "mcp", text: "Claude Code asked whether to use MCP server supa of ${HOME}/x/.mcp.json: continued without it" }) === "MCP server supa not used"
+check("MCP server(s) not used, another prompt: in words, the servers named",
+  `evLabel({ kind: "mcp", text: "Claude Code asked whether to use MCP server supa of ${HOME}/x/.mcp.json: not used (Esc)" }) === "MCP server supa not used"
+    && evLabel({ kind: "mcp", text: "Claude Code asked whether to use MCP servers supa, beta of ${HOME}/x/.mcp.json: none used" }) === "MCP servers supa, beta not used"
     && evLabel({ kind: "mcp", text: "" }) === "MCP server not used" && evLabel({ kind: "prompt" }) === "Waiting at a prompt"`);
 
 // act and Trust folder themselves, with a fetch that records what is sent and the confirm

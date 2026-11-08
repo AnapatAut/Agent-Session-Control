@@ -52,6 +52,7 @@ import datetime
 import glob
 import json
 import os
+import re
 import signal
 import stat
 import subprocess
@@ -449,7 +450,7 @@ def cmd_new(args):
     # all or nothing: a new favorite whose claude did not come up goes again, with its session
     with registry.entry_lock(id4, wait=True):
         try:
-            r = _on(id4, args.force_memory)
+            r = _on(id4, args.force_memory, new=True)
         except BaseException:
             _drop_new(e, "its start failed")
             raise
@@ -498,11 +499,12 @@ def trust_prompt(screen, cwd):
 
 
 def _dialog(screen):
-    """The lines of the dialog Claude Code shows as the last lines on screen (its footer, "Enter to
-    confirm ...", the last line), from the line after the last rule above it, within the last 20
-    lines; else None. Lines stripped, the empty ones left out."""
+    """The lines of the dialog Claude Code shows as the last lines on screen (its footer the last
+    line: "Enter to confirm ...", or one that says what Esc does, as "Space to select · Esc to reject
+    all"), from the line after the last rule above it, within the last 20 lines; else None. Lines
+    stripped, the empty ones left out."""
     lines = [l.strip() for l in screen.splitlines() if l.strip()][-20:]
-    if not lines or "Enter to confirm" not in lines[-1]:
+    if not lines or not any(f in lines[-1] for f in ("Enter to confirm", "Esc to ")):
         return None
     r = next((k for k in range(len(lines) - 1, -1, -1) if set(lines[k]) == {"─"}), -1)
     return lines[r + 1:] if len(lines) - r > 2 else None  # a title and the footer at least
@@ -516,9 +518,17 @@ def prompt_title(screen):
 
 
 MCP_MAX = 1 << 20
+# Claude Code's prompts for new MCP servers of the project, as 2.1.319 draws them: for one server
+# (Esc: "cancel", the same as "Continue without using this MCP server", wherever the selection is),
 MCP_TITLE = "New MCP server found in this project: "
-MCP_USE = ("Use this MCP server", "Use this and all future MCP servers in this project")
-MCP_NO = "Continue without using this MCP server"
+MCP_CHOICES = ("Use this MCP server", "Use this and all future MCP servers in this project",
+               "Continue without using this MCP server")
+MCP_FOOT = "Enter to confirm · Esc to cancel"
+# and for several (Esc: "reject all", whatever is ticked; Enter would take the ticked ones, all at first)
+MCP_MANY = re.compile(r"([0-9]{1,4}) new MCP servers found in this project")
+MCP_MANY_LINES = ("Select any you wish to enable.", "Enable selected")
+MCP_ROW = re.compile(r"(?:❯ )?\[[✔ ]\] (.+)")
+MCP_MANY_FOOT = "Space to select · Esc to reject all"
 
 
 def mcp_servers(cwd):
@@ -537,20 +547,25 @@ def mcp_servers(cwd):
 
 
 def mcp_prompt(screen, cwd):
-    """The server Claude Code's MCP prompt asks about, when that prompt is the dialog on screen for
-    one server the folder's .mcp.json declares, with "Continue without using this MCP server"
-    selected and only it; else None. Its fixed lines as Claude Code 2.1.319 draws them: the title
-    naming the server, the three choices, the footer. (Its prompt for several servers at once is
-    another dialog: not this.)"""
+    """The servers (a tuple, in screen order) Claude Code's prompt for new MCP servers of the project
+    asks about, when it is the dialog on screen, every line it needs for Esc to mean "none used" in
+    place, each server one the folder's .mcp.json declares; else None. For one: the title naming it,
+    its three choices, its footer. For several: the title's count the rows listed (a list too long
+    to show whole scrolls: not this), no name twice, its fixed lines, its footer."""
     d = _dialog(screen)
-    if not d or not d[0].startswith(MCP_TITLE):
+    if not d:
         return None
-    name = d[0][len(MCP_TITLE):]
-    marked = [l[1:].strip() for l in d if l.startswith("❯")]
-    choices = {l.lstrip("❯").strip() for l in d}
-    if marked != [MCP_NO] or not choices >= {*MCP_USE, MCP_NO} or not d[-1].startswith("Enter to confirm"):
-        return None
-    return name if name in mcp_servers(cwd) else None
+    if d[0].startswith(MCP_TITLE):
+        names = [d[0][len(MCP_TITLE):]]
+        if not {l.lstrip("❯").strip() for l in d} >= set(MCP_CHOICES) or d[-1] != MCP_FOOT:
+            return None
+    else:
+        m = MCP_MANY.fullmatch(d[0])
+        names = [r.group(1) for r in map(MCP_ROW.fullmatch, d) if r]
+        if (not m or int(m.group(1)) != len(names) or len(set(names)) != len(names)
+                or not set(MCP_MANY_LINES) <= set(d) or d[-1] != MCP_MANY_FOOT):
+            return None
+    return tuple(names) if set(names) <= mcp_servers(cwd) else None
 
 
 class AtPrompt(RegistryError):
@@ -580,12 +595,13 @@ def _stopped_at(e, screen, sure):
     return title
 
 
-def wait_started(e, timeout=40):
+def wait_started(e, new=False, timeout=40):
     """Wait for the claude of a just-started session: it, or None. Claude Code's trust prompt for
     the entry's folder is never answered here (only asctl trust, on a person's word): Untrusted
-    once it shows. Its MCP prompt for a server of the folder's .mcp.json is answered "Continue
-    without" (MCP servers off first), once a server (mcp_no). Any other dialog of Claude Code's:
-    AtPrompt. Its claude is left waiting at the prompt it stopped at."""
+    once it shows. new (the start of a favorite just made, or asctl trust after it): its prompt for
+    new MCP servers of the folder's .mcp.json is answered Esc, none used (MCP servers off first),
+    once a prompt (mcp_no); any other start leaves that prompt, as any other dialog of Claude
+    Code's: AtPrompt. Its claude is left waiting at the prompt it stopped at."""
     end = time.time() + timeout
     seen, said = "", set()
     while time.time() < end:
@@ -598,10 +614,10 @@ def wait_started(e, timeout=40):
         if started_exit(e):  # claude ended already
             return None
         screen = tmuxctl.capture(e["tmux"])
-        name = mcp_prompt(screen, e["cwd"])
-        if name is not None and name not in said:
-            said.add(name)
-            mcp_no(e, name)
+        names = mcp_prompt(screen, e["cwd"]) if new else None
+        if names is not None and names not in said:
+            said.add(names)
+            mcp_no(e, names, prompt_title(screen))
             seen = ""
             continue
         prev = seen
@@ -611,27 +627,27 @@ def wait_started(e, timeout=40):
     return None
 
 
-def mcp_no(e, name):
-    """"Continue without using this MCP server" at Claude Code's MCP prompt for server name: Enter
-    only, as it is selected already (the selection is never moved), in the one pane of the entry's
-    session, not in copy mode, the prompt checked again there just before; logged. AtPrompt when
-    that is not so (nothing pressed), or when the prompt still shows 5 s later."""
-    title = MCP_TITLE + name
+def mcp_no(e, names, title):
+    """Esc at Claude Code's prompt titled title for the new MCP servers names: none used. Never
+    Enter, which takes what is selected or ticked. In the one pane of the entry's session, not in
+    copy mode, the prompt checked again there just before; logged. AtPrompt when that is not so
+    (nothing pressed), or when the prompt still shows 5 s later."""
     ps = tmuxctl.panes(e["tmux"], strict=True)
     pane = ps[0]["pane_id"] if ps and len(ps) == 1 and not ps[0]["in_mode"] else None
-    if pane is None or mcp_prompt(tmuxctl.capture_pane(pane), e["cwd"]) != name:
+    if pane is None or mcp_prompt(tmuxctl.capture_pane(pane), e["cwd"]) != names:
         raise AtPrompt(f"Claude Code asks: {title!r} (not answered: its session is not that one pane, the "
                        f"pane is in copy mode, or the prompt changed)", title)
-    tmuxctl.send_pane(pane, "Enter")
-    events.log("mcp", e, f"Claude Code asked whether to use MCP server {name} of {e['cwd']}/.mcp.json: "
-                         f"continued without it (MCP servers off first; /mcp in claude turns it on)")
+    tmuxctl.send_pane(pane, "Escape")
+    many = len(names) > 1
+    events.log("mcp", e, f"Claude Code asked whether to use MCP server{'s' if many else ''} {', '.join(names)} of "
+                         f"{e['cwd']}/.mcp.json: {'none' if many else 'not'} used (Esc; MCP servers off first for a "
+                         f"new favorite; /mcp in claude turns one on)")
     end = time.time() + 5  # the prompt goes once claude has the answer
     while time.time() < end:
-        if mcp_prompt(tmuxctl.capture_pane(pane), e["cwd"]) != name:
+        if mcp_prompt(tmuxctl.capture_pane(pane), e["cwd"]) != names:
             return
         time.sleep(0.25)
-    raise AtPrompt(f"Claude Code asks: {title!r} (still shown 5 s after Continue without: the answer was not "
-                   f"taken)", title)
+    raise AtPrompt(f"Claude Code asks: {title!r} (still shown 5 s after Esc: the answer was not taken)", title)
 
 
 def awaiting(e):
@@ -719,12 +735,13 @@ def _trust(id4):
         time.sleep(0.25)
     mark = e["awaiting_trust"]
     mode, rc = mark.get("mode") if isinstance(mark.get("mode"), str) else "?", mark.get("rc") is True
+    new = mark.get("new") is True  # after a new favorite's start: its MCP prompt answered as at that start
     try:
-        s = wait_started(e)
+        s = wait_started(e, new)
     except Untrusted:
         raise ActionFailed("its trust prompt still shows: the answer was not taken")
     except AtPrompt as x:  # trusted; Claude Code asks something more
-        return _left_waiting(e, mode, rc, x, True)
+        return _left_waiting(e, mode, rc, x, True, new)
     if not s:
         return _not_up(e)
     return _came_up(e, s, mode, rc, False, True)
@@ -760,14 +777,15 @@ def ensure_server():
     return pid
 
 
-def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, resurrect=False):
+def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, resurrect=False, new=False):
     """On, with the entry's lock held. pane, pane_pid: a pane %N of the entry's own tmux session
     whose claude ended, and the PID asctl-wrap left there (the watcher's restart): claude runs
     there again in place of its shell (the session and anyone attached stay), after the same
     checks and pane_free just before. starting: called once nothing can refuse any more.
     resurrect: asctl boot's start (with rc when resurrect is on, as claude_argv says). A claude
     that Claude Code asks whether to trust its folder is left waiting at that prompt, the entry
-    marked (awaiting_trust): asctl trust answers it."""
+    marked (awaiting_trust): asctl trust answers it. new: the start of a favorite just made (asctl
+    new): its prompt for new MCP servers is answered, none used (wait_started)."""
     e = registry.find(registry.load(), id4)
     if pane is not None:
         server = tmuxctl.server_pid()  # a pane to start in: its server, never a new one
@@ -825,24 +843,25 @@ def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, r
             tmuxctl.kill_session(e["tmux"])
         raise ActionFailed("the tmux server ended while starting; nothing was started (it is marked on)")
     try:
-        s = wait_started(e)
+        s = wait_started(e, new)
     except AtPrompt as x:
-        return _left_waiting(e, mode, rc, x, loud)
+        return _left_waiting(e, mode, rc, x, loud, new)
     if not s:
         return _not_up(e)
     return _came_up(e, s, mode, rc, force_memory, loud)
 
 
-def _left_waiting(e, mode, rc, x, loud):
+def _left_waiting(e, mode, rc, x, loud, new):
     """A start whose claude Claude Code keeps at a prompt (x: Untrusted, or another AtPrompt): the
-    entry marked (awaiting_trust) with the start's mode and rc, its pane as started, and the prompt
-    ("trust", or its title), so the watcher leaves it and the page tells; logged; 0."""
+    entry marked (awaiting_trust) with the start's mode and rc, whether it was a new favorite's (new:
+    for asctl trust after it), its pane as started, and the prompt ("trust", or its title), so the
+    watcher leaves it and the page tells; logged; 0."""
     ps = tmuxctl.panes(e["tmux"], strict=True) or []
     p = ps[0] if len(ps) == 1 else {}  # its pane, as started (another since: none, no trust)
     with registry.changing() as data:
         registry.find(data, e["id4"])["awaiting_trust"] = {"since": registry.now(), "mode": mode, "rc": rc,
                                                            "pane": p.get("pane_id"), "pane_pid": p.get("pane_pid"),
-                                                           "prompt": x.title}
+                                                           "prompt": x.title, "new": new}
     if isinstance(x, Untrusted):
         kind, msg = "untrusted", (f"{e['tmux']}: its claude waits: Claude Code asks whether to trust {e['cwd']}, not "
                                   f"answered (Trust folder on the page, or asctl trust {e['id4']}; Off closes it)")

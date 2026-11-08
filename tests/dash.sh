@@ -528,7 +528,7 @@ out=$(post '{"action":"trust","id":"'"$idn"'","tmux":"fresh2-'"$idn"'"}')
 post '{"action":"off","force":true,"id":"'"$idn"'","tmux":"fresh2-'"$idn"'"}' >/dev/null
 post '{"action":"forget","id":"'"$idn"'","tmux":"fresh2-'"$idn"'"}' >/dev/null
 # trusted, then Claude Code asks something asctl does not answer: the card says what
-mkdir -p "$HOME/fresh3"; printf '{"mcpServers":{"supa":{}}}\n' > "$HOME/fresh3/.mcp.json"; echo supa > "$HOME/fake-mcp"; touch "$HOME/fake-mcp-many"
+mkdir -p "$HOME/fresh3"; printf '{"mcpServers":{"supa":{}}}\n' > "$HOME/fresh3/.mcp.json"; printf '%s\n' supa other > "$HOME/fake-mcp-many"  # other: not of .mcp.json, never answered
 post '{"action":"new","name":"fresh3","path":"'"$HOME"'/fresh3"}' >/dev/null
 idp=$(jq -r --arg c "$HOME/fresh3" '.entries[] | select(.cwd == $c) | .id4' "$REG")
 out=$(post '{"action":"trust","id":"'"$idp"'","tmux":"fresh3-'"$idp"'"}'); rm -f "$HOME/fake-mcp" "$HOME/fake-mcp-many"

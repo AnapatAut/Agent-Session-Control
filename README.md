@@ -132,13 +132,15 @@ asctl forget 0421
 asctl events 0421           # what happened to it (on, off, rename, refused, ended, ...): its last 200
 ```
 
-MCP servers are off first: when a start meets Claude Code's prompt for a new server of the
-folder's `.mcp.json`, asctl answers "Continue without using this MCP server" (Enter only, when that
-choice is already the one selected; logged). Claude Code keeps that choice for the project; `/mcp`
-in claude turns the server on. Any other prompt at start (Claude Code's prompt for several new
-servers at once among them) is not answered: the start leaves its claude waiting there
-(`asctl list`: "waiting at a prompt"; the page also says what it asks); answer it in its pane
-(`tmux attach -t =NAME`), or Off closes it.
+MCP servers are off first for a new favorite: when its first start (`asctl new`, or the Trust
+after it) meets Claude Code's prompt for new servers of the folder's `.mcp.json`, one or several,
+asctl presses Esc: none used (never Enter, which takes what is selected or ticked; only when
+every line of the prompt is as Claude Code draws it and each server is one `.mcp.json` declares;
+logged). Claude Code keeps that choice for the project; `/mcp` in claude turns a server on. At any
+other start (On, Restart, the watcher's restart, boot), that prompt (as for a server added since)
+is not answered, as any other prompt at start: the start leaves its claude waiting there (`asctl
+list`: "waiting at a prompt"; the page also says what it asks); answer it in its pane (`tmux
+attach -t =NAME`), or Off closes it.
 
 Every action is logged in `~/.local/state/agent-session-control/events.jsonl` (0600; one JSON
 line each: time, who (cli, page, watch, boot), what, text). A refused action is logged as

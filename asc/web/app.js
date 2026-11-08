@@ -537,8 +537,8 @@ function evLabel(x) {
     return "Renamed" + (m ? " to " + m[1] : "");
   }
   if (x.kind === "mcp") {
-    const m = t.match(/ MCP server (.+?) of /);
-    return m ? `MCP server ${m[1]} not used` : EV_KIND.mcp;
+    const m = t.match(/ MCP (servers?) (.+?) of /);
+    return m ? `MCP ${m[1]} ${m[2]} not used` : EV_KIND.mcp;
   }
   return EV_KIND[x.kind] || x.kind;
 }
