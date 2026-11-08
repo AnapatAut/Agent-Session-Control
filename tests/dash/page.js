@@ -110,11 +110,11 @@ check("new: memory short asks to force it, sent forced only after a yes", `(chai
   ${rec}
   const reply = (b) => b.force_memory ? { ok: true, out: "made" } : { ok: false, error: "memory: 5.0% available, a start needs 20%" };
   ask = async () => false;
-  await act({ action: "new", path: "~/x", mode: "auto", rc: false });
+  await act({ action: "new", name: "x", path: "~/x", rc: false });
   const no = sent.length === 1 && !("force_memory" in sent[0]);
   sent.length = 0;
   ask = async () => true;
-  await act({ action: "new", path: "~/x", mode: "auto", rc: false });
+  await act({ action: "new", name: "x", path: "~/x", rc: false });
   return no && sent.length === 2 && !("force_memory" in sent[0]) && sent[1].force_memory === true && sent[1].path === "~/x";
 }))`);
 Promise.all(later).then(() => process.exit(fail ? 1 : 0));

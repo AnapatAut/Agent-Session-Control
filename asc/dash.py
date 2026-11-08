@@ -421,12 +421,12 @@ def action_argv(a):
         # the folder pasted on the page; asctl new checks it (a folder of the user's own, in the
         # home, not hidden), and never answers Claude Code's trust prompt (the action trust does)
         path = registry.check_path(a.get("path"))
-        argv = ["new"]
-        if a.get("name") not in (None, ""):
-            argv += ["--name", registry.check_name(_text(a["name"]))]
-        if a.get("mode", "auto") not in WEB_MODES:
-            raise RegistryError("from the page the mode can be auto or manual; skip only with asctl new --mode skip")
-        argv += ["--mode", a.get("mode", "auto")]
+        if not isinstance(a.get("name"), str) or not a["name"]:
+            raise RegistryError("new needs name: the session's name")
+        argv = ["new", "--name", registry.check_name(a["name"])]
+        if a.get("mode", "auto") != "auto":  # the page has no mode switch for a new session
+            raise RegistryError("from the page a new session starts in auto mode; another mode with asctl new --mode")
+        argv += ["--mode", "auto"]
         for k in ("rc", "force_memory"):
             if not isinstance(a.get(k, False), bool):
                 raise RegistryError(f"{k} needs true or false")

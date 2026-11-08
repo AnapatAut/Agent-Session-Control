@@ -94,7 +94,6 @@ asc/dash.py %%%         return ["restart", ref, "--outside"] %%%         return 
 asc/past.py %%%     ok = isinstance(x, dict) and all(type(x.get(k)) is int and x[k] >= 0 for k in ("ino", "size", "lines", "seen")) %%%     ok = isinstance(x, dict) %%% odd lengths: lines as a string, none shown %%% notices
 asc/cli.py %%%     print(f"asctl: {msg}", file=sys.stderr, flush=True) %%%     print(f"asctl: {msg}", flush=True) %%% on, a claude that ends at once: refused with its exit, not an unknown error %%% rc
 asc/dash.py %%%         path = registry.check_path(a.get("path")) %%%         path = a.get("path") %%% new: the path must be text %%% actions_new
-asc/dash.py %%%         if a.get("mode", "auto") not in WEB_MODES: %%%         if False: %%% new from the page: mode skip refused %%% actions_new
 asc/dash.py %%%             if not isinstance(a.get(k, False), bool): %%%             if False: %%% new: rc only when it is true ("yes" is not) %%% actions_new
 asc/dash.py %%%         return argv + ["--", path] %%%         return argv + [path] %%% new: a path starting with - stays a path %%% actions_new
 asc/dash.py %%%         return ["trust", ref] %%%         return ["on", ref] %%% trust from the page: the prompt answered for its folder, on, started as new %%% actions_new
@@ -109,3 +108,5 @@ asc/dash.py %%% "tmux_error": tmux_error, %%% "tmux_error": "", %%% state while 
 asc/dash.py %%% "server": None if tmux_error else %%% "server": False if tmux_error else %%% state while tmux hangs: said, not taken for no server, every favorite unknown %%% tmux_hang
 asc/dash.py %%% fav_sids | {s["session_id"] for s in seen} %%% fav_sids | {s["session_id"] for s in lv} %%% past while tmux hangs: a live claude's conversation still not listed %%% tmux_hang
 asc/web/app.js %%%   if (st === "unknown") return %%%   if (false) return %%% page: unknown (tmux did not answer): needs attention, says nothing is changed %%% page
+asc/dash.py %%%         if not isinstance(a.get("name"), str) or not a["name"]: %%%         if False: %%% new: a name is needed %%% actions_new
+asc/dash.py %%%         if a.get("mode", "auto") != "auto":  # the page has no mode switch for a new session %%%         if False:  # the page has no mode switch for a new session %%% new from the page: auto mode only (manual refused) %%% actions_new

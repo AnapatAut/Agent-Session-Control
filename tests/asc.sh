@@ -477,11 +477,13 @@ asctl new "$HOME/proj" --name proj >/dev/null; idn=$(nid "$HOME/proj")
 sn=$(jqe ".entries[\"$idn\"].session_id")
 [ -n "$idn" ] && lastargs | seen -- "--session-id $sn --name proj-$idn --permission-mode auto" && claude_now "proj-$idn" >/dev/null && last new | seen "new session $idn proj-$idn" \
 	&& ok "new: a favorite, its claude up, started as new (--session-id)" || bad "new: a favorite, its claude up, started as new (--session-id)" "new: $idn $(lastargs)"
-asctl new '~/Proj Two' --mode manual --rc >/dev/null; id2n=$(nid "$HOME/Proj Two")
-[ -n "$id2n" ] && claude_now "proj-two-$id2n" >/dev/null && lastargs | seen -- "--name proj-two-$id2n --permission-mode manual --remote-control proj-two-$id2n" \
-	&& ok "new: ~/ taken, named after its folder, its mode and rc" || bad "new: ~/ taken, named after its folder, its mode and rc" "new ~/: $id2n $(lastargs)"
+asctl new '~/Proj Two' --name two --mode manual --rc >/dev/null; id2n=$(nid "$HOME/Proj Two")
+[ -n "$id2n" ] && claude_now "two-$id2n" >/dev/null && lastargs | seen -- "--name two-$id2n --permission-mode manual --remote-control two-$id2n" \
+	&& ok "new: ~/ taken, its name, its mode and rc" || bad "new: ~/ taken, its name, its mode and rc" "new ~/: $id2n $(lastargs)"
 n0=$(jq '.entries | length' "$REG"); s0=$(tm ls -F '#{session_name}' | sort | tr '\n' ' ')
-refused() { out=$(errof new "$@"); seen -- "$want" <<<"$out"; }
+refused() { out=$(errof new --name x "$@"); seen -- "$want" <<<"$out"; }
+out=$(errof new "$HOME/proj")
+seen 'the following arguments are required: --name' <<<"$out" && ok "new refused: no name (never made up from the folder)" || bad "new refused: no name (never made up from the folder)" "no name: $out"
 want="is not an absolute path"; refused proj && ok "new refused: a relative path" || bad "new refused: a relative path" "relative: $out"
 want="is not in your home folder"; refused "$W" && ok "new refused: a folder outside the home" || bad "new refused: a folder outside the home" "outside: $out"
 want="is not in your home folder"; refused "$HOME/link" && ok "new refused: a link in the home to a folder outside it" || bad "new refused: a link in the home to a folder outside it" "link: $out"
@@ -512,7 +514,7 @@ mem 32000000 16000000
 [ "$(jq '.entries | length' "$REG")" = "$n0" ] && [ "$(tm ls -F '#{session_name}' | sort | tr '\n' ' ')" = "$s0" ] \
 	&& ok "new refused: no favorite or tmux session left behind" || bad "new refused: no favorite or tmux session left behind" "left: $(jq -c '[.entries[].tmux]' "$REG") / $(tm ls -F '#{session_name}' | tr '\n' ' ')"
 echo "== new: a folder Claude Code does not trust yet"
-t0=$(date +%s); out=$(asctl new "$HOME/fresh" --mode manual); t1=$(date +%s); id3n=$(nid "$HOME/fresh")
+t0=$(date +%s); out=$(asctl new "$HOME/fresh" --name fresh --mode manual); t1=$(date +%s); id3n=$(nid "$HOME/fresh")
 [ -n "$id3n" ] && [ $((t1 - t0)) -lt 20 ] && seen "^waiting: fresh-$id3n: its claude waits: Claude Code asks whether to trust $HOME/fresh, not answered" <<<"$out" \
 	&& tm has-session -t "=fresh-$id3n" 2>/dev/null && ! claude_now "fresh-$id3n" >/dev/null && ! seen -xF "$HOME/fresh" "$HOME/fake-trusted" \
 	&& last untrusted | seen "whether to trust $HOME/fresh, not answered" \
@@ -1653,7 +1655,7 @@ kill "$lp" 2>/dev/null
 case_trust_watch() {
 server_up
 mkdir -p "$HOME/twait"
-asctl new "$HOME/twait" >/dev/null; idt=$(jq -r --arg c "$HOME/twait" '[.entries[] | select(.cwd == $c) | .id4] | last // empty' "$REG")
+asctl new "$HOME/twait" --name twait >/dev/null; idt=$(jq -r --arg c "$HOME/twait" '[.entries[] | select(.cwd == $c) | .id4] | last // empty' "$REG")
 [ -n "$idt" ] && [ "$(jqe ".entries[\"$idt\"].awaiting_trust.mode")" = auto ] || stop "a new favorite whose claude waits at the trust prompt"
 endsof() { jq -s --arg i "$idt" '[.[] | select(.kind == "ended" and .id4 == $i)] | length' "$SD/events.jsonl"; }
 ne=$(endsof); watch
@@ -1839,7 +1841,7 @@ out=$(q tmux-server 2>&1); r=$?
 [ "$r" = 1 ] && seen 'tmux did not answer' <<<"$out" && ! seen started <<<"$out" \
 	&& ok "tmux-server: no server started over one that does not answer" || bad "tmux-server: no server started over one that does not answer" "tmux-server: $r $out"
 mkdir -p "$HOME/qnew"; n0=$(jqe '.entries | length') e0=$(evn new)
-out=$(q new "$HOME/qnew" 2>&1); r=$?
+out=$(q new "$HOME/qnew" --name qnew 2>&1); r=$?
 [ "$r" = 1 ] && seen 'tmux did not answer' <<<"$out" && [ "$(jqe '.entries | length')" = "$n0" ] && [ "$(evn new)" = "$e0" ] \
 	&& ok "new: refused before any favorite is made" || bad "new: refused before any favorite is made" "new: $r $out / $(jqe '.entries | length') entries, $n0 before / $(last new)"
 # Each tmux reader: "no server" and "no such session" only when tmux says so, else NoAnswer

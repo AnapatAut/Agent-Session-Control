@@ -507,13 +507,15 @@ dash_up
 mkdir -p "$HOME/web" "$HOME/fresh2"; printf '%s\n' "$HOME/web" >> "$HOME/fake-trusted"
 n0=$(state | jq '.favorites | length')
 [ "$(post '{"action":"new","path":5}' | tail -1)" = 400 ] && ok "new: the path must be text" || bad "new: the path must be text" "a number taken as a path"
-[ "$(post '{"action":"new","path":"'"$HOME"'/web","mode":"skip"}' | tail -1)" = 400 ] && ok "new from the page: mode skip refused" || bad "new from the page: mode skip refused" "skip taken from the page"
-[ "$(post '{"action":"new","path":"'"$HOME"'/web","rc":"yes"}' | tail -1)" = 400 ] && ok "new: rc only when it is true (\"yes\" is not)" || bad "new: rc only when it is true (\"yes\" is not)" "rc taken from a non-boolean"
+[ "$(post '{"action":"new","name":"web","path":"'"$HOME"'/web","mode":"manual"}' | tail -1)" = 400 ] && ok "new from the page: auto mode only (manual refused)" || bad "new from the page: auto mode only (manual refused)" "manual taken from the page"
+out=$(post '{"action":"new","path":"'"$HOME"'/web"}')
+[ "$(tail -1 <<<"$out")" = 400 ] && seen "new needs name" <<<"$out" && ok "new: a name is needed" || bad "new: a name is needed" "no name: $out"
+[ "$(post '{"action":"new","name":"web","path":"'"$HOME"'/web","rc":"yes"}' | tail -1)" = 400 ] && ok "new: rc only when it is true (\"yes\" is not)" || bad "new: rc only when it is true (\"yes\" is not)" "rc taken from a non-boolean"
 [ "$(post '{"action":"new","path":"'"$HOME"'/web","name":"Bad Name"}' | tail -1)" = 400 ] && ok "new: a bad name refused" || bad "new: a bad name refused" "a bad name taken"
-out=$(post '{"action":"new","path":"-x"}')
+out=$(post '{"action":"new","name":"x","path":"-x"}')
 [ "$(tail -1 <<<"$out")" = 409 ] && seen 'is not an absolute path' <<<"$out" && ok "new: a path starting with - stays a path" || bad "new: a path starting with - stays a path" "a dash path: $out"
 # trust sent with new is not passed on: its claude waits at the prompt all the same
-out=$(post '{"action":"new","path":"'"$HOME"'/fresh2","trust":true}')
+out=$(post '{"action":"new","name":"fresh2","path":"'"$HOME"'/fresh2","trust":true}')
 idn=$(jq -r --arg c "$HOME/fresh2" '.entries[] | select(.cwd == $c) | .id4' "$REG")
 [ "$(tail -1 <<<"$out")" = 200 ] && [ -n "$idn" ] && seen "waiting: fresh2-$idn: its claude waits: Claude Code asks whether to trust $HOME/fresh2" <<<"$out" \
 	&& state | jq -e --arg i "$idn" '.favorites[] | select(.id4 == $i) | .state == "waiting for trust"' >/dev/null && ! seen -xF "$HOME/fresh2" "$HOME/fake-trusted" \

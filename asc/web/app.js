@@ -713,7 +713,7 @@ function pastSheet(c) {
 }
 
 // --- a new session: a favorite in a folder pasted by path, started at once (asctl new) -------
-const newForm = { path: "", name: "", mode: "auto", rc: false };
+const newForm = { name: "", path: "", rc: false };
 function newSheet() {
   const f = newForm, err = el("div", "", "res err");
   const field = (label, key, hint) => {
@@ -728,26 +728,25 @@ function newSheet() {
     return b;
   };
   return [el("h2", "New session"),
-    el("div", "A new favorite in a folder of yours, started now as a new conversation. Paste its path (pwd). " +
+    el("div", "A new favorite in a folder of yours, started now as a new conversation in auto mode. Paste the folder's path (pwd). " +
               "A folder Claude Code does not trust yet waits for your Trust folder on its card.", "s2"),
+    field("Session name", "name", "my-app"),
     field("Folder", "path", "~/projects/app"),
-    field("Name", "name", "the folder's name"),
     el("span", "SETTINGS", "lab"),
     kids(el("div", null, "opts"),
-      opt("Ask first (manual)", "Off: auto mode, claude decides what needs asking",
-        toggle("Ask first (manual)", () => f.mode === "manual", () => { f.mode = f.mode === "manual" ? "auto" : "manual"; })),
       opt("Remote control", "Reach it from claude.ai and the app",
         toggle("Remote control", () => f.rc, () => { f.rc = !f.rc; }))),
     err,
     kids(el("div", null, "acts"), btn("Create and start", "p", async () => {
       if (pending.has(f.path)) return;  // one already on its way (the sheet closed and opened again)
-      if (!f.path) { err.textContent = "Paste the folder's path first."; return; }
-      if (f.name && !/^[a-z0-9][a-z0-9-]{0,30}$/.test(f.name)) {
+      if (!f.name) { err.textContent = "Give the session a name first."; return; }
+      if (!/^[a-z0-9][a-z0-9-]{0,30}$/.test(f.name)) {
         err.textContent = "Name: a-z, 0-9 and -, starting with a letter or digit, up to 31"; return;
       }
-      const j = await act({ action: "new", path: f.path, mode: f.mode, rc: f.rc, ...(f.name ? { name: f.name } : {}) });
+      if (!f.path) { err.textContent = "Paste the folder's path first."; return; }
+      const j = await act({ action: "new", name: f.name, path: f.path, rc: f.rc });
       if (j.ok) {
-        Object.assign(newForm, { path: "", name: "", mode: "auto", rc: false });
+        Object.assign(newForm, { name: "", path: "", rc: false });
         if (sheetOf && sheetOf.kind === "new") closeSheet();  // not another sheet opened meanwhile
       }
     }))];

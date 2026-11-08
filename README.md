@@ -102,9 +102,11 @@ A claude that ends at once is said in seconds, with its exit code (on stderr: th
 asctl live                  # running claudes: pid, session id, tmux session, folder
 asctl fav 12345 --name das  # favorite one (by pid, session id or pane %N); its tmux session becomes das-0421
 asctl list                  # favorites and their state
-asctl new ~/projects/app    # a new favorite in that folder (in your home, not hidden; it and the
-                            # folders above it to your home yours, writable by no one else),
-                            # started now as a new conversation (--name, --mode, --rc); a claude
+asctl new ~/projects/app --name app
+                            # a new favorite in that folder (in your home, not hidden; it and the
+                            # folders above it to your home yours, writable by no one else), its
+                            # tmux session app-0421, started now as a new conversation (--mode,
+                            # --rc); a claude
                             # that does not come up leaves nothing (no favorite, no tmux session)
 asctl trust 0421            # yes to Claude Code's trust prompt for its folder, where a start left
                             # its claude waiting; asctl never answers that prompt by itself (Off
@@ -210,7 +212,7 @@ its conversation is (past 100,000 lines Claude Code stops sending it to claude.a
 history (its last 200 events, by day, repeats folded). Notices say when asctl boot is bringing
 favorites back after a reboot, when asctl is not set up for the user, and when the watcher has
 not run for 5 min; Settings has the out-of-memory auto-restart switch. New session makes a
-favorite in a folder pasted by path (`asctl new`). A claude that Claude Code asks whether to
+favorite from its name and a folder pasted by path (`asctl new`), in auto mode. A claude that Claude Code asks whether to
 trust its folder waits at that prompt, its card "Waiting for trust": Trust folder, after the
 page's own warning, sends asctl only which favorite (asctl trust answers for the folder it has).
 When tmux does not answer (a hang, or a client that cannot reach its server), asctl never takes

@@ -5,7 +5,7 @@
   asctl fav REF [--name N] [--whole-session]
                                    favorite a running claude (REF: its pid, session id or
                                    tmux pane %N), or a past conversation (REF: its session id)
-  asctl new FOLDER [--name N] [--mode auto|manual|skip] [--rc] [--force-memory]
+  asctl new FOLDER --name N [--mode auto|manual|skip] [--rc] [--force-memory]
                                    a new favorite in FOLDER (a path in your home, ~/ too: not
                                    hidden; it and the folders above it yours, writable by no one
                                    else), started as On does, or nothing left
@@ -425,7 +425,7 @@ def new_folder(path):
 
 def cmd_new(args):
     cwd = new_folder(args.folder)
-    name = registry.check_name(args.name) if args.name else registry.slug(os.path.basename(cwd))
+    name = registry.check_name(args.name)  # the session's name, given: never made up from the folder
     if not args.force_memory:
         why = memory.gate()
         if why:
@@ -1124,7 +1124,7 @@ def main(argv=None):
     a.set_defaults(f=cmd_fav)
     a = sub.add_parser("new")
     a.add_argument("folder")
-    a.add_argument("--name")
+    a.add_argument("--name", required=True)
     a.add_argument("--mode", choices=list(registry.MODES), default="auto")
     a.add_argument("--rc", action="store_true")
     a.add_argument("--force-memory", action="store_true")
