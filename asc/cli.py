@@ -967,12 +967,24 @@ def _off(id4, force, loud=True):
             time.sleep(0.1)
         else:
             out(f"claude {s['pid']} still runs 10 s after SIGTERM; closing its tmux session anyway")
-        ended = f"claude {s['pid']} " + ("ended" if not live.alive(s["pid"], s["proc_start"]) else "still ran after SIGTERM")
+        termed = not live.alive(s["pid"], s["proc_start"])
+    if up:
+        tmuxctl.kill_session(e["tmux"])
+    if s and not termed:
+        # one past its SIGTERM: closing its session hangs it up, which ends a claude too; one that
+        # lives on (stopped, or stuck in the kernel) runs outside tmux: said, never taken for off
+        for _ in range(20):
+            if not live.alive(s["pid"], s["proc_start"]):
+                break
+            time.sleep(0.1)
+        else:
+            raise ActionFailed(f"claude {s['pid']} still runs after SIGTERM and with its tmux session {e['tmux']!r} "
+                               f"closed: it runs on outside tmux (it is marked off; end it by hand)")
+    if s:
+        ended = f"claude {s['pid']} " + ("ended" if termed else "ended once its tmux session closed (not on SIGTERM)")
         if job and live.alive(job["pid"], job["proc_start"]):
             ended += f"; its background job (claude {job['pid']}, session {job['session_id']}) runs on in Claude Code"
             out(ended)
-    if up:
-        tmuxctl.kill_session(e["tmux"])
     events.log("off", e, (ended if s else "its claude closed at Claude Code's prompt, not answered" if waiting
                           else "no claude ran") + (", forced" if force else ""))
     if loud:

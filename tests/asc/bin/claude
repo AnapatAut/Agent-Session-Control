@@ -168,6 +168,10 @@ write() {
 		$$ "$sid" "$cwd" "$name" "$status" "$st" "$bridge" > "$f.tmp" && mv -f "$f.tmp" "$f"
 }
 trap 'rm -f "$f"; [ -z "$task" ] || kill "$task" 2>/dev/null; exit 143' TERM
+# $HOME/fake-deaf: SIGTERM and SIGHUP ignored (as a claude stuck in the kernel, or stopped: neither
+# Off's SIGTERM nor the hangup of its closed session ends it); $HOME/fake-deaf-term: SIGTERM only
+[ ! -e "$HOME/fake-deaf" ] || trap '' TERM HUP
+[ ! -e "$HOME/fake-deaf-term" ] || trap '' TERM
 trap 'rm -f "$f"; exit 0' INT
 rule() { printf '─%.0s' $(seq 1 30); printf '%s\n' "${1:+ $1 ─}"; }
 menu_lines() {

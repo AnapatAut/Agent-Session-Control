@@ -112,6 +112,8 @@ asctl trust 0421            # yes to Claude Code's trust prompt for its folder, 
                             # its claude waiting; asctl never answers that prompt by itself (Off
                             # closes a waiting one)
 asctl off 0421              # refuses while claude works or another pane runs something; --force
+                            # ends it anyway (SIGTERM, then its tmux session closed); a claude
+                            # that lives on through both is a failure, said: it runs outside tmux
 asctl on 0421               # tmux session das-0421, claude --resume <id> --name das-0421
                             # (refused under 20% memory available, or if it would leave under 15%;
                             # --force-memory starts it anyway)

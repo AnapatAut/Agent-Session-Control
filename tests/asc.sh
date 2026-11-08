@@ -1878,6 +1878,33 @@ rm -f "$HOME/fake-mcp" "$HOME/fake-mcp-done"
 for x in "$ida" "$idb" "$idc"; do asctl off "$x" --force >/dev/null; asctl forget "$x" >/dev/null; done
 }
 
+case_off_survivor() {
+server_up
+echo "== off of a claude that SIGTERM does not end"
+mkdir -p "$HOME/deaf"; printf '%s\n' "$HOME/deaf" >> "$HOME/fake-trusted"
+touch "$HOME/fake-deaf-term"  # SIGTERM ignored: the hangup of its closed session ends it
+asctl new "$HOME/deaf" --name deaf >/dev/null; idd=$(jq -r --arg c "$HOME/deaf" '[.entries[] | select(.cwd == $c) | .id4] | last // empty' "$REG")
+pd=$(claude_now "deaf-$idd") || stop "a claude that ignores SIGTERM"
+out=$(asctl off "$idd" 2>&1); rc=$?; rm -f "$HOME/fake-deaf-term"
+[ $rc = 0 ] && seen "claude $pd still runs 10 s after SIGTERM; closing its tmux session anyway" <<<"$out" && seen "^off: deaf-$idd\$" <<<"$out" \
+	&& ! kill -0 "$pd" 2>/dev/null && ! tm has-session -t "=deaf-$idd" 2>/dev/null && last off | seen "claude $pd ended once its tmux session closed (not on SIGTERM)" \
+	&& ok "off: a claude past its SIGTERM that the closed session ends: off, said how it ended" || bad "off: a claude past its SIGTERM that the closed session ends: off, said how it ended" "off $rc: $out / $(last off)"
+touch "$HOME/fake-deaf"  # SIGTERM and SIGHUP ignored: it lives on
+asctl on "$idd" >/dev/null; pd=$(claude_now "deaf-$idd") || stop "a claude that ignores SIGTERM and SIGHUP"
+offs=$(jq -s --arg i "$idd" '[.[] | select(.kind == "off" and .id4 == $i)] | length' "$SD/events.jsonl")
+out=$(asctl off "$idd" 2>&1 >/dev/null); rc=$?
+seen "asctl: claude $pd still runs after SIGTERM and with its tmux session 'deaf-$idd' closed: it runs on outside tmux (it is marked off; end it by hand)" <<<"$out" \
+	&& kill -0 "$pd" 2>/dev/null && ! tm has-session -t "=deaf-$idd" 2>/dev/null && [ "$(jqe ".entries[\"$idd\"].want_on")" = false ] \
+	&& last failed | seen "off: claude $pd still runs after SIGTERM" && [ "$(jq -s --arg i "$idd" '[.[] | select(.kind == "off" and .id4 == $i)] | length' "$SD/events.jsonl")" = "$offs" ] \
+	&& asctl list | seen -E "^$idd  deaf-$idd +on \(outside its tmux session\)" && [ "$rc" = 1 ] \
+	&& ok "off: a claude that neither SIGTERM nor the closed session ends: a failure, said, never logged as off" || bad "off: a claude that neither SIGTERM nor the closed session ends: a failure, said, never logged as off" "off: $out / rc $rc / $(last failed) / $(asctl list)"
+kill -9 "$pd"; rm -f "$HOME/fake-deaf"
+# shellcheck disable=SC2329  # run only through poll
+pdgone() { ! kill -0 "$pd" 2>/dev/null; }
+poll 5 pdgone || stop "the claude that ignored SIGTERM, ended by hand"
+asctl forget "$idd" >/dev/null
+}
+
 case_tmux_silent() {
 echo "== a tmux that does not answer"
 server_up
@@ -1954,7 +1981,7 @@ kill -CONT "$srv"
 asctl forget "$idq" >/dev/null
 }
 
-run_cases asc no_tmux_server main shared_stale guards on_gates new_session rc_now rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot asctl_setup trust_watch mcp_prompt tmux_silent
+run_cases asc no_tmux_server main shared_stale guards on_gates new_session rc_now rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot asctl_setup trust_watch mcp_prompt off_survivor tmux_silent
 
 echo "asc: $pass passed, $fail failed"
 [ "$fail" = 0 ]
