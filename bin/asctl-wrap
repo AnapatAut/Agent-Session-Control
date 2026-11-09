@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs in the pane asctl starts: claude with the arguments asctl chose, then a record of how it
 # ended (exit code, time, boot id, and this pane's PID, which the login shell keeps) for asctl,
-# then a login shell so the pane stays open.
+# then a login shell so the pane stays open. claude starts as from a terminal: see below.
 # 143 (SIGTERM) or 137 (SIGKILL) means a signal ended it; 0 means the user did (/exit, Ctrl-C).
 #   asctl-wrap EXIT-FILE CLAUDE [ARG…]
 f=$1; shift
@@ -16,7 +16,18 @@ for ((i = 0; i < 30; i++)); do
 	[ "$cg" = "${server:-}" ] && [ "${cg#0::/}" != "$cg" ] || break  # moved (or not cgroup v2: no scopes)
 	sleep 0.05
 done
-"$@"
+# A pane gets the environment of the asctl that asked for it: from the dashboard, boot or the
+# watcher (systemd services), a PATH without what ~/.bashrc adds (nvm's node and npx, bun), which
+# claude's MCP servers and hooks may need. So with bash as the user's shell, claude starts through
+# it, read as a terminal's is (-i: ~/.bashrc), in this folder again (the rc file may cd), and by
+# exec: the same process and process group, its exit code below (forked, bash's job control gives
+# claude a group and the terminal of its own, and the shell below could not read after it). The
+# arguments go as arguments, never as code. Another shell: as is.
+if [ "${SHELL##*/}" = bash ] && [ -x "$SHELL" ]; then
+	"$SHELL" -ic '\builtin cd -- "$1" && \builtin shift && \builtin exec "$@"' asctl-wrap "$PWD" "$@"
+else
+	"$@"
+fi
 rc=$?
 # 0600, in a subshell: the login shell after it keeps the user's own umask
 (umask 077; printf '%s %s %s %s\n' "$rc" "$(date +%s)" "$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" "$$" > "$f.tmp") && mv -f "$f.tmp" "$f"

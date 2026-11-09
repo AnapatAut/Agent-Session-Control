@@ -211,8 +211,12 @@ of the switch: no second server). A stop or restart of it would end every sessio
 refuses a manual one (`RefuseManualStop`), and a kernel OOM kill in it does not stop it
 (`OOMPolicy=continue`). `asctl-wrap` starts claude only once tmux has moved the pane into its
 scope, so claude is in that scope too (forked before the move, it stayed in the server's
-cgroup). Tests: `tests/sandbox.sh` (real systemd in a container: the units, the machine
-install and setup, a kernel OOM kill, a reboot).
+cgroup). With bash as your shell (tmux's `default-shell`), it starts claude through it as a
+terminal would (`bash -i`, so what your `~/.bashrc` sets, such as nvm's node and npx, is on
+claude's PATH, also when the dashboard, boot or the watcher started it), back in the favorite's
+folder, and by `exec` (the same process); with another shell, claude as is. Tests:
+`tests/sandbox.sh` (real systemd in a container: the units, the machine install and setup, a
+kernel OOM kill, a reboot).
 
 `asctl dash` serves a dashboard of the same for one Tailscale login, on a unix socket only its
 user can open, meant to sit behind `tailscale serve`; it installs as an app (home screen,

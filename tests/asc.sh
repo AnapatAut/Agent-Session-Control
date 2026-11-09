@@ -1989,6 +1989,53 @@ poll 5 pdgone || stop "the claude that ignored SIGTERM, ended by hand"
 asctl forget "$idd" >/dev/null
 }
 
+case_shell_start() {
+# Setup: the tmux server up; a folder of its own, trusted; a ~/.bashrc of this case's (removed at
+# the end) that sets what a terminal would get, moves away (cd /), and shadows cd, exec and shift.
+server_up
+echo "== claude starts through the user's bash, read as a terminal's (~/.bashrc)"
+mkdir -p "$HOME/rcw"; printf '%s\n' "$HOME/rcw" >> "$HOME/fake-trusted"
+cat > "$HOME/.bashrc" <<'RC'
+export ASC_RC_SEEN=yes PATH="$HOME/rcbin:$PATH"
+cd /
+alias cd='echo no'; cd() { echo no; }; exec() { echo no; }; shift() { echo no; }
+RC
+envof() { tr '\0' '\n' < "/proc/$1/environ" 2>/dev/null | grep -qx -- "$2"; }
+asctl new "$HOME/rcw" --name rcw >/dev/null; idr=$(jq -r --arg c "$HOME/rcw" '[.entries[] | select(.cwd == $c) | .id4] | last // empty' "$REG")
+pr=$(claude_now "rcw-$idr")
+[ -n "$pr" ] && envof "$pr" ASC_RC_SEEN=yes && envof "$pr" "PATH=$HOME/rcbin:$PATH" && [ "$(readlink "/proc/$pr/cwd")" = "$HOME/rcw" ] \
+	&& [ "$(ps -o ppid= -p "$pr" | tr -d ' ')" = "$(tm display -p -t "=rcw-$idr:" '#{pane_pid}')" ] \
+	&& ok "claude started through bash -i: what ~/.bashrc sets, in its own folder (the rc's cd, cd, exec and shift shadowed), asctl-wrap's child" \
+	|| bad "claude started through bash -i: what ~/.bashrc sets, in its own folder (the rc's cd, cd, exec and shift shadowed), asctl-wrap's child" "rc start: pid ${pr:-none} ppid $(ps -o ppid= -p "$pr" 2>&1 | tr -d ' ') pane $(tm display -p -t "=rcw-$idr:" '#{pane_pid}' 2>&1) cwd $(readlink "/proc/$pr/cwd" 2>&1) env $(tr '\0' ' ' < "/proc/$pr/environ" 2>&1 | grep -o 'ASC_RC_SEEN=[a-z]*')"
+# Ended (here by a signal), it leaves the pane's shell in charge of the terminal: what is typed
+# there runs. (Had bash forked claude, its job control would have given claude a process group
+# and the terminal of its own, and the shell after it could not read.)
+[ -n "$pr" ] && [ "$(ps -o pgid= -p "$pr" | tr -d ' ')" = "$(tm display -p -t "=rcw-$idr:" '#{pane_pid}')" ] && kill -TERM "$pr"
+# shellcheck disable=SC2329  # run only through poll
+typed() { [ "$(cat "$T/rc-typed" 2>/dev/null)" = typed ]; }
+tm send-keys -t "=rcw-$idr:" "echo typed > '$T/rc-typed'" Enter; poll 5 typed \
+	&& ok "through bash: claude in the pane's process group; once it ends, the pane's shell runs what is typed" \
+	|| bad "through bash: claude in the pane's process group; once it ends, the pane's shell runs what is typed" "after claude: $(tm capture-pane -p -t "=rcw-$idr:" 2>&1 | grep -v '^$' | tail -3)"
+asctl off "$idr" >/dev/null
+touch "$HOME/fake-exit-at-once"
+out=$(errof on "$idr"); rm -f "$HOME/fake-exit-at-once"
+seen 'claude exited 3 ' <<<"$out" && ok "through bash: claude's own exit code comes back (exit 3 at once: said)" || bad "through bash: claude's own exit code comes back (exit 3 at once: said)" "exit at once: $out"
+asctl off "$idr" >/dev/null 2>&1
+# The user's shell, as a pane has it: tmux sets SHELL there from its default-shell option. Not a
+# bash (dash, ENV naming the rc file): claude starts as is.
+tm set -g default-shell /bin/dash || stop "default-shell dash"
+ENV="$HOME/.bashrc" asctl on "$idr" >/dev/null; pr=$(claude_now "rcw-$idr")
+[ -n "$pr" ] && envof "$pr" SHELL=/bin/dash && ! envof "$pr" ASC_RC_SEEN=yes && [ "$(readlink "/proc/$pr/cwd")" = "$HOME/rcw" ] \
+	&& ok "shell dash: claude started as is, no rc file read" || bad "shell dash: claude started as is, no rc file read" "shell dash: pid ${pr:-none} $(tr '\0' ' ' < "/proc/$pr/environ" 2>&1 | grep -oE '(ASC_RC_SEEN|SHELL)=[^ ]*')"
+asctl off "$idr" >/dev/null
+# A bash gone since (tmux itself falls back to /bin/sh then; asctl-wrap run here by hand): as is.
+mkdir -p "$HOME/gone"; rm -f "$T/gone.out"
+(cd "$HOME/rcw" && SHELL="$HOME/gone/bash" "$REPO/bin/asctl-wrap" "$T/gone.exit" sh -c 'echo "${ASC_RC_SEEN:-none} $PWD" > "$1"' sh "$T/gone.out" </dev/null >/dev/null 2>&1)
+[ "$(cat "$T/gone.out" 2>&1)" = "none $HOME/rcw" ] && [ "$(cut -d' ' -f1 "$T/gone.exit" 2>&1)" = 0 ] \
+	&& ok "shell a bash that is gone: claude started as is, no rc file read" || bad "shell a bash that is gone: claude started as is, no rc file read" "gone bash: $(cat "$T/gone.out" "$T/gone.exit" 2>&1)"
+tm set -gu default-shell; rm -rf "$HOME/gone" "$HOME/.bashrc"; asctl forget "$idr" >/dev/null
+}
+
 case_tmux_silent() {
 echo "== a tmux that does not answer"
 server_up
@@ -2065,7 +2112,7 @@ kill -CONT "$srv"
 asctl forget "$idq" >/dev/null
 }
 
-run_cases asc no_tmux_server main shared_stale guards on_gates new_session rc_now rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot asctl_setup trust_watch mcp_prompt off_survivor tmux_silent
+run_cases asc no_tmux_server main shared_stale guards on_gates new_session rc_now rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot asctl_setup trust_watch mcp_prompt off_survivor shell_start tmux_silent
 
 echo "asc: $pass passed, $fail failed"
 [ "$fail" = 0 ]
