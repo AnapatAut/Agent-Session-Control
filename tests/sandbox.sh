@@ -241,13 +241,14 @@ chk "its claude is in a 200 MB cgroup that goes on after an OOM kill" \
 	'ux cat "/proc/$p1/cgroup"'
 chk "the favorite runs under asctl-wrap" '[ -n "$p1" ] && ux cat "/proc/$(ux ps -o ppid= -p "$p1" | tr -d " ")/cmdline" | tr "\0" " " | grep -q asctl-wrap'
 oux /opt/asc/bin/asctl auto-restart on >/dev/null
-# 6 min of steady samples (the fake meminfo says 50%), then the watcher's own sample before the end
+# 4 min of steady samples (the fake meminfo says 50%; the watcher keeps 5 min), then the watcher's
+# own sample before the end
 oux python3 -I -c 'import sys, time; sys.path.insert(0, "/opt/asc"); from asc import memory, registry
 s = memory.sample(); now = int(time.time())
-registry.write_private(registry.state_dir() + "/memory.json", [dict(s, t=now - 30 * i) for i in range(12, 0, -1)])'
+registry.write_private(registry.state_dir() + "/memory.json", [dict(s, t=now - 30 * i) for i in range(8, 0, -1)])'
 ux systemctl --user start asctl-watch.timer
 chk "asctl-watch.timer runs the watcher (a sample kept, the run clean)" \
-	'wait_for 10 "[ \"\$(uprop asctl-watch.service Result)\" = success ] && [ \"\$(uprop asctl-watch.service ExecMainStatus)\" = 0 ] && ux jq -e \"length >= 13\" /home/sbuser/.local/state/agent-session-control/memory.json >/dev/null"' 'journal asctl-watch'
+	'wait_for 10 "[ \"\$(uprop asctl-watch.service Result)\" = success ] && [ \"\$(uprop asctl-watch.service ExecMainStatus)\" = 0 ] && ux jq -e \"length >= 9\" /home/sbuser/.local/state/agent-session-control/memory.json >/dev/null"' 'journal asctl-watch'
 ux systemctl --user stop asctl-watch.timer
 sleep 1.2; ux touch /home/sbuser/fake-hog
 chk "the kernel ends the claude for memory: exit 137" \

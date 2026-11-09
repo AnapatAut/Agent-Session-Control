@@ -136,7 +136,7 @@ watch() { ASC_BY=watch asctl watch; }
 evn() { jq -s --arg k "$1" '[.[] | select(.kind == $k)] | length' "$SD/events.jsonl"; }
 last() { jq -s -c --arg k "$1" '[.[] | select(.kind == $k)] | last' "$SD/events.jsonl"; }
 # Seed 6 min of samples (as if the watcher had run every 30 s), from the fake readings now.
-# (Runs of the tests come seconds apart, so samples taken since stay inside the 8 min kept.)
+# (Runs of the tests come seconds apart, so samples taken since stay inside the 5 min kept.)
 seed() { python3 -I -c 'import sys, time; sys.path.insert(0, sys.argv[1]); from asc import memory, registry
 s = memory.sample(); now = int(time.time())
 registry.write_private(registry.state_dir() + "/memory.json", [dict(s, t=now - 30 * i) for i in range(12, 0, -1)])' "$REPO"; }
@@ -1235,11 +1235,15 @@ python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import memo
 b = memory.boot_id(); S = lambda t, p=50, **k: dict({"t": t, "boot": b, "avail_pct": p, "oom_kill": 0, "psi_full_us": 0, "pswpin": 0, "pswpout": 0}, **k)
 full = [S(1000 + 30 * i) for i in range(12)]          # 1000 .. 1330
 assert memory.steady(full, now=1340) == "", memory.steady(full, now=1340)
-assert "gap" in memory.steady(full[:4] + full[7:], now=1340)   # 1090 -> 1210
+assert "gap" in memory.steady([S(1100), S(1200), S(1215), S(1320)], now=1330)   # 1215 -> 1320
 assert "no recent" in memory.steady(full, now=1500)
-assert "under 5 min" in memory.steady(full[4:], now=1340)
-assert "down to 19" in memory.steady(full[:5] + [S(1150, 19)] + full[6:], now=1340)
+assert memory.steady(full[8:], now=1340) == "memory: watched for under 2 min"   # from 1240 only
+assert memory.steady(full[:9] + [S(1270, 19)] + full[10:], now=1340) == "memory: down to 19% available in the last 2 min (a start needs 20% steady)"
+assert memory.steady(full[:6] + [S(1180, 19)] + full[6:], now=1340) == ""   # before the last 2 min
 assert memory.steady([S(t, boot="old") for t in range(1000, 1340, 30)], now=1340)
+ten = [S(1300 + 10 * i) for i in range(5)]           # 1300 .. 1340, as asctl boot samples
+assert memory.steady(ten, now=1340, span=30) == "" and memory.steady(ten[2:], now=1340, span=30) == "memory: watched for under 30 s"
+assert memory.steady(ten[:2] + [S(1320, 19)] + ten[3:], now=1340, span=30) == "memory: down to 19% available in the last 30 s (a start needs 20% steady)"
 ev = [S(1000), S(1030, oom_kill=1)]
 assert memory.evidence(ev, 1010) == (True, "1 OOM kill(s)"), memory.evidence(ev, 1010)
 assert memory.evidence([S(1000), S(1030, psi_full_us=200000)], 1010)[1] == "stalled on memory 0.2 s"
@@ -1269,8 +1273,8 @@ watch; jq -e --arg s "$lsid" '.[$s].lines == 4 and .[$s].size == 8' "$SD/lengths
 rm -f "$HOME/.claude/projects/-len/$lsid.jsonl"
 python3 -I -c 'import sys, time; sys.path.insert(0, sys.argv[1]); from asc import memory, registry
 s = memory.sample(); now = int(time.time())
-registry.write_private(registry.state_dir() + "/memory.json", [dict(s, t=now - 600), dict(s, t=now - 400), dict(s, boot="old"), dict(s, t=now + 99)])' "$REPO"
-watch; jq -e 'length == 2 and .[1].t - .[0].t >= 400 and .[1].t - .[0].t < 420' "$SD/memory.json" >/dev/null && ok "watch: samples kept 8 min, this boot's only, none from the future" || bad "watch: samples kept 8 min, this boot's only, none from the future" "samples kept: $(jq -c '[.[] | [.t, .boot]]' "$SD/memory.json")"
+registry.write_private(registry.state_dir() + "/memory.json", [dict(s, t=now - 400), dict(s, t=now - 250), dict(s, boot="old"), dict(s, t=now + 99)])' "$REPO"
+watch; jq -e 'length == 2 and .[1].t - .[0].t >= 250 and .[1].t - .[0].t < 270' "$SD/memory.json" >/dev/null && ok "watch: samples kept 5 min, this boot's only, none from the future" || bad "watch: samples kept 5 min, this boot's only, none from the future" "samples kept: $(jq -c '[.[] | [.t, .boot]]' "$SD/memory.json")"
 for _ in $(seq 1 125); do watch; done
 [ "$(jq length "$SD/memory.json")" = 120 ] && ok "watch: at most 120 samples" || bad "watch: at most 120 samples" "samples kept: $(jq length "$SD/memory.json")"
 }
@@ -1394,7 +1398,7 @@ last waiting | jq -r .text | seen "its pane's shell runs something" && ! claude_
 tm send-keys -t "=wat2-$idw:" C-c; sleep 0.5; mem 32000000 4800000; watch
 last waiting | jq -r .text | seen 'memory: ' && ok "memory short: waiting" || bad "memory short: waiting" "memory gate: $(last waiting)"
 mem 32000000 16000000; watch
-last waiting | jq -r .text | seen 'memory: down to 15.0% available in the last 5 min' && ok "after a dip, waits for 5 min steady" || bad "after a dip, waits for 5 min steady" "steady: $(last waiting)"
+last waiting | jq -r .text | seen 'memory: down to 15.0% available in the last 2 min' && ok "after a dip, waits for 2 min steady" || bad "after a dip, waits for 2 min steady" "steady: $(last waiting)"
 rk() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import registry
 with registry.changing() as d: d["entries"][sys.argv[2]]["rss_kb"] = int(sys.argv[3])' "$REPO" "$idw" "$1"; }
 rk 13000000; seed; watch
@@ -1598,10 +1602,33 @@ mem 32000000 4000000; seed
 ASC_NET=127.0.0.1:$up_port boot --wait 0 >/dev/null 2>&1; rc=$?
 [ "$rc" = 1 ] && last waiting | seen 'boot: not started yet: memory' && ! claude_now "wat3-$idw" >/dev/null 2>&1 \
 	&& ok "boot, memory short: waits, then left" || bad "boot, memory short: waits, then left" "boot, memory: rc $rc $(last waiting)"
+# Memory fine but no samples yet: boot takes one every 10 s (at 0, 10 and its deadline, 12 s).
 mem 32000000 16000000; rm -f "$SD/memory.json"
-ASC_NET=127.0.0.1:$up_port boot --wait 0 >/dev/null 2>&1; rc=$?
-[ "$rc" = 1 ] && last waiting | seen 'boot: not started yet: memory: watched for under 5 min' && ! claude_now "wat3-$idw" >/dev/null 2>&1 \
-	&& ok "boot, memory fine but not watched 5 min: waits" || bad "boot, memory fine but not watched 5 min: waits" "boot, steady: rc $rc $(last waiting)"
+ASC_NET=127.0.0.1:$up_port boot --wait 12 >/dev/null 2>&1; rc=$?
+[ "$rc" = 1 ] && last waiting | seen 'boot: not started yet: memory: watched for under 30 s' && ! claude_now "wat3-$idw" >/dev/null 2>&1 \
+	&& ok "boot, memory fine but not watched 30 s: waits" || bad "boot, memory fine but not watched 30 s: waits" "boot, steady: rc $rc $(last waiting)"
+jq -e 'length == 3 and .[1].t - .[0].t >= 9 and .[1].t - .[0].t <= 11' "$SD/memory.json" >/dev/null \
+	&& ok "boot, waiting: a memory sample every 10 s" || bad "boot, waiting: a memory sample every 10 s" "boot samples: $(jq -c 'map(.t)' "$SD/memory.json")"
+# Two to bring back, on a clock of its own here (all else stubbed): a 30 s steady check before each,
+# and in the 30 s pause after the first start a memory sample every 10 s.
+bl=$(python3 -I -c 'import sys, types; sys.path.insert(0, sys.argv[1]); from asc import boot
+c, seen = [100.0], []
+def nap(s): c[0] += s
+def add(s): seen.append(("sample", s["t"])); return []
+def steady(samples, **k): seen.append(("steady", k.get("span"))); return ""
+def start(e, started): seen.append(("start", e["tmux"], c[0])); started.append(e["tmux"])
+es = {"a": {"id4": "a", "tmux": "a"}, "b": {"id4": "b", "tmux": "b"}}
+boot.time = types.SimpleNamespace(time=lambda: c[0], sleep=nap)
+boot.memory = types.SimpleNamespace(sample=lambda: {"t": c[0]}, add_sample=add, steady=steady, gate=lambda kb: "")
+boot.registry = types.SimpleNamespace(load=lambda: {"entries": es})
+boot.cli = types.SimpleNamespace(ensure_server=lambda: None, out=lambda s: seen.append(("out", s)))
+boot._todo, boot._status, boot._network, boot._skip, boot._start = lambda: ["a", "b"], lambda *a, **k: None, lambda w: True, lambda e: None, start
+assert boot._run(10 ** 9, 3600, 0) == 0
+want = [("sample", 100), ("steady", 30), ("start", "a", 100), ("sample", 110), ("sample", 120),
+        ("sample", 130), ("steady", 30), ("start", "b", 130), ("out", "boot: 2 started (a, b)")]
+assert seen == want, seen' "$REPO" 2>&1) \
+	&& ok "boot: a 30 s steady check before each start, a sample every 10 s in the 30 s pause between" \
+	|| bad "boot: a 30 s steady check before each start, a sample every 10 s in the 30 s pause between" "boot loop: $(tail -n 1 <<<"$bl")"
 # Resurrect turned off while boot waits: left, with nothing said.
 seed; flock "$SD/locks/$idw" sleep 1.5 & fl=$!; sleep 0.3
 (ASC_NET=127.0.0.1:$up_port boot --wait 4 > "$T/boot.out" 2>&1; echo $? >> "$T/boot.out") & bp=$!; sleep 0.7

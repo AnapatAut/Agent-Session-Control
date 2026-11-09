@@ -100,7 +100,7 @@ asc/watch.py %%%     if has is not True: %%%     if has is None: %%% no memory p
 asc/watch.py %%%     if abs(time.time() - last) < RESTART_EVERY: %%%     if False: %%% not again within 30 min %%% watcher_ended
 asc/watch.py %%%     if len(panes) != 1: %%%     if False: %%% a session of 2 panes: not started again %%% watcher_reasons
 asc/watch.py %%%     why = cli.pane_free(e, panes[0]["pane_id"], pid) %%%     why = "" %%% its pane is not the shell asctl-wrap left: not started %%% watcher_reasons
-asc/watch.py %%%     return memory.steady(samples)  # the gate (room for its size) is On's own %%%     return "" %%% after a dip, waits for 5 min steady %%% watcher_ended
+asc/watch.py %%%     return memory.steady(samples)  # the gate (room for its size) is On's own %%%     return "" %%% after a dip, waits for 2 min steady %%% watcher_ended
 asc/watch.py %%%     if time.time() - t > RESTART_WITHIN: %%%     if False: %%% an end over an hour old: not started again %%% watcher_reasons
 asc/watch.py %%%     if not boot or boot != memory.boot_id(): %%%     if boot != memory.boot_id(): %%% no boot id, here or in the record: not taken as this boot %%% watcher_reasons
 asc/cli.py %%%     if p["pane_pid"] != pane_pid: %%%     if False: %%% its pane is not the shell asctl-wrap left: not started %%% watcher_reasons
@@ -115,7 +115,7 @@ asc/memory.py %%%     if any(b["t"] - a["t"] > GAP_S for a, b in zip(chain, chai
 asc/memory.py %%%     if low < pct: %%%     if False: %%% steady and evidence: gaps, a dip, another boot, each kind of pressure, samples too far apart %%% watcher_memory
 asc/memory.py %%%     if (grew("oom_kill") or 0) > 0: %%%     if False: %%% steady and evidence: gaps, a dip, another boot, each kind of pressure, samples too far apart %%% watcher_memory
 asc/memory.py %%%     b = next((s for s in xs if s["t"] > t_end), None) %%%     b = next((s for s in xs if s["t"] >= t_end), None) %%% steady and evidence: gaps, a dip, another boot, each kind of pressure, samples too far apart %%% watcher_memory
-asc/memory.py %%%             if x["boot"] == s["boot"] and s["t"] - KEEP_S <= x["t"] <= s["t"]][-(MAX_SAMPLES - 1):] + [s] %%%             if True][-(MAX_SAMPLES - 1):] + [s] %%% watch: samples kept 8 min, this boot's only, none from the future %%% watcher_memory
+asc/memory.py %%%             if x["boot"] == s["boot"] and s["t"] - KEEP_S <= x["t"] <= s["t"]][-(MAX_SAMPLES - 1):] + [s] %%%             if True][-(MAX_SAMPLES - 1):] + [s] %%% watch: samples kept 5 min, this boot's only, none from the future %%% watcher_memory
 asc/memory.py %%%             and all(s.get(k) is None or type(s.get(k)) is int %%%             and all(True %%% steady and evidence: gaps, a dip, another boot, each kind of pressure, samples too far apart %%% watcher_memory
 asc/live.py %%%         return "tmux did not list its panes" %%%         pane_list = [] %%% busy: tmux not answering counts as busy %%% watcher_memory
 asc/events.py %%%     return b if b in BY else "cli" %%%     return b or "cli" %%% who: ASC_BY page kept, anything else is cli %%% events
@@ -131,7 +131,15 @@ asc/cli.py %%%     if running is not None: %%%     if False: %%% tmux-server wit
 asc/boot.py %%%     if not e or e.get("resurrect") is not True or e.get("want_on") is not True: %%%     if not e: %%% resurrect off while boot waits: left %%% boot
 asc/boot.py %%%     if tmuxctl.has_session(e["tmux"]): %%%     if False: %%% boot again: a session up already is left as it is %%% boot
 asc/boot.py %%%         if not locked:  # an action holds it: the next look %%%         if False: %%% boot: an entry an action holds waits, then is left (refused) %%% boot
-asc/boot.py %%%         why = memory.steady(samples) or memory.gate(e.get("rss_kb")) or _start(e, started) %%%         why = _start(e, started) %%% boot, memory fine but not watched 5 min: waits %%% boot
+asc/boot.py %%%         why = memory.steady(samples, span=STEADY_S) or memory.gate(e.get("rss_kb")) or _start(e, started) %%%         why = _start(e, started) %%% boot, memory fine but not watched 30 s: waits %%% boot
+asc/boot.py %%% memory.steady(samples, span=STEADY_S) %%% memory.steady(samples) %%% boot, memory fine but not watched 30 s: waits %%% boot
+asc/boot.py %%% STEADY_S = 30  # %%% STEADY_S = 120  # %%% boot, memory fine but not watched 30 s: waits %%% boot
+asc/boot.py %%% TICK_S = 10    # %%% TICK_S = 30    # %%% boot, waiting: a memory sample every 10 s %%% boot
+asc/boot.py %%%                 _pause() %%%                 time.sleep(PAUSE_S) %%% boot: a 30 s steady check before each start, a sample every 10 s in the 30 s pause between %%% boot
+asc/boot.py %%%         memory.add_sample(memory.sample())⏎ %%%         pass⏎ %%% boot: a 30 s steady check before each start, a sample every 10 s in the 30 s pause between %%% boot
+asc/boot.py %%% PAUSE_S = 30   # %%% PAUSE_S = 20   # %%% boot: a 30 s steady check before each start, a sample every 10 s in the 30 s pause between %%% boot
+asc/memory.py %%% STEADY_S = 120      # %%% STEADY_S = 300      # %%% steady and evidence: gaps, a dip, another boot, each kind of pressure, samples too far apart %%% watcher_memory
+asc/memory.py %%%     return f"{s // 60} min" if s >= 60 and s % 60 == 0 else f"{s} s" %%%     return f"{s // 60} min" %%% steady and evidence: gaps, a dip, another boot, each kind of pressure, samples too far apart %%% watcher_memory
 asc/boot.py %%%             raise RegistryError("another asctl boot is running") %%%             return 0 %%% one boot at a time %%% boot
 asc/boot.py %%%             socket.create_connection((host, int(port)), timeout=NET_TRY_S).close() %%%             raise OSError %%% boot: an entry an action holds waits, then is left (refused) %%% boot
 asc/boot.py %%%         cli.ensure_server() %%%         pass %%% boot, no server: asctl-tmux.service started (exit-empty off) %%% boot

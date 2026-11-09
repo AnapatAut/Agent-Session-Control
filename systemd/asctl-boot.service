@@ -1,6 +1,6 @@
 # Once per boot: the favorites with resurrect on that were on start again, one at a time past
 # the memory gates (asctl boot; asc/boot.py). It may take a while: it waits for memory to stay
-# steady for 5 min and for claude.ai, and runs in the background (Type=exec).
+# steady for 30 s before each start and for claude.ai, and runs in the background (Type=exec).
 [Unit]
 Description=asctl: bring back the favorites with resurrect on
 # Wants=, not Requires=: on the day of the switch the server still belongs to the old tmux

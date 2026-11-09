@@ -84,7 +84,7 @@ const STATUS = { busy: ["Working", "busy"], idle: ["Idle", "idle"], waiting: ["W
 // What asctl boot says the next favorite it brings back waits for (asc/boot.py), in words.
 function bootWhy(why) {
   if (/^memory: (watched for under|down to|[0-9.]+% available, a start needs)/.test(why))
-    return "Starts once memory has stayed under 80% used for 5 min.";
+    return "Starts once memory has stayed under 80% used for 30 s.";
   if (why.startsWith("network")) return "Starts once claude.ai answers (at most 2 min).";
   if (why.startsWith("pause") || !why) return "Starts in a moment.";
   why = why.replace(/^memory: /, "");

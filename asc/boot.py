@@ -2,16 +2,16 @@
 start again, one at a time.
 
 want_on changes only by the user's On, Off and Forget, so after a reboot it still says which were
-on. Each start needs the memory gates: memory at 20% steady for 5 min (asctl boot takes a sample
-every 30 s itself, as the watcher does, so the first start comes 5 min after the boot at the
-earliest) and room for that claude's size. Before the first start it waits up to 2 min for
-claude.ai to answer (a resurrect start has remote control), then starts anyway: a remote control
-that does not come up shows on the dashboard. A favorite whose tmux session is up already, or
-whose conversation a live claude holds, is left alone (the watcher looks after the first). What
-waits is logged once per reason; after --wait seconds the rest are left, each with a "refused"
-event (Start them by hand). After a tmux server that ended without a reboot, run it again:
-systemctl --user start asctl-boot.service. While it runs, boot.json in the state folder says
-what it still brings back and what it waits for (the dashboard shows it, while boot.lock is
+on. Each start needs the memory gates: memory at 20% steady for 30 s (asctl boot takes a sample
+every 10 s itself, also in its pause after each start, so the first start comes about 40 s after
+boot began at the earliest) and room for that claude's size. Before the first start it waits up
+to 2 min for claude.ai to answer (a resurrect start has remote control), then starts anyway: a
+remote control that does not come up shows on the dashboard. A favorite whose tmux session is up
+already, or whose conversation a live claude holds, is left alone (the watcher looks after the
+first). What waits is logged once per reason; after --wait seconds the rest are left, each with
+a "refused" event (Start them by hand). After a tmux server that ended without a reboot, run it
+again: systemctl --user start asctl-boot.service. While it runs, boot.json in the state folder
+says what it still brings back and what it waits for (the dashboard shows it, while boot.lock is
 held); "done" once it ends, also when stopped (SIGTERM ends it as an exit, not a kill).
 """
 import fcntl
@@ -25,8 +25,9 @@ import time
 from . import cli, events, memory, registry, tmuxctl
 from .registry import RegistryError
 
-TICK_S = 30   # while waiting: a sample and another look this often (the watcher's timer too)
-PAUSE_S = 30  # after a start, before the next: the next sample shows what the last one took
+TICK_S = 10    # while waiting: a sample and another look this often
+PAUSE_S = 30   # after a start, before the next: the samples meanwhile show what the last one took
+STEADY_S = 30  # memory at START_PCT this long before each start (the watcher's restart: memory.STEADY_S)
 NET = "claude.ai:443"  # $ASC_NET: what must answer before the first start
 NET_TRY_S = 5
 STATUS = "boot.json"
@@ -96,12 +97,12 @@ def _run(deadline, wait, net_wait):
             continue
         _status(todo, "")
         samples = memory.add_sample(memory.sample())
-        why = memory.steady(samples) or memory.gate(e.get("rss_kb")) or _start(e, started)
+        why = memory.steady(samples, span=STEADY_S) or memory.gate(e.get("rss_kb")) or _start(e, started)
         if why is None:  # started, or tried and said why not (On logged it): the next one
             todo.pop(0)
             if todo:
                 _status(todo, "pause: the last start settles first")
-                time.sleep(PAUSE_S)
+                _pause()
             continue
         _status(todo, why)
         reason = re.sub(r"[0-9][0-9.]*", "N", why)  # the same reason with other numbers is not news
@@ -119,6 +120,16 @@ def _run(deadline, wait, net_wait):
         time.sleep(max(0.0, min(TICK_S, deadline - time.time())))
     cli.out(f"boot: {len(started)} started" + (f" ({', '.join(started)})" if started else ""))
     return 0
+
+
+def _pause():
+    """PAUSE_S, a memory sample every TICK_S meanwhile (the loop takes the one at its end)."""
+    end = time.time() + PAUSE_S
+    while True:
+        time.sleep(max(0.0, min(TICK_S, end - time.time())))
+        if time.time() >= end:
+            return
+        memory.add_sample(memory.sample())
 
 
 def _skip(e):

@@ -728,12 +728,12 @@ echo "== the page's notices (boot, the watcher, setup), settings, a conversation
 dash_up; trio_fav; trio_off
 SD="$HOME/.local/state/agent-session-control"
 BID=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import memory; print(memory.boot_id())' "$REPO")
-bootjs() { printf '{"boot": "%s", "at": 1, "todo": ["%s"], "why": "memory: watched for under 5 min", "done": %s}\n' "$1" "$id3" "$2" > "$SD/boot.json"; }
+bootjs() { printf '{"boot": "%s", "at": 1, "todo": ["%s"], "why": "memory: watched for under 30 s", "done": %s}\n' "$1" "$id3" "$2" > "$SD/boot.json"; }
 bootjs "$BID" false
 state | jq -e '.boot == null' >/dev/null && ok "boot.lock not held: no boot shown (one that was killed)" || bad "boot.lock not held: no boot shown (one that was killed)" "boot with no lock: $(state | jq -c .boot)"
 python3 -I -c 'import fcntl, sys, time; f = open(sys.argv[1], "a"); fcntl.flock(f, fcntl.LOCK_EX); time.sleep(60)' "$SD/boot.lock" & bl=$!
 poll_gone 5 flock -n "$SD/boot.lock" true || stop "boot.lock held by the test"
-state | jq -e --arg i "$id3" '.boot == {"todo": [$i], "why": "memory: watched for under 5 min"}' >/dev/null \
+state | jq -e --arg i "$id3" '.boot == {"todo": [$i], "why": "memory: watched for under 30 s"}' >/dev/null \
 	&& ok "state: what boot still brings back, and why the next waits (boot.lock held)" || bad "state: what boot still brings back, and why the next waits (boot.lock held)" "boot: $(state | jq -c .boot)"
 bootjs "$BID" true
 state | jq -e '.boot == null' >/dev/null && ok "boot done: no boot shown" || bad "boot done: no boot shown" "boot done: $(state | jq -c .boot)"

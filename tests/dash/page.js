@@ -27,7 +27,7 @@ const check = (name, code) => {
 // A home folder put together at run time, so the privacy check does not read it as a real one.
 const HOME = ["", "home", "demo"].join("/");
 run(`var T = Math.floor(Date.now() / 1000);
-S = { home: "${HOME}", boot: { todo: ["0003", "0004", "0005"], why: "memory: watched for under 5 min" }, favorites: [
+S = { home: "${HOME}", boot: { todo: ["0003", "0004", "0005"], why: "memory: watched for under 30 s" }, favorites: [
   { id4: "0001", state: "on", status: "waiting", waiting_for: "", status_at: T - 60, claudes: 1 },
   { id4: "0002", state: "off", resurrect: true, last_off: T - 60 },
   { id4: "0003", state: "on", status: "idle", claudes: 1 },
@@ -48,11 +48,11 @@ check("waiting for something named: that", `look(Object.assign({}, F("0001"), { 
 check("resurrect on but off: why a reboot will not bring it back", `look(F("0002")).why === "Off, so a reboot won't bring it back." && look(F("0002")).group === "off"`);
 check("off, resurrect off: no why", `look(F("0006")).why === ""`);
 check("boot: the first still off says what it waits for (one on by hand is passed over)",
-  `look(F("0004")).label === "Coming back" && look(F("0004")).why === "Starts once memory has stayed under 80% used for 5 min."`);
+  `look(F("0004")).label === "Coming back" && look(F("0004")).why === "Starts once memory has stayed under 80% used for 30 s."`);
 check("boot: the next waits its turn", `look(F("0005")).why === "Waits its turn: one start at a time." && look(F("0003")).group === "on"`);
 check("boot reasons in words; an odd one passed on", `bootWhy("network: waiting for claude.ai to answer").startsWith("Starts once claude.ai answers")
   && bootWhy("pause: x") === "Starts in a moment." && bootWhy("memory: no recent sample (is the watcher running?)") === "No recent sample (is the watcher running?)."
-  && bootWhy("memory: down to 12% available in the last 5 min (a start needs 20% steady)").startsWith("Starts once memory")`);
+  && bootWhy("memory: down to 12% available in the last 30 s (a start needs 20% steady)").startsWith("Starts once memory")`);
 
 const ev = (kind, text, extra) => JSON.stringify(Object.assign({ t: 1000, kind, by: "page", text }, extra || {}));
 const label = (kind, text) => `evLabel(${ev(kind, text)})`, detail = (kind, text) => `evDetail(${ev(kind, text)})`;

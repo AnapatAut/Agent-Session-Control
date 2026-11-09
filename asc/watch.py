@@ -21,7 +21,7 @@ Each run, one at a time (watch.lock; a run that finds another still going does n
     session and anyone attached) only when every one holds (plan row 7): auto-restart is on
     (asctl auto-restart on; off by default), it ended by a signal (143 SIGTERM, 137 SIGKILL) in
     this boot under an hour ago, memory pressure was seen around then, memory has been steady at
-    START_PCT for 5 min and has room for it, it was not started again in the last 30 min, its
+    START_PCT for 2 min and has room for it, it was not started again in the last 30 min, its
     session is that one pane, still the shell asctl-wrap left (the PID in the exit record),
     running nothing, not scrolled back and with no one typing in the last 2 min (cli.pane_free,
     checked again just before), and no other restart in this run.

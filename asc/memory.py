@@ -6,8 +6,9 @@ after the claude's expected size: its whole pane tree when last measured, else D
 dashboard warns. $ASC_MEMINFO names another meminfo file (the tests use a fake one).
 
 The watcher (asc/watch.py) keeps the samples of the last KEEP_S seconds (memory.json in the state folder):
-an automatic start also needs memory steady at START_PCT for STEADY_S (steady), and an automatic
-restart after a claude was ended by a signal needs memory pressure seen around then (evidence).
+an automatic start also needs memory steady at START_PCT (steady: for STEADY_S at a restart by the
+watcher, for boot.STEADY_S at boot), and an automatic restart after a claude was ended by a signal
+needs memory pressure seen around then (evidence).
 """
 import fcntl
 import os
@@ -54,7 +55,7 @@ def gate(expected_kb=None):
 # Counters that only grow, so a short squeeze between two samples is still seen: PSI "full"
 # (time all tasks stalled on memory, µs), pages swapped in and out, the kernel's OOM kills.
 # $ASC_PRESSURE, $ASC_VMSTAT and $ASC_BOOT_ID name other files (the tests use fake ones).
-STEADY_S = 300      # a start by the watcher or at boot needs START_PCT for this long
+STEADY_S = 120      # a restart by the watcher needs START_PCT for this long (asctl boot: its own)
 GAP_S = 90          # samples further apart than this do not count as a watch (the timer stopped)
 KEEP_S = STEADY_S + 2 * GAP_S   # samples are kept this long (by age, so extra runs crowd nothing out)
 MAX_SAMPLES = 120   # and at most this many (a run every 4 s)
@@ -142,14 +143,18 @@ def steady(samples, now=None, pct=START_PCT, span=STEADY_S):
     win = [s for s in xs if s["t"] >= now - span]
     before = [s for s in xs if s["t"] < now - span]
     if not before or win and win[0]["t"] - before[-1]["t"] > GAP_S:
-        return f"memory: watched for under {span // 60} min"
+        return f"memory: watched for under {_took(span)}"
     chain = [before[-1]] + win
     if any(b["t"] - a["t"] > GAP_S for a, b in zip(chain, chain[1:])):
         return "memory: a gap in the samples"
     low = min(s["avail_pct"] for s in chain)
     if low < pct:
-        return f"memory: down to {low}% available in the last {span // 60} min (a start needs {pct}% steady)"
+        return f"memory: down to {low}% available in the last {_took(span)} (a start needs {pct}% steady)"
     return ""
+
+
+def _took(s):
+    return f"{s // 60} min" if s >= 60 and s % 60 == 0 else f"{s} s"
 
 
 def evidence(samples, t_end):

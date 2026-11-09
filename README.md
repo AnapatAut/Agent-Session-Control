@@ -184,7 +184,7 @@ the same conversation. The dashboard offers that as "Restart in tmux" (`restart 
 page restarts nothing else).
 
 `asctl watch` is one run of the watcher (`asctl-watch.timer`, every 30 s; `asc/watch.py`). It
-keeps 8 minutes of memory samples (available memory, and counters that only grow: PSI `full`,
+keeps 5 minutes of memory samples (available memory, and counters that only grow: PSI `full`,
 pages swapped, OOM kills), warns once (event log and tmux) under 15% available, and for each
 favorite whose claude runs alone in its own tmux session keeps its memory size (what the start
 gate expects), follows a new session id (a branch, a rewind) and a new folder (`/cd`), and sends
@@ -192,16 +192,17 @@ a rename that claude was too busy to take. A favorite wanted on whose claude end
 session still up is logged once, with its exit code and the memory evidence. With
 `asctl auto-restart on` (off by default: it only logs) it is started again in its own pane when
 all hold: ended by a signal (143 SIGTERM, 137 SIGKILL) in this boot, memory pressure seen around
-that end, memory steady at 20% for 5 minutes with room for its size, not started again in the
+that end, memory steady at 20% for 2 minutes with room for its size, not started again in the
 last 30 minutes, its session one pane running only its shell, one restart per run. The watcher
 never turns a favorite off or on; an entry an action is changing is left to the next run.
 
 `asctl boot` (`asctl-boot.service`, once per boot) starts again the favorites with resurrect
 on that were on, the one turned on last first, one at a time: each needs memory at 20% steady
-for 5 minutes (so the first start comes 5 minutes after the boot at the earliest) and room for
-its size; before the first it waits up to 2 minutes for claude.ai, then starts anyway. A
-favorite whose tmux session is up already is left to the watcher. What waits is logged; after an
-hour the rest are left for Start. After a tmux server that ended without a reboot:
+for 30 seconds (boot samples it every 10 seconds, so the first start comes about 40 seconds after
+the boot at the earliest, and each next one at least 30 seconds after the last) and room for its
+size; before the first it waits up to 2 minutes for claude.ai, then starts anyway. A favorite
+whose tmux session is up already is left to the watcher. What waits is logged; after an hour the
+rest are left for Start. After a tmux server that ended without a reboot:
 `systemctl --user start asctl-boot.service`.
 
 `asctl-tmux.service` (`Type=forking`) runs `asctl tmux-server`: a server kept up with no
