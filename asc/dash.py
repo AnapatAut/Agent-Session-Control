@@ -239,21 +239,43 @@ def remote_client(headers):
 
 # --- what the page shows -------------------------------------------------------------------
 
+# Login users' uids (login.defs' UID_MIN to UID_MAX): not system users (below), nor a user
+# namespace's (rootless containers run as subuids, 100000 and up), nor nobody (65534).
+USERS = range(1000, 60001)
+
+
+def users_kb(procs, me):
+    """Other login users' memory, estimated: their processes' anonymous memory ((uid, kB) pairs;
+    their PSS cannot be read), not this user's nor system users' or a user namespace's."""
+    return sum(kb for uid, kb in procs if uid != me and uid in USERS)
+
+
+def by_whom(used, mine, users):
+    """(other users', the system's) kB of what is in use (used) besides this user's (mine): other
+    users' estimate at most the rest, the system the rest of it; neither below 0."""
+    rest = max(0, used - mine)
+    return min(users, rest), rest - min(users, rest)
+
+
 def top_processes(mem, n=5):
     """This user's n biggest processes (name and size only: command lines can hold paths and
-    arguments), all of this user's together (mine_kb), and the rest of the memory in use with no
-    names (others_kb: other users and the system, R7). The rest is what is in use (mem: total
-    less available, as the memory card shows) less this user's: adding up other users' RSS
-    would count each page they share once per process (their PSS cannot be read), more than
-    the machine has."""
-    me, mine = os.getuid(), []
+    arguments), all of this user's together (mine_kb), and the rest of the memory in use in two
+    totals with no names (R7): other login users' (users_kb, an estimate: users_kb()), and the
+    system's (system_kb: root and services, containers, the kernel, tmpfs and what other users
+    share). What is in use is total less available, as the memory card shows; the three add up
+    to it, and none is below 0."""
+    me, mine, others = os.getuid(), [], []
     for d in os.listdir("/proc"):
         if not d.isdigit():
             continue
         try:
-            if os.stat(f"/proc/{d}").st_uid != me:
-                continue
+            own = os.stat(f"/proc/{d}").st_uid == me
         except OSError:
+            continue
+        if not own:
+            ua = live.uid_anon_kb(int(d))
+            if ua:
+                others.append(ua)
             continue
         kb = live.pss_kb(int(d))
         st = live.proc_stat(int(d))
@@ -261,7 +283,8 @@ def top_processes(mem, n=5):
             mine.append({"name": st[0], "mem_kb": kb})
     mine.sort(key=lambda p: p["mem_kb"], reverse=True)
     total = sum(p["mem_kb"] for p in mine)
-    return {"mine": mine[:n], "mine_kb": total, "others_kb": max(0, mem["total_kb"] - mem["avail_kb"] - total)}
+    users, system = by_whom(mem["total_kb"] - mem["avail_kb"], total, users_kb(others, me))
+    return {"mine": mine[:n], "mine_kb": total, "users_kb": users, "system_kb": system}
 
 
 def boot_status():

@@ -246,6 +246,25 @@ def rss_kb(pid):
         return 0
 
 
+def uid_anon_kb(pid, proc="/proc"):
+    """(real uid, anonymous memory in kB) of a PID, from /proc/<pid>/status: readable for every
+    user's process (smaps_rollup is not). RssAnon is the process's own heap and stacks, so adding
+    it up over processes counts little twice (full RSS counts each shared page once per process);
+    0 for a process without it (a kernel thread). None when it cannot be read (gone meanwhile).
+    The first Uid: and RssAnon: lines only: the Name: line before them is escaped by the kernel."""
+    uid = anon = None
+    try:
+        with open(f"{proc}/{pid}/status", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if uid is None and line.startswith("Uid:"):
+                    uid = int(line.split()[1])
+                elif anon is None and line.startswith("RssAnon:"):
+                    anon = int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        return None
+    return None if uid is None else (uid, anon or 0)
+
+
 def pss_kb(pid):
     """A process's fair share of memory (PSS: a page shared by n processes counts 1/n in each,
     so the claude binary's code, shared by every claude, is not counted again per session);

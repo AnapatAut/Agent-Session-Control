@@ -226,8 +226,10 @@ kernel OOM kill, a reboot).
 `asctl dash` serves a dashboard of the same for one Tailscale login, on a unix socket only its
 user can open, meant to sit behind `tailscale serve`; it installs as an app (home screen,
 launcher). The main page is a list (needs attention, on, off, running claudes not favorited,
-past conversations, memory used; a running claude with a made-up name goes by its chat title,
-as the Claude apps list it; a session's memory is the PSS of its pane's processes, shared
+past conversations, memory used, by you, other users and the system: close memory numbers, not
+exact ones, as the card's i says, since other users' shared memory cannot be read and counts as
+the system's; a running claude with a made-up name goes by its chat title, as the Claude apps
+list it; a session's memory is the PSS of its pane's processes, shared
 pages split, so the figures add up); a tap opens a session's sheet with On/Off, remote control
 (live), resurrect, permissions, rename and forget, what claude itself last reported, how long
 its conversation is (past 100,000 lines Claude Code stops sending it to claude.ai) and its

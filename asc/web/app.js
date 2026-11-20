@@ -36,6 +36,26 @@ function size(kb) {
   if (!kb) return "";
   return kb >= 1024 * 1024 ? (kb / 1024 / 1024).toFixed(1) + " GB" : Math.round(kb / 1024) + " MB";
 }
+// "used / total", the unit once when both have the same: 15.1 / 15.3 GB, 512 MB / 2.0 GB. The spaces
+// narrow and no-break (U+202F): room around the slash, and never a line break there.
+const SLASH = "\u202f/\u202f";
+function pair(a, b) {
+  const sa = size(a) || "0 MB", sb = size(b), [na, ua] = sa.split(" "), ub = sb.split(" ")[1];
+  return ua === ub ? na + SLASH + sb : sa + SLASH + sb;
+}
+// Swap is shown, never gated on. Amber from SWAP_HI% used: free swap at earlyoom's default limit
+// (-s 10) or under, so only memory is left before its next kill. null: memory itself is unknown.
+const SWAP_HI = 90;
+function swapView(m) {
+  if (!m.total_kb) return null;
+  const total = m.swap_total_kb;  // not a positive number (none, or a bad reading): no swap
+  if (!(Number.isFinite(total) && total > 0)) return { pill: "NO SWAP", hi: false };
+  const free = Math.min(total, Math.max(0, Number.isFinite(m.swap_free_kb) ? m.swap_free_kb : 0));
+  const used = total - free, pct = Math.round(used / total * 100);  // divided first: 0 to 100, never Infinity
+  return { pill: `SWAP ${pair(used, total)} (${pct}%)`, hi: pct >= SWAP_HI };
+}
+// The memory a list of favorites uses ("" when none is known).
+function usage(favs) { return size(favs.reduce((a, e) => a + (e.mem_kb || 0), 0)); }
 function tilde(p) {
   const h = S && S.home;
   if (!p) return "";
@@ -205,19 +225,109 @@ function favRow(e) {
                l.whyCls || (l.dot === "wait" ? "wait" : ""));
 }
 
-function section(title, pillCls, rows) {
+// A list under its header: the title, the count, and a note if given (On: the memory its rows use).
+function section(title, pillCls, rows, note) {
   if (!rows.length) return [];
-  const h = kids(el("div", title, "sect"), el("span", rows.length, "pill " + pillCls));
+  const h = kids(el("div", title, "sect"), el("span", rows.length, "pill " + pillCls), note ? el("span", note, "use") : null);
   return [h, kids(el("div", null, "list"), ...rows)];
 }
 
+// The memory the favorites listed under On use (its header shows it; "" when none is known).
+function onUse(favs) { return usage(favs.filter((e) => shown(e) && look(e).group === "on")); }
 function shown(e) {
   if (filter === "on") return isOn(e);
   if (filter === "off") return !isOn(e);
-  if (filter === "busy") return isOn(e) && e.status === "busy";
   return true;
 }
 
+// Parts of what is in use (used, kB) as shown: rounded to tenths of a GB so they add up to used as
+// shown (largest remainder: the parts rounded down, the tenths left over to the biggest fractions);
+// a part under 1.0 GB in MB. Parts that add up to more than used: each rounded on its own.
+function shares(kbs, used) {
+  const T = 1048576 / 10, t = kbs.map((v) => v / T), f = t.map(Math.floor);
+  const left = Math.round(Number((used / 1048576).toFixed(1)) * 10) - f.reduce((a, b) => a + b, 0);
+  if (left >= 0 && left <= kbs.length) [...t.keys()].sort((a, b) => (t[b] - f[b]) - (t[a] - f[a])).slice(0, left).forEach((i) => f[i]++);
+  else t.forEach((v, i) => { f[i] = Math.round(v); });
+  return kbs.map((v, i) => (f[i] >= 10 ? (f[i] / 10).toFixed(1) + " GB" : size(v) || "0 MB"));
+}
+// The memory in use, by whom, for the bar and its key: you (exact), other login users (an estimate:
+// the card's note says so), the system (the rest): key, name, the name's end a wrapped key drops,
+// kB, and the figure shown (shares); null when not known (memory unknown, or an older server).
+function useView(s) {
+  const m = s.memory, t = s.top || {}, kb = [t.mine_kb, t.users_kb, t.system_kb];
+  if (!m.total_kb || !kb.every((v) => Number.isFinite(v) && v >= 0)) return null;
+  const shown = shares(kb, m.total_kb - m.avail_kb);
+  return [{ k: "you", name: "You", end: "" }, { k: "users", name: "Others", end: "" }, { k: "sys", name: "Sys", end: "tem" }]
+    .map((p, i) => ({ ...p, kb: kb[i], shown: shown[i] }));
+}
+// The key on one line says System; if it wraps (a narrow phone, long figures), Sys. Measured each
+// time (drawn, or the window resized): back to System once it fits again.
+function fitKey() {
+  const k = $("mem-key"), items = k.children;
+  if (k.hidden || !items || items.length < 2) return;
+  k.classList.remove("short");
+  k.classList.toggle("short", items[items.length - 1].offsetTop > items[0].offsetTop);
+}
+// The memory card's two pop-overs, one open at a time: your biggest processes (the key opens it) and
+// the note on the numbers (the i). Kept open across redraws; closed by its button again, by the other
+// opening, by a click elsewhere, or by Esc. POPS: which -> [its button, the pop-over].
+const POPS = { top: ["mem-key", "mem-top"], note: ["mem-about", "mem-note"] };
+let memPop = null;
+function setMemPop(which) {
+  memPop = which;
+  for (const [k, [btn]] of Object.entries(POPS)) $(btn).setAttribute("aria-expanded", String(which === k));
+  placePops();
+}
+function toggleMemPop(which) { setMemPop(memPop === which ? null : which); }
+// Each pop-over under its button, inside the card's width, its arrow at what opened it (the key's
+// first part, You; the i's middle); hidden when not the open one, or its button hidden (memory
+// unknown) or empty. Offsets: a button's from the card (positioned); You's from the key (positioned too).
+function placePops() {
+  for (const [k, [btnId, popId]] of Object.entries(POPS)) {
+    const p = $(popId), b = $(btnId), you = k === "top" ? b.firstElementChild : b;
+    p.hidden = memPop !== k || b.hidden || !you;
+    if (p.hidden) continue;
+    const x = k === "top" ? b.offsetLeft + you.offsetLeft + 10 : b.offsetLeft + b.offsetWidth / 2;
+    const left = Math.max(8, Math.min(x - 20, $("mem").clientWidth - p.offsetWidth - 8));
+    p.style.left = left + "px";
+    p.style.top = b.offsetTop + b.offsetHeight + 10 + "px";  // the arrow's tip (8.5px up) clear of the button
+    p.style.setProperty("--arrow", Math.max(10, x - 6 - left) + "px");
+  }
+}
+// A click anywhere on the page: outside the pop-overs and their buttons (which toggle them), it closes
+// the open one.
+function memPopClick(ev) {
+  const t = ev.target;
+  if (memPop && !(t && t.closest && t.closest("#mem-top, #mem-key, #mem-note, #mem-about"))) setMemPop(null);
+}
+// Esc, while one is open: closes it, the keyboard back on its button.
+function memPopKey(ev) {
+  if (ev.key !== "Escape" || !memPop) return;
+  const btn = POPS[memPop][0];
+  setMemPop(null);
+  $(btn).focus();
+}
+// One part of the key: its swatch (CSS), its name (the end a wrapped key drops), its figure.
+function keyItem({ k, name, end, shown }) {
+  return kids(el("span", null, "k-" + k), document.createTextNode(name), end ? el("span", end, "end") : null,
+    document.createTextNode(" " + shown));
+}
+// The memory card: used/total by its label, memory used, its bar (by whom); under it the swap pill (swap's figures), the key.
+function drawMem(s) {
+  const m = s.memory, used = m.total_kb ? 100 - m.avail_pct : 0;
+  $("mem").classList.toggle("high", m.warn);  // its own class: "warn" is the notes' amber style
+  $("mem-pct").textContent = m.total_kb ? Math.round(used) + "% used" : "unknown";
+  $("mem-used").style.width = Math.max(0, Math.min(100, used)) + "%";
+  const uv = useView(s);  // unknown: the used part one shade (you)
+  for (const { k, kb } of uv || [{ k: "you", kb: 1 }, { k: "users", kb: 0 }, { k: "sys", kb: 0 }]) $("mem-" + k).style.flexGrow = String(kb);
+  $("mem-key").hidden = !uv;
+  $("mem-key").replaceChildren(...(uv || []).map(keyItem), ...(uv ? [el("span", null, "chev")] : []));
+  fitKey(); placePops();  // the key's width, then the open pop-over under it
+  const sv = swapView(m);
+  $("swap").hidden = !sv;
+  if (sv) { $("swap").textContent = sv.pill; $("swap").classList.toggle("hi", sv.hi); }
+  $("mem-det").replaceChildren(document.createTextNode(m.total_kb ? pair(m.total_kb - m.avail_kb, m.total_kb) : ""));
+}
 function render() { keepFocus(draw); }
 function draw() {
   const s = S;
@@ -225,18 +335,9 @@ function draw() {
   $("me").title = s.login;
   $("host").textContent = location.hostname;
   $("upd").textContent = "Updated " + stamp(new Date(s.time * 1000));
-
-  // memory
-  const m = s.memory, used = m.total_kb ? 100 - m.avail_pct : 0;
-  $("mem").classList.toggle("warn", m.warn);
-  $("mem-pct").textContent = m.total_kb ? Math.round(used) + "% used" : "unknown";
-  $("mem-used").style.width = Math.max(0, Math.min(100, used)) + "%";
-  const onKb = s.favorites.filter(isOn).reduce((a, e) => a + (e.mem_kb || 0), 0);
-  $("mem-det").replaceChildren(document.createTextNode(`${size(m.total_kb - m.avail_kb)} of ${size(m.total_kb)} used`), el("br"),
-    document.createTextNode(`${s.on} favorite${s.on === 1 ? "" : "s"} on, using ${size(onKb) || "0 MB"}`));
+  drawMem(s);
 
   const warn = [];
-  if (m.warn) warn.push("Memory is over 85% used; a start needs it at most 80% used.");
   if (s.tmux_error) warn.push(s.tmux_error + ". What runs is not known; nothing is changed until tmux answers.");
   else if (!s.server) warn.push("No tmux server is running.");
   if (s.unknown_files) warn.push(`${s.unknown_files} session file(s) in a format asctl does not know.`);
@@ -268,8 +369,7 @@ function draw() {
   // chips
   const n = { all: s.favorites.length, on: s.favorites.filter(isOn).length };
   n.off = n.all - n.on;
-  n.busy = s.favorites.filter((e) => isOn(e) && e.status === "busy").length;
-  $("chips").replaceChildren(...[["all", "All"], ["on", "On"], ["off", "Off"], ["busy", "Busy"]].map(([k, t]) => {
+  $("chips").replaceChildren(...[["all", "All"], ["on", "On"], ["off", "Off"]].map(([k, t]) => {
     const c = kids(el("button", t, "chip"), el("span", n[k], "n"));
     c.type = "button";
     c.dataset.fk = "chip:" + k;
@@ -281,7 +381,7 @@ function draw() {
   // sessions
   const groups = { attention: [], on: [], off: [] };
   for (const e of s.favorites) if (shown(e)) groups[look(e).group].push(favRow(e));
-  const parts = [...section("Needs attention", "red", groups.attention), ...section("On", "", groups.on),
+  const parts = [...section("Needs attention", "red", groups.attention), ...section("On", "", groups.on, onUse(s.favorites)),
                  ...section("Off", "grey", groups.off)];
   if (!s.favorites.length) parts.push(el("div", "No favorites yet: open a running claude or a past conversation below and favorite it.", "none"));
   else if (!parts.length) parts.push(el("div", "None.", "none"));
@@ -295,11 +395,8 @@ function draw() {
   $("lists").replaceChildren(...parts);
   sweepRows("fav:", "active:");
 
-  // memory in use, by whom (adds up to the memory card's "used"), then this user's biggest
-  // processes: names and sizes only
-  const proc = (name, kb, cls) => kids(el("div", null, "proc" + (cls ? " " + cls : "")), el("span", name), el("span", size(kb), "mono"));
-  $("use").replaceChildren(proc("You", s.top.mine_kb), proc("Other users and the system", s.top.others_kb),
-    proc("In use", s.top.mine_kb + s.top.others_kb, "sum"));
+  // this user's biggest processes, in the memory card (You in its key opens them): names and sizes only
+  const proc = (name, kb) => kids(el("div", null, "proc"), el("span", name), el("span", size(kb), "mono"));
   $("top").replaceChildren(...s.top.mine.map((p) => proc(p.name, p.mem_kb)));
 
   if (sheetOf) renderSheet();
@@ -466,6 +563,11 @@ function staleCheck() {
   if (!stale) { $("stale").hidden = true; $("nup").setAttribute("aria-expanded", "false"); }
 }
 $("newbtn").addEventListener("click", () => openSheet("new", "new"));
+window.addEventListener("resize", () => { fitKey(); placePops(); });
+document.addEventListener("click", memPopClick);
+document.addEventListener("keydown", memPopKey);
+$("mem-about").addEventListener("click", () => toggleMemPop("note"));
+$("mem-key").addEventListener("click", () => toggleMemPop("top"));
 $("nup").addEventListener("click", () => {
   const open = $("stale").hidden;
   $("stale").hidden = !open;

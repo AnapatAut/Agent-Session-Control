@@ -127,4 +127,182 @@ check("new: memory short asks to force it, sent forced only after a yes", `(chai
   await act({ action: "new", name: "x", path: "~/x", rc: false });
   return no && sent.length === 2 && !("force_memory" in sent[0]) && sent[1].force_memory === true && sent[1].path === "~/x";
 }))`);
+// The memory card's swap pill and line (a 10 GB swap; memory known unless said).
+const sw = (free, total = 10485760, mem = 33554432) => `JSON.stringify(swapView({ total_kb: ${mem}, swap_total_kb: ${total}, swap_free_kb: ${free} }))`;
+check("swap: nearly full: amber, its sizes and share", `${sw(104858)} === JSON.stringify({ pill: "SWAP 9.9\u202f/\u202f10.0 GB (99%)", hi: true })`);
+check("swap: a third used: grey", `${sw(6815744)} === JSON.stringify({ pill: "SWAP 3.5\u202f/\u202f10.0 GB (35%)", hi: false })`);
+check("swap: used in MB, total in GB: both units", `JSON.parse(${sw(9961472)}).pill === "SWAP 512 MB\u202f/\u202f10.0 GB (5%)"`);
+check("swap: amber from 90% (as shown, rounded): 90% and 89.5% amber, 89.4% grey", `JSON.parse(${sw(1048576)}).hi === true
+  && JSON.parse(${sw(1101004)}).pill.endsWith(" (90%)") && JSON.parse(${sw(1101004)}).hi === true
+  && JSON.parse(${sw(1111491)}).pill.endsWith(" (89%)") && JSON.parse(${sw(1111491)}).hi === false`);
+check("swap: all free: 0 MB, 0%, grey", `${sw(10485760)} === JSON.stringify({ pill: "SWAP 0 MB\u202f/\u202f10.0 GB (0%)", hi: false })`);
+check("swap: more free than its total (a bad reading): 0%, never below", `JSON.parse(${sw(20000000)}).pill === "SWAP 0 MB\u202f/\u202f10.0 GB (0%)"`);
+check("swap: a total near the float limit: 100%, never Infinity", `JSON.parse(${sw(0, 1e308)}).pill.endsWith(" (100%)")`);
+check("swap: free below 0 (a bad reading): all used, never over 100%", `JSON.parse(${sw(-1048576)}).pill === "SWAP 10.0\u202f/\u202f10.0 GB (100%)"`);
+check("swap: a total below 0 or not a number (a bad reading): NO SWAP", `JSON.parse(${sw(0, -10485760)}).pill === "NO SWAP"
+  && JSON.parse(${sw(0, '"10485760"')}).pill === "NO SWAP" && JSON.parse(${sw(0, "null")}).pill === "NO SWAP"`);
+check("swap: none on the machine: NO SWAP, grey", `${sw(0, 0)} === JSON.stringify({ pill: "NO SWAP", hi: false })`);
+check("swap: memory itself unknown: no pill", `swapView({ total_kb: 0, swap_total_kb: 0, swap_free_kb: 0 }) === null`);
+// The memory card drawn (drawMem) on stand-in elements, one state after another: what the swap
+// pill and the used/total by the label show after the last. Memory 26.0 of 32.0 GB used, a 10 GB swap.
+const card = (...frees) => `(() => {
+  const els = {}, saved = document;
+  const mk = () => { const e = { hidden: false, textContent: "", style: {}, cls: new Set(), kids: [] };
+    e.classList = { toggle: (c, on) => (on ? e.cls.add(c) : e.cls.delete(c)) };
+    e.replaceChildren = (...k) => { e.kids = k; }; return e; };
+  document = { getElementById: (id) => els[id] || (els[id] = mk()), createTextNode: (t) => ({ text: t }),
+    createElement: (tag) => ({ tag }) };
+  try {
+    for (const f of ${JSON.stringify(frees)})
+      drawMem({ favorites: [], on: 0, memory: f === "unknown" ? { total_kb: 0, avail_kb: 0, avail_pct: 0, warn: true }
+        : { total_kb: 33554432, avail_kb: 6291456, avail_pct: 18.8, warn: false, swap_total_kb: f === "none" ? 0 : 10485760, swap_free_kb: f === "none" ? 0 : f } });
+  } finally { document = saved; }
+  const w = els.swap;
+  return JSON.stringify({ hidden: w.hidden, pill: w.textContent, hi: w.cls.has("hi"), det: els["mem-det"].kids.map((k) => k.text ?? k.tag).join("|") });
+})()`;
+check("swap card: nearly full: the pill shown and amber; the details memory's only", `${card(104858)} === JSON.stringify({ hidden: false, pill: "SWAP 9.9\u202f/\u202f10.0 GB (99%)", hi: true,
+  det: "26.0\u202f/\u202f32.0 GB" })`);
+check("swap card: amber, then a third used: grey again", `JSON.parse(${card(104858, 6815744)}).hi === false && JSON.parse(${card(104858, 6815744)}).pill === "SWAP 3.5\u202f/\u202f10.0 GB (35%)"`);
+check("swap card: no swap: NO SWAP", `${card("none")} === JSON.stringify({ hidden: false, pill: "NO SWAP", hi: false, det: "26.0\u202f/\u202f32.0 GB" })`);
+check("swap card: shown, then memory unknown: the pill hidden", `JSON.parse(${card(104858, "unknown")}).hidden === true`);
+check("memory card: high memory: the card's own class high, never warn (the notes' amber style); off again below", `(() => {
+  const els = {}, saved = document;
+  const mk = () => { const e = { hidden: false, textContent: "", style: {}, cls: new Set() };
+    e.classList = { toggle: (c, on) => (on ? e.cls.add(c) : e.cls.delete(c)) }; e.replaceChildren = () => {}; return e; };
+  document = { getElementById: (id) => els[id] || (els[id] = mk()), createTextNode: (t) => ({ text: t }) };
+  const st = (warn) => ({ favorites: [], on: 0, memory: { total_kb: 33554432, avail_kb: 3355443, avail_pct: warn ? 10 : 20, warn,
+    swap_total_kb: 0, swap_free_kb: 0 } });
+  try {
+    drawMem(st(true)); const high = [...els.mem.cls].join();
+    drawMem(st(false)); return high === "high" && els.mem.cls.size === 0;
+  } finally { document = saved; }
+})()`);
+// Memory in use by whom (useView), and the card's bar and key drawn from it (drawMem): you 5.0 GB,
+// other users 12.1 GB (an estimate), the system 10.3 GB, of 32 GB.
+const TOP = "{ mine_kb: 5242880, users_kb: 12687769, system_kb: 10800333 }";
+check("memory by whom: you, other users (an estimate), the system: kB and the figure shown", `JSON.stringify(useView({ memory: { total_kb: 33554432, avail_kb: 4823450 }, top: ${TOP} }))
+  === JSON.stringify([{ k: "you", name: "You", end: "", kb: 5242880, shown: "5.0 GB" },
+    { k: "users", name: "Others", end: "", kb: 12687769, shown: "12.1 GB" },
+    { k: "sys", name: "Sys", end: "tem", kb: 10800333, shown: "10.3 GB" }])`);
+// shares: parts of what is in use, shown so they add up to it as shown (GB: x tenths of a GB in kB).
+const GB = (x) => Math.round(x * 104857.6);
+check("shares: rounded each on its own 5.1 + 12.4 + 10.1 = 27.6, not the 27.5 shown: the tenth over goes from the smallest fraction",
+  `JSON.stringify(shares([${GB(50.8)}, ${GB(123.7)}, ${GB(100.5)}], ${GB(50.8) + GB(123.7) + GB(100.5)})) === JSON.stringify(["5.1 GB", "12.4 GB", "10.0 GB"])`);
+check("shares: rounded each on its own 1.4 + 1.4 + 1.4 = 4.2, not the 4.1 shown: the tenth over goes from the smallest fraction",
+  `JSON.stringify(shares([${GB(13.6)}, ${GB(13.7)}, ${GB(13.8)}], ${GB(13.6) + GB(13.7) + GB(13.8)})) === JSON.stringify(["1.3 GB", "1.4 GB", "1.4 GB"])`);
+check("shares: under 1.0 GB in MB, 1.0 GB as GB, also 0.96 GB rounded up to 1.0 (not 983 MB)", `JSON.stringify(shares([524288, 1048576, 0], 1572864)) === JSON.stringify(["512 MB", "1.0 GB", "0 MB"])
+  && JSON.stringify(shares([1006633], 1006633)) === JSON.stringify(["1.0 GB"])`);
+check("shares: parts above what is in use, or far below it (a bad reading): each rounded on its own",
+  `JSON.stringify(shares([${GB(30.6)}, ${GB(10.6)}], 1048576)) === JSON.stringify(["3.1 GB", "1.1 GB"])
+  && JSON.stringify(shares([1048576, 1048576, 1048576], 4194304)) === JSON.stringify(["1.0 GB", "1.0 GB", "1.0 GB"])`);
+check("memory by whom: unknown memory, an older server (others_kb), no top, or a figure below 0 or not a number: none", `useView({ memory: { total_kb: 0 }, top: ${TOP} }) === null
+  && useView({ memory: { total_kb: 1 }, top: { mine_kb: 1, others_kb: 2 } }) === null && useView({ memory: { total_kb: 1 } }) === null
+  && useView({ memory: { total_kb: 1 }, top: { mine_kb: 1, users_kb: -1, system_kb: 0 } }) === null
+  && useView({ memory: { total_kb: 1 }, top: { mine_kb: 1, users_kb: "2", system_kb: 0 } }) === null`);
+const byWhom = (...states) => `(() => {
+  const els = {}, saved = document;
+  const mk = () => { const e = { hidden: false, textContent: "", style: { setProperty() {} }, cls: new Set(), kids: [],
+    get firstElementChild() { return this.kids[0]; } };
+    e.classList = { toggle: (c, on) => (on ? e.cls.add(c) : e.cls.delete(c)) };
+    e.replaceChildren = (...k) => { e.kids = k; }; return e; };
+  document = { getElementById: (id) => els[id] || (els[id] = mk()), createTextNode: (t) => ({ text: t }),
+    createElement: (tag) => { const e = { tag, kids: [] }; e.append = (c) => e.kids.push(c); return e; } };
+  try {
+    for (const top of [${states.join(", ")}])
+      drawMem({ favorites: [], on: 0, top, memory: top === "unknown" ? { total_kb: 0, avail_kb: 0, avail_pct: 0, warn: false }
+        : { total_kb: 33554432, avail_kb: 4823831, avail_pct: 14.4, warn: true, swap_total_kb: 0, swap_free_kb: 0 } });
+  } finally { document = saved; }
+  return JSON.stringify({ grow: ["you", "users", "sys"].map((k) => els["mem-" + k].style.flexGrow).join(),
+    key: els["mem-key"].hidden ? null : els["mem-key"].kids.map((k) => k.className + ":" + k.kids.map((c) => c.text ?? "[" + c.textContent + "]").join("")).join("|"),
+    pop: els["mem-top"].hidden });
+})()`;
+check("memory card: the bar's three shades as wide as each share; the key names each with its figure", `${byWhom(TOP)} === JSON.stringify({
+  grow: "5242880,12687769,10800333", key: "k-you:You 5.0 GB|k-users:Others 12.1 GB|k-sys:Sys[tem] 10.3 GB|chev:", pop: true })`);
+check("memory card: a share of 0 shows 0 MB; then memory unknown: no key, the used part one shade", `JSON.parse(${byWhom("{ mine_kb: 1048576, users_kb: 0, system_kb: 0 }")}).key
+  === "k-you:You 1.0 GB|k-users:Others 0 MB|k-sys:Sys[tem] 0 MB|chev:"
+  && ${byWhom(TOP, '"unknown"')} === JSON.stringify({ grow: "1,0,0", key: null, pop: true })`);
+// fitKey on a stand-in key whose items sit at the given heights in full (System), all level when
+// short (Sys): its last lower than its first (wrapped): short; level: not; and measured in full,
+// whatever it was before (short already, still too long: short).
+const fit = (tops, before) => `(() => {
+  const saved = document, cls = new Set(${JSON.stringify(before)});
+  const key = { hidden: false, children: ${JSON.stringify(tops)}.map((t) => ({ get offsetTop() { return cls.has("short") ? 0 : t; } })),
+    classList: { remove: (c) => cls.delete(c), toggle: (c, on) => (on ? cls.add(c) : cls.delete(c)) } };
+  document = { getElementById: () => key };
+  try { fitKey(); } finally { document = saved; }
+  return [...cls].join();
+})()`;
+check("memory key: wrapped: Sys; on one line: System; wrapped before, one line now: System again", `${fit([0, 0, 18], [])} === "short"
+  && ${fit([0, 0, 0], [])} === "" && ${fit([0, 0, 0], ["short"])} === "" && ${fit([0, 0, 18], ["short"])} === "short"`);
+// The memory card's pop-overs (setMemPop, toggleMemPop, placePops, memPopClick, memPopKey) on stand-ins:
+// the card (its width), the key (a button: its place in the card, its first part You's place in it),
+// the i (its place), the two pop-overs (their widths). Each run starts with none open; `steps` runs inside; returns `look` (JSON).
+const popRig = (steps, look, geo = {}) => `(() => {
+  const saved = document, g = Object.assign({ card: 358, keyLeft: 8, youLeft: 8, keyTop: 120, keyH: 20, popW: 240, parts: 4, keyHidden: false,
+    iLeft: 168, noteW: 260 }, ${JSON.stringify(geo)});
+  const attrs = (e) => { e.attr = {}; e.setAttribute = (k, v) => { e.attr[k] = v; }; e.getAttribute = (k) => (k in e.attr ? e.attr[k] : null);
+    e.focused = 0; e.focus = () => { e.focused++; }; e.setAttribute("aria-expanded", "false"); return e; };
+  const you = { offsetLeft: g.youLeft };
+  const key = attrs({ hidden: g.keyHidden, offsetLeft: g.keyLeft, offsetTop: g.keyTop, offsetHeight: g.keyH, get firstElementChild() { return g.parts ? you : null; } });
+  const about = attrs({ hidden: false, offsetLeft: g.iLeft, offsetWidth: 18, offsetTop: 0, offsetHeight: 18 });
+  const pane = (w) => ({ hidden: true, offsetWidth: w, style: { vars: {}, setProperty(k, v) { this.vars[k] = v; } } });
+  const pop = pane(g.popW), note = pane(g.noteW);
+  const els = { mem: { clientWidth: g.card }, "mem-key": key, "mem-top": pop, "mem-about": about, "mem-note": note };
+  document = { getElementById: (id) => els[id] };
+  const inside = { closest: (s) => (s === "#mem-top, #mem-key, #mem-note, #mem-about" ? pop : null) }, elsewhere = { closest: () => null };
+  try { memPop = null; ${steps}; return JSON.stringify(${look}); } finally { memPop = null; document = saved; }
+})()`;
+const popState = `{ open: memPop, top: !pop.hidden, note: !note.hidden, key: key.getAttribute("aria-expanded"), i: about.getAttribute("aria-expanded") }`;
+const shut = { open: null, top: false, note: false, key: "false", i: "false" };
+const topOpen = { open: "top", top: true, note: false, key: "true", i: "false" };
+const noteOpen = { open: "note", top: false, note: true, key: "false", i: "true" };
+const geoOf = (w) => `{ left: ${w}.style.left, top: ${w}.style.top, arrow: ${w}.style.vars["--arrow"] }`;
+check("pop-over: the key opens your biggest processes under it (10px below: the arrow's tip clear of it), its arrow at You; a phone: kept 8px in from the card's left",
+  `${popRig('toggleMemPop("top")', `[${popState}, ${geoOf("pop")}]`)} === JSON.stringify([${JSON.stringify(topOpen)}, { left: "8px", top: "150px", arrow: "12px" }])`);
+check("pop-over: a computer (the key on the right): from 10px left of You, its arrow at You (You's place in the key added to the key's)",
+  `${popRig('toggleMemPop("top")', geoOf("pop"), { card: 1053, keyLeft: 732 })} === JSON.stringify({ left: "730px", top: "150px", arrow: "14px" })`);
+check("pop-over: never past the card's right edge (8px in), the arrow still at You",
+  `${popRig('toggleMemPop("top")', geoOf("pop"), { card: 1053, keyLeft: 992 })} === JSON.stringify({ left: "805px", top: "150px", arrow: "199px" })`);
+check("pop-over: the i opens the note under it, its arrow at the i's middle; a phone: moved left to stay in the card",
+  `${popRig('toggleMemPop("note")', `[${popState}, ${geoOf("note")}]`)} === JSON.stringify([${JSON.stringify(noteOpen)}, { left: "90px", top: "28px", arrow: "81px" }])
+  && ${popRig('toggleMemPop("note")', geoOf("note"), { card: 1053 })} === JSON.stringify({ left: "157px", top: "28px", arrow: "14px" })`);
+check("pop-over: one at a time: the key while the note is open swaps them, and back; its own button again closes it",
+  `${popRig('toggleMemPop("note"); toggleMemPop("top")', popState)} === JSON.stringify(${JSON.stringify(topOpen)})
+  && ${popRig('toggleMemPop("top"); toggleMemPop("note")', popState)} === JSON.stringify(${JSON.stringify(noteOpen)})
+  && ${popRig('toggleMemPop("top"); toggleMemPop("top")', popState)} === JSON.stringify(${JSON.stringify(shut)})
+  && ${popRig('toggleMemPop("note"); toggleMemPop("note")', popState)} === JSON.stringify(${JSON.stringify(shut)})`);
+check("pop-over: open, but no key (memory unknown) or a key with no parts: not shown",
+  `JSON.parse(${popRig('toggleMemPop("top")', popState, { keyHidden: true })}).top === false && JSON.parse(${popRig('toggleMemPop("top")', popState, { parts: 0 })}).top === false`);
+check("pop-over: a click inside one or on a button leaves it open; anywhere else closes it",
+  `${popRig('toggleMemPop("top"); memPopClick({ target: inside })', popState)} === JSON.stringify(${JSON.stringify(topOpen)})
+  && ${popRig('toggleMemPop("note"); memPopClick({ target: inside })', popState)} === JSON.stringify(${JSON.stringify(noteOpen)})
+  && ${popRig('toggleMemPop("top"); memPopClick({ target: elsewhere })', popState)} === JSON.stringify(${JSON.stringify(shut)})
+  && ${popRig('toggleMemPop("note"); memPopClick({ target: elsewhere })', popState)} === JSON.stringify(${JSON.stringify(shut)})`);
+check("pop-over: a click with no target, or one without closest(): closes it, no error",
+  `${popRig('toggleMemPop("top"); memPopClick({ target: null })', popState)} === JSON.stringify(${JSON.stringify(shut)})
+  && ${popRig('toggleMemPop("top"); memPopClick({ target: {} })', popState)} === JSON.stringify(${JSON.stringify(shut)})`);
+check("pop-over: a click while none is open changes nothing", `${popRig("memPopClick({ target: elsewhere })", popState)} === JSON.stringify(${JSON.stringify(shut)})`);
+check("pop-over: Esc closes the open one, the keyboard back on its own button; another key, nothing; Esc with none open: the focus left alone",
+  `${popRig('toggleMemPop("top"); memPopKey({ key: "Escape" })', `[${popState}, key.focused, about.focused]`)} === JSON.stringify([${JSON.stringify(shut)}, 1, 0])
+  && ${popRig('toggleMemPop("note"); memPopKey({ key: "Escape" })', `[${popState}, key.focused, about.focused]`)} === JSON.stringify([${JSON.stringify(shut)}, 0, 1])
+  && ${popRig('toggleMemPop("top"); memPopKey({ key: "Enter" })', popState)} === JSON.stringify(${JSON.stringify(topOpen)})
+  && ${popRig('memPopKey({ key: "Escape" })', "[key.focused, about.focused]")} === "[0,0]"`);
+check("pop-over: open stays open through a redraw; memory unknown hides it; known again shows it",
+  `JSON.parse(${byWhom(TOP)}).pop === true && (() => { memPop = "top"; try { return JSON.parse(${byWhom(TOP)}).pop === false
+    && JSON.parse(${byWhom(TOP, '"unknown"')}).pop === true && JSON.parse(${byWhom('"unknown"', TOP)}).pop === false; } finally { memPop = null; } })()`);
+// The On header: the memory its favorites use (1.0 + 2.4 GB on; 5 GB off; 4 GB needing attention).
+const ON = `[{ state: "on", status: "idle", claudes: 1, mem_kb: 1048576 }, { state: "on", status: "busy", claudes: 1, mem_kb: 2516582 },
+  { state: "off", mem_kb: 5242880 }, { state: "duplicate", mem_kb: 4194304 }, { state: "on", status: "idle", claudes: 1 }]`;
+check("on header: the memory of the favorites listed under On only (not Off, not Needs attention)", `onUse(${ON}) === "3.4 GB"`);
+check("on header: none known, or none listed: no figure", `onUse([{ state: "on", status: "idle", claudes: 1 }]) === "" && onUse([]) === ""`);
+check("on header: the Off chip: On lists nothing, so no figure", `(() => { filter = "off"; try { return onUse(${ON}) === ""; } finally { filter = "all"; } })()`);
+check("on header: the figure after the count; no note, no third part", `(() => {
+  const saved = document;
+  document = { createElement: (tag) => { const e = { tag, kids: [] }; e.append = (c) => e.kids.push(c); return e; } };
+  try {
+    const h = section("On", "", [{}], "3.4 GB")[0], bare = section("On", "", [{}], "")[0];
+    return h.textContent === "On" && h.kids.map((k) => k.className + ":" + k.textContent).join() === "pill :1,use:3.4 GB"
+      && bare.kids.length === 1;
+  } finally { document = saved; }
+})()`);
 Promise.all(later).then(() => process.exit(fail ? 1 : 0));

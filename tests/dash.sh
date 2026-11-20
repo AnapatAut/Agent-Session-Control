@@ -16,7 +16,8 @@ chmod 700 "$T/run"
 cp "$(command -v bash)" "$T/fakebash/claude"
 export FAKE_BASH="$T/fakebash/claude"
 # Memory as asctl sees it (asc/memory.py): plenty, unless a test says otherwise.
-mem() { printf 'MemTotal: %s kB\nMemAvailable: %s kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n' "$1" "$2" > "$T/meminfo"; }
+# memory total and available, and swap total and free if given (else no swap), in kB
+mem() { printf 'MemTotal: %s kB\nMemAvailable: %s kB\nSwapTotal: %s kB\nSwapFree: %s kB\n' "$1" "$2" "${3:-0}" "${4:-0}" > "$T/meminfo"; }
 export ASC_MEMINFO="$T/meminfo"
 export ASC_SYSTEMCTL="$REPO/tests/asc/bin/systemctl"  # never the real one (On with no server)
 mem 32000000 16000000
@@ -366,6 +367,59 @@ seen -F '<title>Agent Session Control</title>' "$T/page" && seen -F '<h1>Agent S
 	&& seen -F '<meta name="apple-mobile-web-app-title" content="Sessions">' "$T/page" && ! seen -F '@TITLE@' "$T/page" && ! seen -F '@LABEL@' "$T/page" \
 	&& ok "no name in the config: the tab's title and heading Agent Session Control, the home screen's label Sessions" \
 	|| bad "no name in the config: the tab's title and heading Agent Session Control, the home screen's label Sessions" "page: $(grep -E '<title>|<h1>|apple-mobile-web-app-title' "$T/page")"
+CSS="$REPO/asc/web/app.css"
+seen -F '.mem { display: grid; grid-template-columns: minmax(7em, max-content) minmax(0, 1fr);' "$CSS" \
+	&& seen -F 'grid-template-areas: "lab lab" "big bar" "foot foot";' "$CSS" \
+	&& seen -F '  .mem { grid-template-columns: minmax(0, 1fr); grid-template-areas: "lab" "big" "bar" "key" "swap"; }' "$CSS" \
+	&& seen -F '  .mem .foot { display: contents; }' "$CSS" \
+	&& ok "the memory card: the bar's ends fixed (the figure's column as wide as 100% used); under it the swap pill and the key; a phone: the key, then the pill" \
+	|| bad "the memory card: the bar's ends fixed (the figure's column as wide as 100% used); under it the swap pill and the key; a phone: the key, then the pill" "app.css: $(grep -E 'grid-template|\.mem \.foot' "$CSS")"
+seen -F '.mem .key { position: relative; margin: -3px -8px -3px auto; padding: 3px 8px;' "$CSS" && seen -F '  .mem .key { grid-area: key; justify-self: start; margin: -3px -8px; }' "$CSS" \
+	&& seen -F '.mem .key::before { content: ""; position: absolute; inset: -7px 0; }' "$CSS" \
+	&& seen -F '.mem .key.short .end { display: none; }' "$CSS" && seen -F '.mem .key > :not(.chev)::before' "$CSS" \
+	&& seen -F '.mem .key[aria-expanded="true"] .chev::after { content: "\25B4"; }' "$CSS" \
+	&& ok "the key: one button the line long, a small highlight, 36px tall to a finger, its text where it was; a wrapped key drops the end of System; a swatch on each part, not the arrow" \
+	|| bad "the key: one button the line long, a small highlight, 36px tall to a finger, its text where it was; a wrapped key drops the end of System; a swatch on each part, not the arrow" "app.css: $(grep -F '.mem .key' "$CSS")"
+seen -F '.mem { position: relative; }' "$CSS" && seen -F '.mem .pop { position: absolute; z-index: 5;' "$CSS" \
+	&& seen -F '.mem .pop .proc > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }' "$CSS" \
+	&& seen -F '.mem .pop .proc > span:last-child { flex: none; white-space: nowrap; }' "$CSS" \
+	&& ok "the pop-overs float over the page, placed from the card; a name too wide cut with an ellipsis, a size never wrapped" || bad "the pop-overs float over the page, placed from the card; a name too wide cut with an ellipsis, a size never wrapped" "app.css: $(grep -F '.pop' "$CSS")"
+seen -F '.mem .lab { grid-area: lab; margin: 0; font-size: 13px; font-weight: 700;' "$CSS" && seen -F '.mem .det { margin-left: 8px; font-size: 12px; font-weight: 400;' "$CSS" \
+	&& ok "the label MEMORY in 13px bold, used/total beside it in 12px regular" || bad "the label MEMORY in 13px bold, used/total beside it in 12px regular" "app.css: $(grep -E '\.mem \.(lab|det) ' "$CSS")"
+seen -F '.mem.high .k-you { --seg: #a3171c; } .mem.high .k-users { --seg: var(--red); } .mem.high .k-sys { --seg: #f2a3a6; }' "$CSS" \
+	&& ok "high memory: the bar's and the key's three shades red, darkest to lightest" || bad "high memory: the bar's and the key's three shades red, darkest to lightest" "app.css: $(grep -F '.mem.high' "$CSS")"
+JS="$REPO/asc/web/app.js"
+seen -F '$("mem-about").addEventListener("click", () => toggleMemPop("note"));' "$JS" && seen -F '$("mem-key").addEventListener("click", () => toggleMemPop("top"));' "$JS" \
+	&& seen -F 'window.addEventListener("resize", () => { fitKey(); placePops(); });' "$JS" \
+	&& seen -F 'document.addEventListener("click", memPopClick);' "$JS" && seen -F 'document.addEventListener("keydown", memPopKey);' "$JS" \
+	&& ok "the i and the key open their pop-overs; a click elsewhere and Esc reach them; a resize fits the key and places them again" \
+	|| bad "the i and the key open their pop-overs; a click elsewhere and Esc reach them; a resize fits the key and places them again" "app.js: $(grep -E 'addEventListener\((\"resize\"|\"click\", (\(\) => toggleMemPop|memPop)|\"keydown\", memPop)' "$JS")"
+seen -F '.k-you { --seg: var(--dark); } .k-users { --seg: var(--mute); } .k-sys { --seg: var(--faint); }' "$REPO/asc/web/app.css" \
+	&& ok "the bar and its key: you dark, other users grey, the system light" || bad "the bar and its key: you dark, other users grey, the system light" "app.css: $(grep -F -- '--seg' "$REPO/asc/web/app.css")"
+seen -F '.mem.high .big { color: var(--red); }' "$REPO/asc/web/app.css" && ! seen -F '.mem.high .bar' "$REPO/asc/web/app.css" \
+	&& ! seen -F '.mem.warn' "$REPO/asc/web/app.css" \
+	&& ok "high memory: the card stays white; its figure turns red (the bar keeps its shades)" || bad "high memory: the card stays white; its figure turns red (the bar keeps its shades)" "app.css: $(grep -F '.mem.' "$REPO/asc/web/app.css" | grep -E 'warn|high')"
+seen -F '[["all", "All"], ["on", "On"], ["off", "Off"]].map' "$REPO/asc/web/app.js" && ! seen -F '"Busy"]' "$REPO/asc/web/app.js" \
+	&& ok "the chips: All, On, Off (no Busy: the rows show who works)" || bad "the chips: All, On, Off (no Busy: the rows show who works)" "app.js: $(grep -F '["all", "All"]' "$REPO/asc/web/app.js")"
+! seen -F 'Memory is over' "$REPO/asc/web/app.js" && ok "high memory has no note above the card (the card turns red; nothing shifts)" \
+	|| bad "high memory has no note above the card (the card turns red; nothing shifts)" "app.js puts a memory note in the banner"
+seen -F '<div class="newrow"><div class="chips" id="chips" role="group" aria-label="Show"></div><button class="btn sm p" id="newbtn" type="button" aria-label="New session" title="New session">+ New<span class="lbl"> session</span></button></div>' "$T/page" \
+	&& ok "the chips and New session share one row (chips first); its name New session, also as + New" || bad "the chips and New session share one row (chips first); its name New session, also as + New" "page: $(grep -F 'newbtn' "$T/page")"
+seen -F 'padding: 9px 14px; min-height: 38px;' "$REPO/asc/web/app.css" && seen -F '.newrow .btn { margin: 0 0 0 auto; min-height: 38px; }' "$REPO/asc/web/app.css" \
+	&& ok "New session is as tall as the chips (38px)" || bad "New session is as tall as the chips (38px)" "app.css: $(grep -E '^\.chip \{|min-height: 38px|\.newrow \.btn' "$REPO/asc/web/app.css")"
+seen -F '@media (max-width: 480px) {' "$REPO/asc/web/app.css" && seen -F '  .newrow .btn .lbl { display: none; }' "$REPO/asc/web/app.css" \
+	&& ok "a phone: New session reads + New (the chips fit beside it)" || bad "a phone: New session reads + New (the chips fit beside it)" "app.css: $(grep -F '.newrow' "$REPO/asc/web/app.css")"
+seen -F '<div class="lab">MEMORY<span class="det" id="mem-det"></span><button class="about" id="mem-about" type="button" aria-expanded="false" aria-controls="mem-note" aria-label="About these memory numbers"><svg viewBox="0 0 16 16" aria-hidden="true">' "$T/page" \
+	&& seen -F '<div class="pop note" id="mem-note" role="dialog" aria-label="About these memory numbers" hidden>Memory numbers are close, not exact. The orange mark is 80% used: sessions start only up to it.</div>' "$T/page" \
+	&& ok "the memory card: used/total and the i by its label; the i's note a pop-over, hidden until asked (close numbers; the orange mark)" \
+	|| bad "the memory card: used/total and the i by its label; the i's note a pop-over, hidden until asked (close numbers; the orange mark)" "page: $(grep -E 'mem-det|mem-note' "$T/page")"
+seen -F '<div class="foot"><span class="swap" id="swap" hidden></span><button class="key" id="mem-key" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="mem-top" hidden></button></div>' "$T/page" \
+	&& seen -F '<div class="pop" id="mem-top" role="dialog" aria-label="Your biggest processes" hidden><div class="sub">Your biggest processes</div><div id="top"></div></div>' "$T/page" \
+	&& ok "the memory card has the swap pill and the key (a button opening your biggest processes) under its bar, all hidden until the state is drawn" \
+	|| bad "the memory card has the swap pill and the key (a button opening your biggest processes) under its bar, all hidden until the state is drawn" "page: $(grep -E 'mem-key|mem-top' "$T/page")"
+! seen -F '<summary>Your biggest processes</summary>' "$T/page" && ! seen -E 'id="mem"[^>]* title=' "$T/page" && ! seen -F 'title="Used' "$T/page" \
+	&& ok "no tooltip on the memory card (the i says it), no biggest-processes section at the bottom (the key opens it)" \
+	|| bad "no tooltip on the memory card (the i says it), no biggest-processes section at the bottom (the key opens it)" "page: $(grep -E 'biggest|title="Used' "$T/page")"
 }
 
 # The config with the name $1, a JSON value as written (dash_conf's modes).
@@ -411,14 +465,40 @@ tm new-session -d -s dev -c "$W" -- "$ASC_CLAUDE" --session-id "$SID" --name dev
 pid=$(claude_in dev) || stop "a claude in dev"
 s=$(state)
 jq -e '.memory.avail_pct > 0 and .memory.total_kb > 0' <<<"$s" >/dev/null && ok "state: memory" || bad "state: memory" "state: no memory"
+mem 32000000 16000000 8000000 2000000
+jq -e '.memory.swap_total_kb == 8000000 and .memory.swap_free_kb == 2000000' <<<"$(state)" >/dev/null \
+	&& ok "state: swap total and free, for the swap pill" || bad "state: swap total and free, for the swap pill" "state memory: $(state | jq -c .memory)"
+mem 32000000 16000000
 jq -e --arg s "$SID" '.active | map(select(.session_id == $s and .tmux == "dev")) | length == 1' <<<"$s" >/dev/null && ok "state: the running claude, not favorited" || bad "state: the running claude, not favorited" "state: active list wrong: $s"
 jq -e '.top.mine | length > 0 and all(keys == ["mem_kb", "name"])' <<<"$s" >/dev/null && ok "state: own biggest processes, names and sizes only" || bad "state: own biggest processes, names and sizes only" "state: top processes wrong"
-jq -e '.top.others_kb | type == "number"' <<<"$s" >/dev/null && ok "state: other users as one total" || bad "state: other users as one total" "state: no others total"
+jq -e '(.top.users_kb | type == "number") and (.top.system_kb | type == "number") and (.top | has("others_kb") | not)' <<<"$s" >/dev/null \
+	&& ok "state: other users and the system as two totals, no names" || bad "state: other users and the system as two totals, no names" "state top: $(jq -c '.top | del(.mine)' <<<"$s")"
 mem 100000000 60000000
-jq -e '(.top.mine_kb > 0) and (.top.mine_kb >= (.top.mine | map(.mem_kb) | add)) and (.top.others_kb + .top.mine_kb == 40000000)' <<<"$(state)" >/dev/null \
-	&& ok "state: other users and the system are what is in use less this user's (never more than the machine has)" || bad "state: other users and the system are what is in use less this user's (never more than the machine has)" "state: others $(state | jq -c .top)"
+jq -e '(.top.mine_kb > 0) and (.top.mine_kb >= (.top.mine | map(.mem_kb) | add)) and (.top.users_kb >= 0) and (.top.system_kb >= 0)
+	and (.top.users_kb + .top.system_kb + .top.mine_kb == 40000000)' <<<"$(state)" >/dev/null \
+	&& ok "state: you, other users and the system add up to what is in use (never more than the machine has)" || bad "state: you, other users and the system add up to what is in use (never more than the machine has)" "state: $(state | jq -c '.top | del(.mine)')"
 mem 100000000 99999990
-jq -e '.top.others_kb == 0' <<<"$(state)" >/dev/null && ok "state: less in use than this user's own: the rest is 0, not below" || bad "state: less in use than this user's own: the rest is 0, not below" "state: others below 0: $(state | jq -c .top)"
+jq -e '.top.users_kb == 0 and .top.system_kb == 0' <<<"$(state)" >/dev/null && ok "state: less in use than this user's own: the rest is 0, not below" || bad "state: less in use than this user's own: the rest is 0, not below" "state: below 0: $(state | jq -c '.top | del(.mine)')"
+python3 -I -c 'import os, sys; sys.path.insert(0, sys.argv[1]); from asc import dash
+me = 1001
+assert dash.users_kb([(1000, 5), (60000, 7), (me, 100), (0, 100), (999, 100), (60001, 100), (65534, 100), (100000, 100)], me) == 12
+assert dash.users_kb([], me) == 0
+assert dash.by_whom(10, 3, 2) == (2, 5) and dash.by_whom(10, 3, 100) == (7, 0) and dash.by_whom(10, 30, 5) == (0, 0)' "$REPO" 2>"$T/err" \
+	&& ok "other users: login users only (1000 to 60000), not this user, root, system users, nobody or a container's subuids; at most the rest, the system the rest of it" \
+	|| bad "other users: login users only (1000 to 60000), not this user, root, system users, nobody or a container's subuids; at most the rest, the system the rest of it" "$(tail -3 "$T/err")"
+mkdir -p "$T/proc/1" "$T/proc/2" "$T/proc/3" "$T/proc/4"
+printf 'Name:\tUid:\\t7\nUid:\t1000\t0\t0\t0\nRssFile:\t  9999 kB\nRssAnon:\t  2048 kB\n' > "$T/proc/1/status"  # a name as the kernel escapes it
+printf 'Name:\tkthreadd\nUid:\t0\t0\t0\t0\n' > "$T/proc/2/status"  # a kernel thread: no RssAnon
+printf 'Name:\tx\n' > "$T/proc/3/status"; printf 'Name:\tx\nUid:\tx\n' > "$T/proc/4/status"
+python3 -I -c 'import os, sys; sys.path.insert(0, sys.argv[1]); from asc import live
+p = sys.argv[2]
+assert live.uid_anon_kb(1, p) == (1000, 2048), live.uid_anon_kb(1, p)
+assert live.uid_anon_kb(2, p) == (0, 0), live.uid_anon_kb(2, p)
+assert live.uid_anon_kb(3, p) is None and live.uid_anon_kb(4, p) is None and live.uid_anon_kb(5, p) is None
+u = live.uid_anon_kb(os.getpid())
+assert u and u[0] == os.getuid() and u[1] > 0, u' "$REPO" "$T/proc" 2>"$T/err" \
+	&& ok "a process's real uid and own memory (RssAnon) from its status; 0 for a kernel thread; none unreadable or gone" \
+	|| bad "a process's real uid and own memory (RssAnon) from its status; 0 for a kernel thread; none unreadable or gone" "$(tail -3 "$T/err")"
 mem 32000000 16000000
 jq -e '.server == true' <<<"$s" >/dev/null && ok "state: the tmux server is up" || bad "state: the tmux server is up" "state: server not seen"
 }

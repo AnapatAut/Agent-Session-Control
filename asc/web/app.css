@@ -37,24 +37,74 @@ h1 { font-size: 26px; line-height: 31px; font-weight: 700; margin: 0; letter-spa
 .banner { background: var(--red-soft); color: var(--red); }
 
 /* memory: the number every start is gated on */
-.mem { display: flex; align-items: center; gap: 14px; background: var(--card); border-radius: 14px;
+/* the figure's column as wide as "100% used" (wider only if it must): the bar's ends never move as the figures change */
+.mem { display: grid; grid-template-columns: minmax(7em, max-content) minmax(0, 1fr); column-gap: 14px; row-gap: 2px;
+       grid-template-areas: "lab lab" "big bar" "foot foot"; align-items: center; background: var(--card); border-radius: 14px;
        padding: 12px 16px; margin-top: 16px; box-shadow: 0 1px 2px rgba(20,20,40,.04); }
-.mem .lab { font-size: 11px; font-weight: 700; color: var(--mute); letter-spacing: .06em; }
-.mem .big { font-size: 20px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; }
-.mem.warn .big { color: var(--red); }
-.mem .bar { flex: 1; height: 8px; border-radius: 99px; background: var(--line); position: relative; }
-.mem .bar i { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--dark); border-radius: 99px; }
-.mem.warn .bar i { background: var(--red); }
+/* the figure's part: its pieces placed in the card's grid, the figure level with the bar */
+.mem .head { display: contents; }
+.mem .lab { grid-area: lab; margin: 0; font-size: 13px; font-weight: 700; color: var(--mute); letter-spacing: .06em; }
+.mem .big { grid-area: big; font-size: 20px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; }
+.mem.high .big { color: var(--red); }
+.mem .bar { grid-area: bar; height: 8px; border-radius: 99px; background: var(--line); position: relative; }
+/* the used part: you, other users, the system, each as wide as its share (flex-grow: its kB) */
+.mem .bar .fill { position: absolute; inset: 0 auto 0 0; width: 0; display: flex; border-radius: 99px; overflow: hidden; }
+.mem .bar i { flex: 0 1 0; min-width: 0; background: var(--seg); }
+.k-you { --seg: var(--dark); } .k-users { --seg: var(--mute); } .k-sys { --seg: var(--faint); }
+.mem.high .k-you { --seg: #a3171c; } .mem.high .k-users { --seg: var(--red); } .mem.high .k-sys { --seg: #f2a3a6; }  /* high: red, darkest to lightest */
 .mem .bar b { position: absolute; top: -3px; bottom: -3px; left: 80%; width: 2px; background: var(--amber); border-radius: 2px; }
-.mem .det { font-size: 12px; color: var(--mute); text-align: right; line-height: 1.35; white-space: nowrap; }
+/* under the bar: the swap pill (swapView in app.js, amber when nearly full) on the left, the key on the
+   right, ending where the bar ends (a phone: the key on a line of its own) */
+.mem .foot { grid-area: foot; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 6px; }
+/* the info button: shows or hides the note on the memory numbers; an SVG, centred by its geometry
+   (a bigger tap target than it looks) */
+.mem .lab { display: flex; align-items: center; }
+.mem .about { position: relative; display: inline-grid; place-items: center; width: 18px; height: 18px; margin-left: 6px; padding: 0;
+              border: 0; border-radius: 50%; background: none; color: var(--mute); cursor: pointer; }
+.mem .about svg { width: 16px; height: 16px; display: block; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
+.mem .about svg .dot { fill: currentColor; stroke: none; }
+.mem .about::before { content: ""; position: absolute; inset: -10px; }
+.mem .about[aria-expanded="true"] { color: var(--ink); }
+.mem .about:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.mem .det { margin-left: 8px; font-size: 12px; font-weight: 400; letter-spacing: 0; white-space: nowrap; }  /* used/total, beside the label */
+/* the key: one button, the whole line, opening your biggest processes (setMemPop); its padding, taken
+   back by its margins, keeps its text where it was (from the bar's start on a phone, to the bar's end
+   on a computer) and its highlight small; an invisible ::before makes it 36px tall to a finger */
+.mem .key { position: relative; margin: -3px -8px -3px auto; padding: 3px 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px;
+            border: 0; border-radius: 8px; background: none; font: inherit; font-size: 12px; color: var(--mute); text-align: left; cursor: pointer; }
+@media (hover: hover) { .mem .key:hover { background: var(--well); } }
+.mem .key[aria-expanded="true"] { background: var(--well); }
+.mem .key::before { content: ""; position: absolute; inset: -7px 0; }
+.mem .key:focus-visible { outline: 2px solid var(--blue); outline-offset: 0; }
+.mem .key > * { white-space: nowrap; }
+.mem .key .chev::after { content: "\25BE"; }  /* ▾; ▴ while open */
+.mem .key[aria-expanded="true"] .chev::after { content: "\25B4"; }
+.mem .key.short .end { display: none; }  /* wrapped: System as Sys (fitKey) */
+/* the pop-overs (your biggest processes, the note): over the page, the arrow at what opened them; placed by placePops (left, top, --arrow) */
+.mem { position: relative; }
+.mem .pop { position: absolute; z-index: 5; width: 240px; max-width: calc(100% - 16px); background: var(--card); border-radius: 12px;
+            padding: 8px 12px; box-shadow: 0 8px 28px rgba(20,20,40,.18), 0 0 0 1px var(--line); }
+.mem .pop::before { content: ""; position: absolute; top: -6px; left: var(--arrow, 16px); width: 12px; height: 12px; background: var(--card);
+                    transform: rotate(45deg); box-shadow: -1px -1px 0 var(--line); }
+.mem .pop .sub { font-size: 11px; font-weight: 700; color: var(--mute); letter-spacing: .04em; margin: 2px 0; }
+.mem .pop .proc { padding: 5px 0; border-top: 0; font-size: 12px; }
+/* a name too wide (15 characters at most: the kernel's limit) cut with an ellipsis; the size never wraps */
+.mem .pop .proc > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mem .pop .proc > span:last-child { flex: none; white-space: nowrap; }
+.mem .pop.note { width: 260px; font-size: 12px; line-height: 1.45; color: var(--ink); }
+.mem .key > :not(.chev)::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; background: var(--seg); }
+.mem .swap { font-size: 11px; font-weight: 700; letter-spacing: .02em;
+             padding: 2px 8px; border-radius: 99px; background: var(--line); color: var(--mute); white-space: nowrap; }
+.mem .swap.hi { background: var(--amber-soft); color: var(--amber); }
 
-.chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0 4px; }
+.chips { display: flex; gap: 8px; flex-wrap: wrap; }
 .chip { display: inline-flex; align-items: center; border: 0; background: var(--card); font-size: 13px; font-weight: 600;
         border-radius: 999px; padding: 9px 14px; min-height: 38px; cursor: pointer; }
 .chip[aria-pressed="true"] { background: var(--dark); color: #fff; }
 .chip .n { color: var(--mute); margin-left: 4px; } .chip[aria-pressed="true"] .n { color: #bdbdc7; }
 
 .sect { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 700; margin: 22px 0 10px; }
+.sect .use { font-size: 13px; font-weight: 600; color: var(--mute); }
 .pill { display: inline-block; min-width: 22px; text-align: center; background: var(--lime); color: var(--ink);
         font-size: 12px; font-weight: 700; padding: 3px 7px; border-radius: 999px; white-space: nowrap; }
 .pill.grey { background: var(--card); color: var(--mute); }
@@ -103,7 +153,6 @@ details.top[open] summary::after { transform: rotate(90deg); }
 .procs { margin-top: 10px; }
 .proc { display: flex; justify-content: space-between; gap: 12px; padding: 9px 16px; border-top: 1px solid var(--line); font-size: 13px; }
 .proc:first-child { border-top: 0; }
-.proc.sum { font-weight: 600; }
 
 @media (max-width: 760px) {
   /* the date is too long beside the title: its own line under the host; the login stays top right */
@@ -114,7 +163,12 @@ details.top[open] summary::after { transform: rotate(90deg); }
          row-gap: 6px; padding: 11px 14px; align-items: start; }
   .meta, .note { padding-left: 20px; }
   .note:empty { display: none; }
-  .mem { flex-wrap: wrap; row-gap: 8px; } .mem .bar { flex-basis: 100%; order: 3; } .mem .det { margin-left: auto; }
+  /* a phone: the key under the bar, the swap pill under the key */
+  .mem { grid-template-columns: minmax(0, 1fr); grid-template-areas: "lab" "big" "bar" "key" "swap"; }
+  .mem .foot { display: contents; }
+  .mem .swap { grid-area: swap; justify-self: start; margin-top: 4px; }
+  .mem .key { grid-area: key; justify-self: start; margin: -3px -8px; }
+  .mem .bar { margin: 8px 0 4px; }
 }
 
 /* messages after an action */
@@ -193,7 +247,12 @@ details.top .opts { background: var(--card); margin-top: 10px; }
 .fl input { display: block; width: 100%; border: 2px solid var(--line); border-radius: 14px; padding: 11px 13px;
             font: inherit; font-size: 16px; background: var(--well); outline: none; }
 .fl input:focus { border-color: var(--blue); background: #fff; }
-.newrow { display: flex; justify-content: flex-end; margin-top: 4px; }
+/* the chips and New session on one line (a phone shows + New so both fit); if ever too narrow, the button wraps under them, still on the right */
+.newrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 16px 0 4px; }
+.newrow .btn { margin: 0 0 0 auto; min-height: 38px; }  /* not .sm's margin-top, and the chips' height: level with them */
+@media (max-width: 480px) {
+  .newrow .btn .lbl { display: none; }
+}
 .dlg-err { min-height: 18px; margin-top: 6px; font-size: 12.5px; color: var(--red); }
 .dlg-err:empty { min-height: 0; margin: 0; }
 .dlg-b { display: flex; gap: 10px; margin-top: 18px; }

@@ -38,13 +38,14 @@
 <div id="notes"></div>
 
 <section class="mem" id="mem" aria-label="Memory">
-  <div><div class="lab">MEMORY</div><div class="big" id="mem-pct"></div></div>
-  <div class="bar" id="mem-bar" title="Used = total minus what the kernel calls available (what earlyoom and starts go by; htop counts some shared memory and kernel caches as free). Starts need at most 80% used."><i id="mem-used"></i><b id="mem-gate"></b></div>
-  <div class="det" id="mem-det"></div>
+  <div class="head"><div class="lab">MEMORY<span class="det" id="mem-det"></span><button class="about" id="mem-about" type="button" aria-expanded="false" aria-controls="mem-note" aria-label="About these memory numbers"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.75"/><path d="M8 7.25v4"/><circle class="dot" cx="8" cy="4.9" r=".9"/></svg></button></div><div class="big" id="mem-pct"></div></div>
+  <div class="bar" id="mem-bar"><span class="fill" id="mem-used"><i class="k-you" id="mem-you"></i><i class="k-users" id="mem-users"></i><i class="k-sys" id="mem-sys"></i></span><b id="mem-gate"></b></div>
+  <div class="foot"><span class="swap" id="swap" hidden></span><button class="key" id="mem-key" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="mem-top" hidden></button></div>
+  <div class="pop" id="mem-top" role="dialog" aria-label="Your biggest processes" hidden><div class="sub">Your biggest processes</div><div id="top"></div></div>
+  <div class="pop note" id="mem-note" role="dialog" aria-label="About these memory numbers" hidden>Memory numbers are close, not exact. The orange mark is 80% used: sessions start only up to it.</div>
 </section>
 
-<div class="newrow"><button class="btn sm p" id="newbtn" type="button">+ New session</button></div>
-<div class="chips" id="chips" role="group" aria-label="Show"></div>
+<div class="newrow"><div class="chips" id="chips" role="group" aria-label="Show"></div><button class="btn sm p" id="newbtn" type="button" aria-label="New session" title="New session">+ New<span class="lbl"> session</span></button></div>
 <main id="lists"></main>
 
 <div class="sect">Past conversations</div>
@@ -52,8 +53,6 @@
 <div class="list" id="past"></div>
 
 <details class="top"><summary>Settings</summary><div class="opts" id="opts"></div></details>
-<details class="top"><summary>Memory in use</summary><div class="list procs" id="use"></div></details>
-<details class="top"><summary>Your biggest processes</summary><div class="list procs" id="top"></div></details>
 
 <div class="toast" id="toast" role="status" hidden></div>
 <div class="scrim" id="scrim"><div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="Details"></div></div>
