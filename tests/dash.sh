@@ -362,6 +362,46 @@ seen -E 'transition: transform' "$REPO/asc/web/app.css" && ! seen -E 'transition
 seen -F 'rel="preload" href="splash.js"' "$T/page" && seen -F 'rel="preload" href="splash-512.png?v=' "$T/page" \
 	&& ok "the splash script and image are preloaded" || bad "the splash script and image are preloaded" "splash not preloaded"
 seen -F 'serviceWorker.register("sw.js")' "$REPO/asc/web/app.js" && ok "the page registers the worker (relative, works under a prefix)" || bad "the page registers the worker (relative, works under a prefix)" "no worker registration"
+seen -F '<title>Agent Session Control</title>' "$T/page" && seen -F '<h1>Agent Session Control</h1>' "$T/page" \
+	&& seen -F '<meta name="apple-mobile-web-app-title" content="Sessions">' "$T/page" && ! seen -F '@TITLE@' "$T/page" && ! seen -F '@LABEL@' "$T/page" \
+	&& ok "no name in the config: the tab's title and heading Agent Session Control, the home screen's label Sessions" \
+	|| bad "no name in the config: the tab's title and heading Agent Session Control, the home screen's label Sessions" "page: $(grep -E '<title>|<h1>|apple-mobile-web-app-title' "$T/page")"
+}
+
+# The config with the name $1, a JSON value as written (dash_conf's modes).
+name_conf() { printf '{"login": "%s", "host": "%s", "name": %s}\n' "$LOGIN" "$HOST" "$1" > "$CONF"; }
+
+case_name() {
+echo "== the app's name (dash.json)"
+fresh; dash_conf; tmux_up
+why=
+for v in '""' '" lead"' '"trail "' '"two  spaces"' '"x<b>"' '"tab\tx"' '"ok\u00e9"' '123' 'null' '["x"]'; do
+	name_conf "$v"
+	refuses && seen 'name must be 1 to 24 ASCII letters' "$T/err" || why="$why $v: $(tail -1 "$T/err")"
+done
+[ -z "$why" ] && ok "a bad name stops the dashboard, saying why: empty, a space at an end, two spaces, another character, not text" \
+	|| bad "a bad name stops the dashboard, saying why: empty, a space at an end, two spaces, another character, not text" "taken or another error:$why"
+name_conf '"abcdefghijklmnopqrstuvwxy"'
+refuses && seen 'name must be' "$T/err" && ok "a name of 25 characters: refused" || bad "a name of 25 characters: refused" "25 characters taken: $(cat "$T/err")"
+name_conf '"Ab-c_d.e 1 abcdefghijklm"'
+start_dash && ok "a name of 24 characters, with each kind of character: taken" || bad "a name of 24 characters, with each kind of character: taken" "refused: $(cat "$T/dash.err")"
+stop_dash
+name_conf '"Test Name 1"'
+start_dash || stop "a dashboard with a name for the case"
+page_get
+m=$(anon "http://x/manifest.json")
+r=$(curl -s --unix-socket "$SOCK" -H "Host: $HOST" http://x/)
+jq -e '.short_name == "Test Name 1" and .x_title == "Test Name 1" and .name == "\u200b"' <<<"$m" >/dev/null \
+	&& seen -F '<title>Test Name 1</title>' "$T/page" && seen -F '<h1>Test Name 1</h1>' "$T/page" \
+	&& seen -F '<meta name="apple-mobile-web-app-title" content="Test Name 1">' "$T/page" && seen -F '<title>Test Name 1</title>' <<<"$r" \
+	&& ok "the name: the home screen's label, x_title, the tab's title, the heading and the 403 page's title" \
+	|| bad "the name: the home screen's label, x_title, the tab's title, the heading and the 403 page's title" "manifest: $m; page: $(grep -E '<title>|<h1>|apple-mobile-web-app-title' "$T/page"); 403: $r"
+# Escaped all the same (the pattern alone keeps < & " out): given straight to the page's filling.
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import dash
+n = "<b>&\"'"'"'"
+assert dash.page("@TITLE@|@LABEL@", "t", n) == "&lt;b&gt;&amp;&quot;&#x27;|&lt;b&gt;&amp;&quot;&#x27;"
+assert "<title>&lt;b&gt;&amp;&quot;&#x27;</title>" in dash.refused_page(n)' "$REPO" 2>"$T/err" \
+	&& ok "the name is escaped in the page and the 403 page" || bad "the name is escaped in the page and the 403 page" "$(tail -3 "$T/err")"
 }
 
 case_state() {
@@ -839,7 +879,7 @@ else
 fi
 }
 
-run_cases dash page config socket pwa state actions_token actions_fav actions_new past client operator stale tmux_hang transcripts token rc notices prefix systemd
+run_cases dash page config socket pwa name state actions_token actions_fav actions_new past client operator stale tmux_hang transcripts token rc notices prefix systemd
 
 echo "dash: $pass passed, $fail failed"
 [ "$fail" = 0 ]

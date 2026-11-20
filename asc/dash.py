@@ -32,12 +32,17 @@ prefix (optional) is the path `tailscale serve --set-path` mounts this user's da
 Give each user's dashboard an origin of its own (its own serve port or host): paths of one
 host:port share one browser origin, so a page under another user's path could read this
 page's token and post actions with this login (the Origin header has no path).
+name (optional) is the app's name: the home screen's label, the tab's title, the page's heading,
+and what a reader such as serve-dash lists; 1 to 24 ASCII letters, digits, ".", "_" or "-", with
+single spaces between words. Without it: "Sessions" on the home screen, "Agent Session Control"
+elsewhere. A phone shows a new name once the app is added to it again.
 The server exits after --idle seconds without a request (systemd starts it again on the next),
 once no action is running; on SIGTERM it waits up to 100 s for running actions. The page token
 is kept in the socket's folder (0600), so a page left open still works after a restart.
 """
 import fcntl
 import hmac
+import html
 import http.server
 import ipaddress
 import json
@@ -71,17 +76,26 @@ CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' 
 # browsers cache icons by URL, and Android builds the installed app once per id, so a new icon
 # reaches a phone only through a new id (a reinstall). Bump it whenever an icon file changes.
 ICON_VER = "1"
-# URLs are relative to the manifest, so the app works under a prefix too.
-MANIFEST = json.dumps({
-    # name: a zero-width space, as Android prints it under the icon on its launch screen, which
-    # cannot be turned off; short_name labels the launcher. x_title: the full name, for readers
-    # that list serve ports and are refused the page (serve-dash reads it first); browsers ignore it.
-    "name": "\u200b", "short_name": "Sessions", "x_title": "Agent Session Control",
-    "id": f"asctl?v={ICON_VER}", "start_url": f"./?v={ICON_VER}", "scope": "./", "display": "standalone",
-    "background_color": "#ffffff", "theme_color": "#ffffff",
-    "icons": [{"src": f"icon-{n}.png?v={ICON_VER}", "sizes": f"{n}x{n}", "type": "image/png"} for n in (192, 512)]
-    + [{"src": f"icon-maskable-{n}.png?v={ICON_VER}", "sizes": f"{n}x{n}", "type": "image/png", "purpose": "maskable"}
-       for n in (192, 512)]})
+# The app's name: dash.json's name when it has one, else LABEL on the home screen and TITLE
+# elsewhere. The pattern keeps it plain text; it is escaped wherever it goes all the same.
+LABEL, TITLE = "Sessions", "Agent Session Control"
+NAME_RE = re.compile(r"[A-Za-z0-9._-]+(?: [A-Za-z0-9._-]+)*")
+NAME_MAX = 24
+
+
+def manifest(name):
+    """The web manifest, with the app's name (None: LABEL and TITLE). Its URLs are relative to
+    it, so the app works under a prefix too."""
+    return json.dumps({
+        # name: a zero-width space, as Android prints it under the icon on its launch screen, which
+        # cannot be turned off; short_name labels the launcher. x_title: the full name, for readers
+        # that list serve ports and are refused the page (serve-dash reads it first); browsers ignore it.
+        "name": "\u200b", "short_name": name or LABEL, "x_title": name or TITLE,
+        "id": f"asctl?v={ICON_VER}", "start_url": f"./?v={ICON_VER}", "scope": "./", "display": "standalone",
+        "background_color": "#ffffff", "theme_color": "#ffffff",
+        "icons": [{"src": f"icon-{n}.png?v={ICON_VER}", "sizes": f"{n}x{n}", "type": "image/png"} for n in (192, 512)]
+        + [{"src": f"icon-maskable-{n}.png?v={ICON_VER}", "sizes": f"{n}x{n}", "type": "image/png", "purpose": "maskable"}
+           for n in (192, 512)]})
 # A worker makes the app installable. This one passes every request to the network and never
 # caches: the sessions must always be live.
 SW = """self.addEventListener('install', e => self.skipWaiting());
@@ -95,12 +109,19 @@ PUBLIC = {"/manifest.json": "application/manifest+json", "/sw.js": "application/
 # The page's refusal: its title and tab icon only, as every page has them (a reader such as
 # serve-dash, which fetches pages from this machine and so is always refused, shows them).
 # Nothing else: no token, no data, not why it was refused.
-REFUSED_PAGE = (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
-                f'<meta name="viewport" content="width=device-width, initial-scale=1">'
-                f'<title>Agent Session Control</title>'
-                f'<link rel="icon" type="image/svg+xml" href="favicon.svg?v={ICON_VER}">'
-                f'<link rel="icon" type="image/png" sizes="512x512" href="favicon-512.png?v={ICON_VER}">'
-                f'</head><body><p>Not allowed.</p></body></html>')
+def refused_page(name):
+    return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            f'<meta name="viewport" content="width=device-width, initial-scale=1">'
+            f'<title>{html.escape(name or TITLE)}</title>'
+            f'<link rel="icon" type="image/svg+xml" href="favicon.svg?v={ICON_VER}">'
+            f'<link rel="icon" type="image/png" sizes="512x512" href="favicon-512.png?v={ICON_VER}">'
+            f'</head><body><p>Not allowed.</p></body></html>')
+
+
+def page(text, token, name):
+    """index.html filled in: the page token, the icon version, the app's name (escaped)."""
+    return (text.replace("@TOKEN@", token).replace("@V@", ICON_VER)
+            .replace("@LABEL@", html.escape(name or LABEL)).replace("@TITLE@", html.escape(name or TITLE)))
 
 
 def config_path():
@@ -135,7 +156,11 @@ def load_config():
     prefix = c.get("prefix") or ""
     if prefix and (not isinstance(prefix, str) or not prefix.startswith("/") or prefix.endswith("/")):
         raise RegistryError(f"{p}: prefix must start with / and not end with one (e.g. \"/user\")")
-    return {"login": c["login"], "host": c["host"], "prefix": prefix}
+    name = c.get("name")
+    if "name" in c and not (isinstance(name, str) and len(name) <= NAME_MAX and NAME_RE.fullmatch(name)):
+        raise RegistryError(f"{p}: name must be 1 to {NAME_MAX} ASCII letters, digits, \".\", \"_\" or \"-\", "
+                            "with single spaces between words (e.g. \"asctl home\")")
+    return {"login": c["login"], "host": c["host"], "prefix": prefix, "name": name}
 
 
 def default_socket():
@@ -549,7 +574,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if why:
             self.log_message("refused: %s", why)
             if self.command in ("GET", "HEAD") and self._path() == "/":
-                self._send(403, REFUSED_PAGE, "text/html")
+                self._send(403, self.server.refused, "text/html")
             else:
                 self._send(403, {"error": "forbidden"})
             return None
@@ -570,7 +595,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.headers.get("Content-Length") or "0") != "0":
             return False
         if path == "/manifest.json":
-            self._send(200, MANIFEST, PUBLIC[path])
+            self._send(200, self.server.manifest, PUBLIC[path])
         elif path == "/sw.js":
             self._send(200, SW, PUBLIC[path])
         elif path == "/favicon.svg":
@@ -590,8 +615,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send(301, "", "text/plain", [("Location", self.server.cfg["prefix"] + "/")])
         if path == "/":
             with open(os.path.join(WEB, "index.html"), encoding="utf-8") as f:
-                page = f.read().replace("@TOKEN@", self.server.token).replace("@V@", ICON_VER)
-            return self._send(200, page, "text/html")
+                text = page(f.read(), self.server.token, self.server.cfg["name"])
+            return self._send(200, text, "text/html")
         if path in STATIC:
             with open(os.path.join(WEB, path[1:]), "rb") as f:
                 return self._send(200, f.read(), STATIC[path])
@@ -657,6 +682,7 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
     def __init__(self, cfg, token, sock=None, path=None):
         self.cfg, self.token, self.last = cfg, token, time.monotonic()
+        self.manifest, self.refused = manifest(cfg["name"]), refused_page(cfg["name"])
         self.actions, self.running = threading.Condition(), 0
         socketserver.TCPServer.__init__(self, path, Handler, bind_and_activate=sock is None)
         if sock is not None:

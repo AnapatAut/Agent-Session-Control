@@ -77,6 +77,11 @@ and writable only by you):
 {"login": "<your Tailscale login>", "host": "<MagicDNS name>:<port>"}
 ```
 
+`"name"` (optional) names the app: the home screen's label, the tab's title, the page's
+heading. It is 1 to 24 ASCII letters, digits, `.`, `_` or `-`, with single spaces between words,
+such as `"asctl home"`. Without it, the label is "Sessions" and the title "Agent Session
+Control". A phone shows a new name once the app is added to it again.
+
 and an admin's `tailscale serve`, one port per user (each user's dashboard needs an origin of
 its own; see `asc/dash.py`):
 
