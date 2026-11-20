@@ -25,6 +25,8 @@
 <!-- The installed app's launch splash: first in the body, so it paints before anything else -->
 <div id="splash"><img src="splash-512.png?v=@V@" alt=""></div>
 <script src="splash.js"></script>
+<!-- Back to the installed app that opened this page inside its window (app.js: backLink); hidden otherwise -->
+<a class="back" id="back" href="#" hidden><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M11 3.5 5.5 9l5.5 5.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Back</a>
 <header>
   <div class="title"><h1>@TITLE@</h1><div class="sub mono" id="host"></div></div>
   <div class="side">

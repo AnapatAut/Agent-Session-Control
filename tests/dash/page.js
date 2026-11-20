@@ -8,9 +8,12 @@ const stub = new Proxy(function () {}, {
   get: (t, k) => (k === Symbol.toPrimitive ? () => "" : k === "then" ? undefined : stub),
   apply: () => stub, construct: () => stub, has: () => false,
 });
-const ctx = vm.createContext({ document: stub, window: stub, navigator: {}, location: stub, history: stub,
+const ctx = vm.createContext({ document: stub, window: stub, navigator: {}, location: stub, history: stub, URL,
   setInterval() {}, setTimeout() {}, clearTimeout() {}, fetch: () => new Promise(() => {}), console });
-vm.runInContext(fs.readFileSync(path.join(process.argv[2], "asc/web/app.js"), "utf8"), ctx);
+// Loaded as a page opened directly (the stubs: no referrer, no history); an error is kept for the
+// first check below, so the checks after it still run.
+let loadErr = null;
+try { vm.runInContext(fs.readFileSync(path.join(process.argv[2], "asc/web/app.js"), "utf8"), ctx); } catch (e) { loadErr = e; }
 const run = (code) => vm.runInContext(code, ctx);
 let fail = 0;
 const later = [];  // checks whose code gives a promise (act): judged once it settles, at the end
@@ -36,6 +39,7 @@ S = { home: "${HOME}", boot: { todo: ["0003", "0004", "0005"], why: "memory: wat
   { id4: "0006", state: "off", resurrect: false } ] };
 var F = (id) => S.favorites.find((e) => e.id4 === id);`);
 
+check("the page's script runs to its end, opened directly (no referrer)", loadErr === null ? "true" : `${JSON.stringify(String(loadErr))}`);
 check("1 day ago, 3 days ago", `ago(Date.now() / 1000 - 86400) === "1 day ago" && ago(Date.now() / 1000 - 3 * 86400) === "3 days ago"`);
 check("the time it was updated: day, month, year and seconds", `stamp(new Date(2026, 10, 4, 11, 27, 42)) === "4 Nov 2026, 11:27:42"`);
 check("outside its tmux session: where it runs", `look({ state: "on (outside its tmux session)", tmux: "x-0001",
@@ -316,6 +320,50 @@ check("start limit: each of 60 to 85 by 5 as saved; anything else (62, 90, 55, a
 check("start limit: boot's words name it", `(() => { const was = S; S = { settings: { start_limit: 65 } };
   try { return bootWhy("memory: watched for under 30 s") === "Starts once memory has stayed under 65% used for 30 s."; } finally { S = was; } })()`);
 check("new session: Remote control on unless turned off", `newForm.rc === true`);
+// Back (backFrom): the page at HERE, opened by another app; yes(ref) when it shows, giving that origin.
+run(`var HERE = new URL("https://node.example.test:8585/"), APP = () => true;
+var back = (ref, app = APP, depth = 2) => backFrom(ref, HERE, app, depth);`);
+check("back: from another port of this host: its origin, its host:port (any path, query or login dropped)", `[
+  ["https://node.example.test/", "https://node.example.test", "node.example.test"],
+  ["https://node.example.test:8484/x/y?z=1#w", "https://node.example.test:8484", "node.example.test:8484"],
+  ["https://" + ["u", "p"].join(":") + "@NODE.example.test:3002/", "https://node.example.test:3002", "node.example.test:3002"],  // a login in it: put together, as HOME
+].every(([r, o, h]) => { const f = back(r); return !!f && f.origin === o && f.host === h && f.origin + "/" === o + "/"; })`);
+check("back: none from this page itself (a reload), another host, a host that only starts or ends like it, another scheme", `[
+  "https://node.example.test:8585/", "https://node.example.test:8585/x?y",
+  "https://other.example.test:8484/", "https://node.example.test.evil.test:8484/", "https://evil-node.example.test/",
+  "https://example.test:8484/", "http://node.example.test:8484/", "http://node.example.test:8585/",
+].every((r) => back(r) === null)`);
+check("back: none with no referrer or one that is no URL", `["", "not a url", "/x", "about:blank", null, undefined].every((r) => back(r) === null)`);
+check("back: only in an installed app's window, with somewhere to go back to (2 entries: yes, 1: no)", `(() => { const R = "https://node.example.test:8484/";
+  return back(R, () => false) === null && back(R, APP, 1) === null && back(R, APP, 0) === null && back(R, APP, 2) !== null && back(R, APP, 7) !== null; })()`);
+check("back: the window is asked only once the referrer passes", `(() => { let n = 0; const c = () => (n++, true);
+  return back("https://other.example.test/", c) === null && back("", c) === null && back("https://node.example.test:8585/", c) === null && n === 0
+    && back("https://node.example.test/", c) !== null && n === 1; })()`);
+// backLink on stand-ins: the document (its referrer and #back), location, history and the window's mode.
+const backAt = (ref, o = {}) => `(() => {
+  const saved = { document, location, history, window, navigator }, b = { hidden: true, href: "#", title: "", on: {} };
+  b.addEventListener = (k, f) => { b.on[k] = f; };
+  let backs = 0, asked = "";
+  document = { referrer: ${JSON.stringify(ref)}, getElementById: (id) => (id === "back" ? b : null) };
+  location = new URL("https://node.example.test:8585/");
+  history = { length: ${o.depth ?? 2}, back: () => { backs++; } };
+  window = { matchMedia: (q) => { asked = q; return { matches: ${JSON.stringify(o.matches ?? true)} }; } };
+  navigator = { standalone: ${JSON.stringify(o.ios ?? false)} };
+  try {
+    backLink();
+    let prevented = 0; if (b.on.click) b.on.click({ preventDefault: () => { prevented++; } });
+    return { hidden: b.hidden, href: b.href, title: b.title, click: !!b.on.click, backs, prevented, asked };
+  } finally { ({ document, location, history, window, navigator } = saved); }
+})()`;
+const R84 = "https://node.example.test:8484/apps?x=1";
+check("back link: shown in the installed app: href that app's root, titled, a tap goes back once (the link itself not followed)",
+  `(() => { const r = ${backAt(R84)}; return r.hidden === false && r.href === "https://node.example.test:8484/" && r.title === "Back to node.example.test:8484"
+  && r.click && r.backs === 1 && r.prevented === 1 && r.asked === "(display-mode: standalone)"; })()`);
+check("back link: an iPhone's home-screen app (navigator.standalone) too", `(() => { const r = ${backAt(R84, { matches: false, ios: true })}; return r.hidden === false && r.backs === 1; })()`);
+check("back link: hidden, nothing wired, in a browser tab, a first page, from this page, from another host, or a mode that is only truthy",
+  `[${backAt(R84, { matches: false })}, ${backAt(R84, { depth: 1 })}, ${backAt("https://node.example.test:8585/")},
+    ${backAt("https://other.example.test:8484/")}, ${backAt("")}, ${backAt(R84, { matches: "yes", ios: 1 })}]
+  .every((r) => r.hidden === true && r.href === "#" && r.title === "" && !r.click && r.backs === 0)`);
 // The orange mark: drawn at the start limit (drawMem on stand-ins, as the memory card checks above).
 const markAt = (v) => `(() => {
   const els = {}, saved = document, was = S;

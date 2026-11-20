@@ -427,6 +427,12 @@ seen -F '<path d="M13.5 2.5v3h-3"/></svg></button><button class="rf gear" id="ge
 	&& ! seen -F '<summary>Settings</summary>' "$T/page" && ! seen -F 'id="opts"' "$T/page" \
 	&& ok "the gear after Refresh opens Settings (a sheet); 16px apart, each pressed 6px past its edges (4px between the two); no Settings section at the bottom" \
 	|| bad "the gear after Refresh opens Settings (a sheet); 16px apart, each pressed 6px past its edges (4px between the two); no Settings section at the bottom" "page: $(grep -E 'gear|Settings' "$T/page") / $(grep -F '"gear"' "$JS")"
+BACK='<a class="back" id="back" href="#" hidden><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M11 3.5 5.5 9l5.5 5.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Back</a>'
+[ "$(grep -A1 -xF "$BACK" "$T/page" | tail -1)" = "<header>" ] && seen -xF 'backLink();' "$JS" \
+	&& seen -F '.back { display: inline-flex; align-items: center; gap: 2px; margin: 0 0 6px -6px; padding: 6px 12px 6px 4px; border-radius: 999px;' "$CSS" \
+	&& seen -F '.back:focus-visible { outline: 2px solid var(--blue); outline-offset: 0; }' "$CSS" \
+	&& ok "Back: a link hidden until the page shows it, on its own line just above the header; backLink runs at the start" \
+	|| bad "Back: a link hidden until the page shows it, on its own line just above the header; backLink runs at the start" "page: $(grep -A1 -F 'class="back"' "$T/page") / $(grep -F 'backLink' "$JS")"
 seen -F '.lim .tks::before { content: ""; position: absolute; left: -11px; right: -11px; top: 12px; height: 4px; border-radius: 9px; background: #dcdce3; }' "$CSS" \
 	&& seen -F '.lim input::-webkit-slider-runnable-track { height: 4px; border-radius: 9px; background: transparent; }' "$CSS" \
 	&& seen -F '.lim input::-moz-range-track { height: 4px; border-radius: 9px; background: transparent; }' "$CSS" \

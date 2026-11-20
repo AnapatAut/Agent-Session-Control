@@ -12,6 +12,11 @@ body { padding: max(20px, env(safe-area-inset-top)) 16px 48px; max-width: 1180px
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 button { font: inherit; color: inherit; }
 [hidden] { display: none !important; }
+/* Back to the app that opened this one (app.js: backLink), on its own line above the header */
+.back { display: inline-flex; align-items: center; gap: 2px; margin: 0 0 6px -6px; padding: 6px 12px 6px 4px; border-radius: 999px;
+        color: var(--blue); font-size: 15px; font-weight: 600; text-decoration: none; }
+.back:active { background: var(--blue-soft); }
+.back:focus-visible { outline: 2px solid var(--blue); outline-offset: 0; }
 
 header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .title { min-width: 0; }

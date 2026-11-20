@@ -240,7 +240,9 @@ favorites back after a reboot, when asctl is not set up for the user, and when t
 not run for 5 min. The gear by Refresh opens Settings: the start limit (a slider, 60 to 85% used,
 the orange mark on the memory bar) and the out-of-memory auto-restart switch. New session makes a
 favorite from its name and a folder pasted by path (`asctl new`), in auto mode, Remote control on
-unless turned off there. A claude that Claude Code asks whether to
+unless turned off there. Opened inside another installed app on this machine (such as the serve
+dashboard's, with this serve set to open in "This app"), the page shows Back above its title: a
+tap goes back to that app. A claude that Claude Code asks whether to
 trust its folder waits at that prompt, its card "Waiting for trust": Trust folder, after the
 page's own warning, sends asctl only which favorite (asctl trust answers for the folder it has).
 One that Claude Code asks something else at start shows "Waiting at a prompt" and what it asks.

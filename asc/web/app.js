@@ -1027,7 +1027,31 @@ if (history.state && history.state.sheet) history.replaceState(null, "");
 $("scrim").addEventListener("click", (ev) => { if (ev.target === $("scrim")) closeSheet(); });
 document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && sheetOf) closeSheet(); });
 
+// --- Back ------------------------------------------------------------------------------------
+// Back: this page opened in the same window by another app on this machine (the serve dashboard's
+// installed app, with this serve set to open in "This app"), where no browser back button shows.
+// backFrom gives that app's URL, or null: no referrer or not a URL, another scheme or host, this
+// page's own origin (a reload), not an installed app's window (a browser tab has its own back), or
+// nothing to go back to. As the approve page's Back. app() is asked only once the referrer passes.
+function backFrom(ref, here, app, depth) {
+  let from = null;
+  try { from = new URL(ref); } catch (e) { return null; }
+  if (from.protocol !== here.protocol || from.hostname !== here.hostname || from.origin === here.origin) return null;
+  return app() && depth >= 2 ? from : null;
+}
+// The link shows only then; a tap goes back in history (that app as it was left), its href only
+// in case the tap does not run this.
+function backLink() {
+  const from = backFrom(document.referrer, location,
+    () => window.matchMedia("(display-mode: standalone)").matches === true || navigator.standalone === true, history.length);
+  if (!from) return;
+  const b = $("back");
+  b.href = from.origin + "/"; b.title = `Back to ${from.host}`; b.hidden = false;
+  b.addEventListener("click", (ev) => { ev.preventDefault(); history.back(); });
+}
+
 // --- start -----------------------------------------------------------------------------------
+backLink();
 let pastTimer;
 $("q").addEventListener("input", () => { clearTimeout(pastTimer); pastTimer = setTimeout(loadPast, 300); });
 $("rf").addEventListener("click", () => { refresh(); loadPast(); });
