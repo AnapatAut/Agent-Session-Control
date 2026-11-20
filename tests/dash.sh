@@ -422,10 +422,11 @@ seen -F '<div class="foot"><span class="swap" id="swap" hidden></span><button cl
 	|| bad "no tooltip on the memory card (the i says it), no biggest-processes section at the bottom (the key opens it)" "page: $(grep -E 'biggest|title="Used' "$T/page")"
 seen -F '<path d="M13.5 2.5v3h-3"/></svg></button><button class="rf gear" id="gear" type="button" aria-label="Settings" aria-haspopup="dialog" title="Settings"><svg width="15" height="15"' "$T/page" \
 	&& seen -F '$("gear").addEventListener("click", () => openSheet("settings", "settings"));' "$JS" \
-	&& seen -F '.gear { position: relative; margin-left: 2px; } .gear::before { content: ""; position: absolute; inset: -6px; }' "$CSS" \
+	&& seen -F '.upd .rf { position: relative; margin-right: 0; } .upd .rf::before { content: ""; position: absolute; inset: -6px; }' "$CSS" \
+	&& seen -F '.upd .gear { margin: -4px -5px -4px 12px; }' "$CSS" \
 	&& ! seen -F '<summary>Settings</summary>' "$T/page" && ! seen -F 'id="opts"' "$T/page" \
-	&& ok "the gear after Refresh opens Settings (a sheet; a press area past its edge); no Settings section at the bottom" \
-	|| bad "the gear after Refresh opens Settings (a sheet; a press area past its edge); no Settings section at the bottom" "page: $(grep -E 'gear|Settings' "$T/page") / $(grep -F '"gear"' "$JS")"
+	&& ok "the gear after Refresh opens Settings (a sheet); 16px apart, each pressed 6px past its edges (4px between the two); no Settings section at the bottom" \
+	|| bad "the gear after Refresh opens Settings (a sheet); 16px apart, each pressed 6px past its edges (4px between the two); no Settings section at the bottom" "page: $(grep -E 'gear|Settings' "$T/page") / $(grep -F '"gear"' "$JS")"
 seen -F '.lim .tks::before { content: ""; position: absolute; left: -11px; right: -11px; top: 12px; height: 4px; border-radius: 9px; background: #dcdce3; }' "$CSS" \
 	&& seen -F '.lim input::-webkit-slider-runnable-track { height: 4px; border-radius: 9px; background: transparent; }' "$CSS" \
 	&& seen -F '.lim input::-moz-range-track { height: 4px; border-radius: 9px; background: transparent; }' "$CSS" \

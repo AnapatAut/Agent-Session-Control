@@ -29,7 +29,11 @@ h1 { font-size: 26px; line-height: 31px; font-weight: 700; margin: 0; letter-spa
 .rf { display: grid; place-items: center; width: 24px; height: 24px; margin: -4px -5px -4px 0; padding: 0;
       border: 0; border-radius: 50%; background: none; color: var(--mute); cursor: pointer; }
 .rf:hover { background: var(--line); }
-.gear { position: relative; margin-left: 2px; } .gear::before { content: ""; position: absolute; inset: -6px; }
+/* Refresh, then the gear: 16px apart (12 and the row's gap of 4), each pressed 6px past its edges
+   (36px), 4px left between the two press areas (a tap on one never lands on the other); the gear,
+   last, takes Refresh's place at the edge */
+.upd .rf { position: relative; margin-right: 0; } .upd .rf::before { content: ""; position: absolute; inset: -6px; }
+.upd .gear { margin: -4px -5px -4px 12px; }
 .rf.spin svg { animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .stale, .banner, .notice { font-size: 13px; font-weight: 600; border-radius: 14px; padding: 10px 14px; margin-top: 14px; line-height: 1.4; }
