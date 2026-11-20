@@ -410,9 +410,9 @@ seen -F 'padding: 9px 14px; min-height: 38px;' "$REPO/asc/web/app.css" && seen -
 seen -F '@media (max-width: 480px) {' "$REPO/asc/web/app.css" && seen -F '  .newrow .btn .lbl { display: none; }' "$REPO/asc/web/app.css" \
 	&& ok "a phone: New session reads + New (the chips fit beside it)" || bad "a phone: New session reads + New (the chips fit beside it)" "app.css: $(grep -F '.newrow' "$REPO/asc/web/app.css")"
 seen -F '<div class="lab">MEMORY<span class="det" id="mem-det"></span><button class="about" id="mem-about" type="button" aria-expanded="false" aria-controls="mem-note" aria-label="About these memory numbers"><svg viewBox="0 0 16 16" aria-hidden="true">' "$T/page" \
-	&& seen -F '<div class="pop note" id="mem-note" role="dialog" aria-label="About these memory numbers" hidden>Memory numbers are close, not exact. The orange mark is 80% used: sessions start only up to it.</div>' "$T/page" \
-	&& ok "the memory card: used/total and the i by its label; the i's note a pop-over, hidden until asked (close numbers; the orange mark)" \
-	|| bad "the memory card: used/total and the i by its label; the i's note a pop-over, hidden until asked (close numbers; the orange mark)" "page: $(grep -E 'mem-det|mem-note' "$T/page")"
+	&& seen -F '<div class="pop note" id="mem-note" role="dialog" aria-label="About these memory numbers" hidden>Memory numbers may not be exact. Sessions start only below the orange mark.</div>' "$T/page" \
+	&& ok "the memory card: used/total and the i by its label; the i's note a pop-over, hidden until asked (numbers not exact; the orange mark, no figure)" \
+	|| bad "the memory card: used/total and the i by its label; the i's note a pop-over, hidden until asked (numbers not exact; the orange mark, no figure)" "page: $(grep -E 'mem-det|mem-note' "$T/page")"
 seen -F '<div class="foot"><span class="swap" id="swap" hidden></span><button class="key" id="mem-key" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="mem-top" hidden></button></div>' "$T/page" \
 	&& seen -F '<div class="pop" id="mem-top" role="dialog" aria-label="Your biggest processes" hidden><div class="sub">Your biggest processes</div><div id="top"></div></div>' "$T/page" \
 	&& ok "the memory card has the swap pill and the key (a button opening your biggest processes) under its bar, all hidden until the state is drawn" \
@@ -420,6 +420,19 @@ seen -F '<div class="foot"><span class="swap" id="swap" hidden></span><button cl
 ! seen -F '<summary>Your biggest processes</summary>' "$T/page" && ! seen -E 'id="mem"[^>]* title=' "$T/page" && ! seen -F 'title="Used' "$T/page" \
 	&& ok "no tooltip on the memory card (the i says it), no biggest-processes section at the bottom (the key opens it)" \
 	|| bad "no tooltip on the memory card (the i says it), no biggest-processes section at the bottom (the key opens it)" "page: $(grep -E 'biggest|title="Used' "$T/page")"
+seen -F '<path d="M13.5 2.5v3h-3"/></svg></button><button class="rf gear" id="gear" type="button" aria-label="Settings" aria-haspopup="dialog" title="Settings"><svg width="15" height="15"' "$T/page" \
+	&& seen -F '$("gear").addEventListener("click", () => openSheet("settings", "settings"));' "$JS" \
+	&& seen -F '.gear { position: relative; margin-left: 2px; } .gear::before { content: ""; position: absolute; inset: -6px; }' "$CSS" \
+	&& ! seen -F '<summary>Settings</summary>' "$T/page" && ! seen -F 'id="opts"' "$T/page" \
+	&& ok "the gear after Refresh opens Settings (a sheet; a press area past its edge); no Settings section at the bottom" \
+	|| bad "the gear after Refresh opens Settings (a sheet; a press area past its edge); no Settings section at the bottom" "page: $(grep -E 'gear|Settings' "$T/page") / $(grep -F '"gear"' "$JS")"
+seen -F '.lim .tks::before { content: ""; position: absolute; left: -11px; right: -11px; top: 12px; height: 4px; border-radius: 9px; background: #dcdce3; }' "$CSS" \
+	&& seen -F '.lim input::-webkit-slider-runnable-track { height: 4px; border-radius: 9px; background: transparent; }' "$CSS" \
+	&& seen -F '.lim input::-moz-range-track { height: 4px; border-radius: 9px; background: transparent; }' "$CSS" \
+	&& seen -F '.lim .tks { position: absolute; left: 11px; right: 11px; top: 0; bottom: 0; pointer-events: none; }' "$CSS" \
+	&& seen -F '.lim input:focus-visible { outline: none; }' "$CSS" && seen -F '.lim input:focus-visible::-webkit-slider-thumb { box-shadow: 0 1px 3px rgba(0,0,0,.3), 0 0 0 2px #fff, 0 0 0 4px var(--blue); }' "$CSS" \
+	&& ok "the start limit's slider: its own track under the ticks, the input's clear, the ticks inset by half the thumb (at each stop's centre); the keyboard's ring on the thumb" \
+	|| bad "the start limit's slider: its own track under the ticks, the input's clear, the ticks inset by half the thumb (at each stop's centre); the keyboard's ring on the thumb" "app.css: $(grep -F '.lim ' "$CSS")"
 }
 
 # The config with the name $1, a JSON value as written (dash_conf's modes).
@@ -880,7 +893,7 @@ stop_dash; start_dash && state | jq -e '.setup == true' >/dev/null && ok "state:
 stop_dash; ASC_SYSTEMCTL=/bin/false start_dash && state | jq -e '.setup == null' >/dev/null && ok "no answer from the user manager: setup unknown (no notice)" || bad "no answer from the user manager: setup unknown (no notice)" "no manager: $(state | jq -c .setup)"
 stop_dash; start_dash && ok "dash up again, the user manager answering" || bad "dash up again, the user manager answering" "no dash: $(cat "$T/dash.err")"
 rm -rf "$HOME/fake-units"
-state | jq -e '.settings == {"auto_restart": false}' >/dev/null && ok "state: auto-restart off by default" || bad "state: auto-restart off by default" "settings: $(state | jq -c .settings)"
+state | jq -e '.settings == {"auto_restart": false, "start_limit": 80}' >/dev/null && ok "state: auto-restart off, start limit 80 by default" || bad "state: auto-restart off, start limit 80 by default" "settings: $(state | jq -c .settings)"
 ev1=$(state | jq -r .events_v)
 [ "$(post '{"action":"auto_restart","on":true}' | tail -1)" = 200 ] && state | jq -e '.settings.auto_restart' >/dev/null \
 	&& [ "$(jq -r '.settings.auto_restart' "$REG")" = true ] && ok "auto-restart on from the page" || bad "auto-restart on from the page" "auto-restart on failed"
@@ -892,6 +905,18 @@ ev2=$(state | jq -r .events_v)
 [ "$(post '{"action":"auto_restart","on":"yes"}' | tail -1)" = 400 ] && ok "auto-restart on must be a boolean" || bad "auto-restart on must be a boolean" "auto-restart took a non-boolean"
 [ "$(post '{"action":"auto_restart","on":false}' | tail -1)" = 200 ] && state | jq -e '.settings.auto_restart == false' >/dev/null \
 	&& ok "auto-restart off from the page" || bad "auto-restart off from the page" "auto-restart off failed"
+# the start limit: each end of the range from the page, logged as the page's; the default not kept
+lim_page() { [ "$(post "{\"action\":\"start_limit\",\"pct\":$1}" | tail -1)" = 200 ] && state | jq -e ".settings.start_limit == $1" >/dev/null && [ "$(jq -r .settings.start_limit "$REG")" = "$1" ] \
+	&& tail -1 "$SD/events.jsonl" | jq -e --arg t "start limit $1% used" '.kind == "setting" and .by == "page" and .text == $t' >/dev/null; }
+lim_page 60 && ok "start limit 60 from the page: saved, in the state, logged as the page's" || bad "start limit 60 from the page: saved, in the state, logged as the page's" "60: $(state | jq -c .settings) / $(tail -1 "$SD/events.jsonl")"
+lim_page 85 && ok "start limit 85 from the page: saved, in the state, logged as the page's" || bad "start limit 85 from the page: saved, in the state, logged as the page's" "85: $(state | jq -c .settings) / $(tail -1 "$SD/events.jsonl")"
+bodies=('{"action":"start_limit","pct":55}' '{"action":"start_limit","pct":90}' '{"action":"start_limit","pct":62}' '{"action":"start_limit","pct":"70"}'
+	'{"action":"start_limit","pct":70.0}' '{"action":"start_limit","pct":70.5}' '{"action":"start_limit","pct":true}' '{"action":"start_limit","pct":null}' '{"action":"start_limit"}')
+codes=$(for b in "${bodies[@]}"; do post "$b" | tail -1; echo; done | sort -u | tr '\n' ' ')  # each code on its own line
+[ "$codes" = "400 " ] && [ "$(jq -r .settings.start_limit "$REG")" = 85 ] && ok "start limit: 55, 90, 62, a string, 70.0, 70.5, true, null or none: refused (400), nothing changed" \
+	|| bad "start limit: 55, 90, 62, a string, 70.0, 70.5, true, null or none: refused (400), nothing changed" "codes: $codes; saved: $(jq -c .settings "$REG")"
+post '{"action":"start_limit","pct":80}' | tail -1 | seen -x 200 && jq -e '.settings | has("start_limit") | not' "$REG" >/dev/null && state | jq -e '.settings.start_limit == 80' >/dev/null \
+	&& ok "start limit 80 from the page: the default, not kept" || bad "start limit 80 from the page: the default, not kept" "80: $(jq -c .settings "$REG")"
 sid3=$(jq -r ".entries[\"$id3\"].session_id" "$REG")
 state | jq -e --arg i "$id3" '.favorites[] | select(.id4 == $i) | .conv_lines == null and .conv_bytes == null' >/dev/null \
 	&& ok "state: no length before the watcher counted it" || bad "state: no length before the watcher counted it" "length before a count"

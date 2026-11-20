@@ -444,7 +444,8 @@ def _snapshot(tmux_error=""):
             "tmux_error": tmux_error,
             "favorites": favs, "active": active, "unknown_files": unknown,
             "boot": boot_status(), "watch_at": watch_at(), "setup": set_up(), "events_v": events_version(),
-            "settings": {"auto_restart": settings.get("auto_restart") is True},
+            "settings": {"auto_restart": settings.get("auto_restart") is True,
+                         "start_limit": memory.start_limit(settings)},
             "on": sum(1 for f in favs if f["state"] == "on")}, fav_sids | {s["session_id"] for s in seen}
 
 
@@ -459,6 +460,10 @@ def action_argv(a):
         if not isinstance(a.get("on"), bool):
             raise RegistryError("auto_restart needs on: true or false")
         return ["auto-restart", "on" if a["on"] else "off"]
+    if kind == "start_limit":
+        if type(a.get("pct")) is not int or a["pct"] not in memory.LIMITS:
+            raise RegistryError("start_limit needs pct: one of " + ", ".join(map(str, memory.LIMITS)))
+        return ["start-limit", str(a["pct"])]
     if kind == "fav":
         ref = a.get("ref")
         if not isinstance(ref, str) or not (live.UUID_RE.fullmatch(ref) or re.fullmatch(r"[0-9]{1,10}", ref)):

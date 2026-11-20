@@ -1,12 +1,13 @@
 """Memory: what /proc/meminfo says, and the gate every start passes (plan row 8).
 
-A start needs at least START_PCT of memory available, and must leave at least LEAVE_PCT
+A start needs at least start_pct() of memory available (START_PCT, unless the user's start limit
+says otherwise: asctl start-limit, the % used a start may begin under), and must leave at least LEAVE_PCT
 after the claude's expected size: its whole pane tree when last measured, else DEFAULT_KB
 (a claude with its MCP servers is 350 to 430 MB; 600 MB leaves room). Below WARN_PCT the
 dashboard warns. $ASC_MEMINFO names another meminfo file (the tests use a fake one).
 
 The watcher (asc/watch.py) keeps the samples of the last KEEP_S seconds (memory.json in the state folder):
-an automatic start also needs memory steady at START_PCT (steady: for STEADY_S at a restart by the
+an automatic start also needs memory steady at start_pct() (steady: for STEADY_S at a restart by the
 watcher, for boot.STEADY_S at boot), and an automatic restart after a claude was ended by a signal
 needs memory pressure seen around then (evidence).
 """
@@ -14,10 +15,31 @@ import fcntl
 import os
 import time
 
+from . import registry
+
 WARN_PCT = 15
-START_PCT = 20
+START_PCT = 20      # the default: a start needs 20% available, so begins under 80% used
 LEAVE_PCT = 15
 DEFAULT_KB = 600 * 1024
+LIMITS = (60, 65, 70, 75, 80, 85)   # the start limits a user may set, % used (85: the LEAVE_PCT line)
+
+
+def start_limit(settings=None):
+    """The % used a start may begin under: the user's settings.start_limit when it is one of
+    LIMITS, else the default (100 - START_PCT). Never raises: a registry that cannot be read
+    gives the default (every start reads the registry again itself, and refuses on it)."""
+    if settings is None:
+        try:
+            settings = registry.load().get("settings")
+        except (registry.RegistryError, OSError):
+            settings = None
+    v = settings.get("start_limit") if isinstance(settings, dict) else None
+    return v if type(v) is int and v in LIMITS else 100 - START_PCT
+
+
+def start_pct():
+    """The % of memory a start needs available (100 - the start limit)."""
+    return 100 - start_limit()
 
 
 def meminfo():
@@ -42,8 +64,9 @@ def gate(expected_kb=None):
     if not total:
         return "memory: /proc/meminfo cannot be read"
     need = expected_kb if type(expected_kb) is int and expected_kb > 0 else DEFAULT_KB
-    if 100 * avail / total < START_PCT:
-        return f"memory: {m['avail_pct']}% available, a start needs {START_PCT}%"
+    want = start_pct()
+    if 100 * avail / total < want:
+        return f"memory: {m['avail_pct']}% available, a start needs {want}%"
     left = 100 * (avail - need) / total
     if left < LEAVE_PCT:
         return (f"memory: starting it (about {need // 1024} MB) would leave {left:.1f}% available, "
@@ -55,7 +78,7 @@ def gate(expected_kb=None):
 # Counters that only grow, so a short squeeze between two samples is still seen: PSI "full"
 # (time all tasks stalled on memory, µs), pages swapped in and out, the kernel's OOM kills.
 # $ASC_PRESSURE, $ASC_VMSTAT and $ASC_BOOT_ID name other files (the tests use fake ones).
-STEADY_S = 120      # a restart by the watcher needs START_PCT for this long (asctl boot: its own)
+STEADY_S = 120      # a restart by the watcher needs start_pct() for this long (asctl boot: its own)
 GAP_S = 90          # samples further apart than this do not count as a watch (the timer stopped)
 KEEP_S = STEADY_S + 2 * GAP_S   # samples are kept this long (by age, so extra runs crowd nothing out)
 MAX_SAMPLES = 120   # and at most this many (a run every 4 s)
@@ -132,10 +155,11 @@ def add_sample(s, d=None):
         os.close(fd)
 
 
-def steady(samples, now=None, pct=START_PCT, span=STEADY_S):
-    """"" when memory has stayed at pct or more for span seconds (samples of this boot, none
-    further apart than GAP_S, the last one recent), else why not."""
+def steady(samples, now=None, pct=None, span=STEADY_S):
+    """"" when memory has stayed at pct (start_pct() when None) or more for span seconds (samples of
+    this boot, none further apart than GAP_S, the last one recent), else why not."""
     now = now or time.time()
+    pct = start_pct() if pct is None else pct
     boot = boot_id()
     xs = [s for s in samples if s["boot"] == boot and s["t"] <= now]
     if not xs or now - xs[-1]["t"] > GAP_S:

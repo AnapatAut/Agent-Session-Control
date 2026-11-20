@@ -34,7 +34,11 @@
   asctl events [ID] [--limit N]    what happened, oldest first (a favorite's last 200; asc/events.py)
   asctl watch                      one watcher run (asctl-watch.timer, every 30 s; asc/watch.py)
   asctl auto-restart on|off        whether the watcher starts again a claude ended by a signal
-                                   under memory pressure (off: it only logs; the default)
+                                   under memory pressure (off: it only logs; the default, but a
+                                   first asctl setup turns it on)
+  asctl start-limit [60..85|default]
+                                   the % of memory used a start may begin under, by 5 (80: the
+                                   default); no value: says which
   asctl boot [--wait S] [--net-wait S]
                                    bring back the favorites with resurrect on that were on, one
                                    at a time past the memory gates (asctl-boot.service; asc/boot.py)
@@ -1250,6 +1254,32 @@ def cmd_auto_restart(args):
     return 0
 
 
+def cmd_start_limit(args):
+    """The % used a start may begin under (memory.LIMITS), or default; no value: says which."""
+    if args.value is None:
+        v = memory.start_limit()
+        out(f"start limit: {v}% used" + (" (the default)" if v == 100 - memory.START_PCT else ""))
+        return 0
+    if args.value == "default":
+        v = None
+    elif re.fullmatch(r"[0-9]{2}", args.value) and int(args.value) in memory.LIMITS:
+        v = int(args.value) if int(args.value) != 100 - memory.START_PCT else None  # the default: not kept
+    else:
+        raise RegistryError("start limit: " + ", ".join(map(str, memory.LIMITS)) + " (% used) or default")
+    with registry.changing() as data:
+        s = data.setdefault("settings", {})
+        if not isinstance(s, dict):
+            s = data["settings"] = {}
+        if v is None:
+            s.pop("start_limit", None)
+        else:
+            s["start_limit"] = v
+    shown = v if v is not None else 100 - memory.START_PCT
+    events.log("setting", None, f"start limit {shown}% used" + (" (the default)" if v is None else ""))
+    out(f"start limit: {shown}% used: a start needs {100 - shown}% of memory available")
+    return 0
+
+
 def cmd_boot(args):
     from . import boot
     return boot.run(args.wait, args.net_wait)
@@ -1349,6 +1379,9 @@ def main(argv=None):
     a = sub.add_parser("auto-restart")
     a.add_argument("state")
     a.set_defaults(f=cmd_auto_restart)
+    a = sub.add_parser("start-limit")
+    a.add_argument("value", nargs="?")
+    a.set_defaults(f=cmd_start_limit)
     a = sub.add_parser("boot")
     a.add_argument("--wait", type=int, default=3600, help="give up on memory after this many seconds")
     a.add_argument("--net-wait", type=int, default=120, help="wait this long for claude.ai before the first start")

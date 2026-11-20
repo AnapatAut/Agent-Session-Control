@@ -120,8 +120,9 @@ asctl off 0421              # refuses while claude works or another pane runs so
                             # ends it anyway (SIGTERM, then its tmux session closed); a claude
                             # that lives on through both is a failure, said: it runs outside tmux
 asctl on 0421               # tmux session das-0421, claude --resume <id> --name das-0421
-                            # (refused under 20% memory available, or if it would leave under 15%;
-                            # --force-memory starts it anyway)
+                            # (refused over the start limit, 80% memory used unless `asctl
+                            # start-limit` sets 60 to 85, or if it would leave under 15%
+                            # available; --force-memory starts it anyway)
 asctl mode 0421 manual      # its own permission mode: auto (default), manual, skip. A start follows
                             # the mode the conversation last ran in, whichever it is (its transcript;
                             # a shift+tab change carries over); this one only when none is found
@@ -195,14 +196,15 @@ favorite whose claude runs alone in its own tmux session keeps its memory size (
 gate expects), follows a new session id (a branch, a rewind) and a new folder (`/cd`), and sends
 a rename that claude was too busy to take. A favorite wanted on whose claude ended with its tmux
 session still up is logged once, with its exit code and the memory evidence. With
-`asctl auto-restart on` (off by default: it only logs) it is started again in its own pane when
+`asctl auto-restart on` (off by default, it only logs; a first `asctl setup` turns it on) it is started again in its own pane when
 all hold: ended by a signal (143 SIGTERM, 137 SIGKILL) in this boot, memory pressure seen around
-that end, memory steady at 20% for 2 minutes with room for its size, not started again in the
-last 30 minutes, its session one pane running only its shell, one restart per run. The watcher
+that end, memory steady under the start limit for 2 minutes with room for its size, not started
+again in the last 10 minutes (30 once it was started again twice within an hour: it keeps being
+killed), its session one pane running only its shell, one restart per run. The watcher
 never turns a favorite off or on; an entry an action is changing is left to the next run.
 
 `asctl boot` (`asctl-boot.service`, once per boot) starts again the favorites with resurrect
-on that were on, the one turned on last first, one at a time: each needs memory at 20% steady
+on that were on, the one turned on last first, one at a time: each needs memory under the start limit steady
 for 30 seconds (boot samples it every 10 seconds, so the first start comes about 40 seconds after
 the boot at the earliest, and each next one at least 30 seconds after the last) and room for its
 size; before the first it waits up to 2 minutes for claude.ai, then starts anyway. A favorite
@@ -226,8 +228,8 @@ kernel OOM kill, a reboot).
 `asctl dash` serves a dashboard of the same for one Tailscale login, on a unix socket only its
 user can open, meant to sit behind `tailscale serve`; it installs as an app (home screen,
 launcher). The main page is a list (needs attention, on, off, running claudes not favorited,
-past conversations, memory used, by you, other users and the system: close memory numbers, not
-exact ones, as the card's i says, since other users' shared memory cannot be read and counts as
+past conversations, memory used, by you, other users and the system: memory numbers that may not
+be exact, as the card's i says, since other users' shared memory cannot be read and counts as
 the system's; a running claude with a made-up name goes by its chat title, as the Claude apps
 list it; a session's memory is the PSS of its pane's processes, shared
 pages split, so the figures add up); a tap opens a session's sheet with On/Off, remote control
@@ -235,8 +237,10 @@ pages split, so the figures add up); a tap opens a session's sheet with On/Off, 
 its conversation is (past 100,000 lines Claude Code stops sending it to claude.ai) and its
 history (its last 200 events, by day, repeats folded). Notices say when asctl boot is bringing
 favorites back after a reboot, when asctl is not set up for the user, and when the watcher has
-not run for 5 min; Settings has the out-of-memory auto-restart switch. New session makes a
-favorite from its name and a folder pasted by path (`asctl new`), in auto mode. A claude that Claude Code asks whether to
+not run for 5 min. The gear by Refresh opens Settings: the start limit (a slider, 60 to 85% used,
+the orange mark on the memory bar) and the out-of-memory auto-restart switch. New session makes a
+favorite from its name and a folder pasted by path (`asctl new`), in auto mode, Remote control on
+unless turned off there. A claude that Claude Code asks whether to
 trust its folder waits at that prompt, its card "Waiting for trust": Trust folder, after the
 page's own warning, sends asctl only which favorite (asctl trust answers for the folder it has).
 One that Claude Code asks something else at start shows "Waiting at a prompt" and what it asks.

@@ -104,7 +104,7 @@ const STATUS = { busy: ["Working", "busy"], idle: ["Idle", "idle"], waiting: ["W
 // What asctl boot says the next favorite it brings back waits for (asc/boot.py), in words.
 function bootWhy(why) {
   if (/^memory: (watched for under|down to|[0-9.]+% available, a start needs)/.test(why))
-    return "Starts once memory has stayed under 80% used for 30 s.";
+    return `Starts once memory has stayed under ${startLimit()}% used for 30 s.`;
   if (why.startsWith("network")) return "Starts once claude.ai answers (at most 2 min).";
   if (why.startsWith("pause") || !why) return "Starts in a moment.";
   why = why.replace(/^memory: /, "");
@@ -326,6 +326,7 @@ function drawMem(s) {
   const sv = swapView(m);
   $("swap").hidden = !sv;
   if (sv) { $("swap").textContent = sv.pill; $("swap").classList.toggle("hi", sv.hi); }
+  $("mem-gate").style.left = startLimit() + "%";  // the start limit
   $("mem-det").replaceChildren(document.createTextNode(m.total_kb ? pair(m.total_kb - m.avail_kb, m.total_kb) : ""));
 }
 function render() { keepFocus(draw); }
@@ -356,15 +357,8 @@ function draw() {
   const nsig = notes.map((x) => x.className + x.textContent).join("|");
   if ($("notes").dataset.sig !== nsig) { $("notes").replaceChildren(...notes); $("notes").dataset.sig = nsig; }
 
-  // settings: the switch is made once and then only updated, so it keeps a tap and the focus
-  const ar = !!(s.settings && s.settings.auto_restart);
-  if (!$("opts").firstChild)
-    $("opts").append(opt("Restart after an out-of-memory kill",
-      "Starts a favorite again after its claude is killed under memory pressure. At most once per 30 min.",
-      sw(ar, "Restart after an out-of-memory kill", () => autoRestart(!(S.settings && S.settings.auto_restart)))));
-  const arb = $("opts").querySelector("[role=switch]");
-  arb.setAttribute("aria-checked", String(ar));
-  if (pending.has("auto_restart")) arb.disabled = true;
+  // settings: an open sheet's controls are made once and then only updated (they keep a tap and the focus)
+  syncSettings();
 
   // chips
   const n = { all: s.favorites.length, on: s.favorites.filter(isOn).length };
@@ -473,6 +467,66 @@ function toast(text) {
   toast.timer = setTimeout(() => { t.hidden = true; }, 5000);
 }
 
+// Settings: the start limit, % used, LIMITS (asc/memory.py's); a state without one says the default
+const LIMITS = [60, 65, 70, 75, 80, 85], LIMIT_DEFAULT = 80;
+function startLimit() {
+  const v = S && S.settings && S.settings.start_limit;
+  return LIMITS.includes(v) ? v : LIMIT_DEFAULT;
+}
+let limDrag = false;  // a drag (or a key) moved the slider and its change is not sent yet: the state leaves it be
+function limitRow() {
+  const pos = (x) => (x - LIMITS[0]) / (LIMITS[LIMITS.length - 1] - LIMITS[0]) * 100 + "%";
+  const inp = el("input");
+  inp.type = "range"; inp.id = "lim"; inp.min = String(LIMITS[0]); inp.max = String(LIMITS[LIMITS.length - 1]); inp.step = "5";
+  inp.setAttribute("aria-label", "Start limit, % of memory used");
+  const out = el("span", "", "v"), lbls = el("div", null, "lbls"), tks = el("div", null, "tks");
+  for (const x of LIMITS) {
+    const s = kids(el("span", String(x)), x === LIMIT_DEFAULT ? el("em", "default") : null);
+    s.dataset.v = String(x); s.style.left = pos(x); lbls.append(s);
+    const t = el("i", null, "tk"); t.style.left = pos(x); tks.append(t);
+  }
+  inp.addEventListener("input", () => { limDrag = true; limShow(); });
+  inp.addEventListener("change", async () => {
+    limDrag = false;
+    const pct = Number(inp.value);
+    if (pct !== startLimit()) await act({ action: "start_limit", id: "start_limit", pct });  // its redraw: what is saved
+    // disabled while it ran, which dropped the focus: back to it (a keyboard's next arrow press)
+    if (inp.isConnected && document.activeElement === document.body) inp.focus({ preventScroll: true });
+  });
+  return kids(el("div", null, "lim"), kids(el("div", null, "head"), el("span", "Start limit", "t"), out),
+    el("div", "Sessions start only while memory used is under this (the orange mark).", "d"),
+    kids(el("div", null, "sl"), tks, inp), lbls);
+}
+// the slider's figure, its label in bold, and what a screen reader says, from its value
+function limShow() {
+  const inp = $("lim");
+  if (!inp) return;
+  const v = Number(inp.value);
+  inp.setAttribute("aria-valuetext", v + "%" + (v === LIMIT_DEFAULT ? " (default)" : ""));
+  inp.closest(".lim").querySelector(".v").textContent = v + "%";
+  for (const s of inp.closest(".lim").querySelectorAll(".lbls span")) s.classList.toggle("on", s.dataset.v === String(v));
+}
+function settingsSheet() {
+  return [el("h2", "Settings"), kids(el("div", null, "opts"), limitRow(),
+    opt("Restart after an out-of-memory kill", "Favorites only. At most every 10 min, 30 if killed again.",
+      sw(false, "Restart after an out-of-memory kill", () => autoRestart(!(S.settings && S.settings.auto_restart)))))];
+}
+// an open Settings sheet follows the state in place (drawn once: a drag or the focus stays)
+function syncSettings() {
+  if (!sheetOf || sheetOf.kind !== "settings") return;
+  const b = $("sheet").querySelector("[role=switch]");
+  if (b) {
+    b.setAttribute("aria-checked", String(!!(S && S.settings && S.settings.auto_restart)));
+    b.disabled = pending.has("auto_restart");
+  }
+  const inp = $("lim");
+  if (inp) {
+    inp.disabled = pending.has("start_limit");
+    if (!limDrag && !pending.has("start_limit")) inp.value = String(startLimit());
+    limShow();
+  }
+}
+
 // One action; returns {ok, out|error}. Off refused as busy, and On or New session refused for
 // memory, offer the forced one after a confirm (never automatic).
 async function act(body) {
@@ -530,7 +584,7 @@ async function refresh() {
 async function autoRestart(on) {
   await act({ action: "auto_restart", id: "auto_restart", on });
   // the switch was disabled while it ran, which dropped the focus: back to it once enabled again
-  const b = $("opts").querySelector("[role=switch]");
+  const b = $("sheet").querySelector("[role=switch]");
   setTimeout(() => { if (b && document.activeElement === document.body) b.focus({ preventScroll: true }); });
 }
 
@@ -825,7 +879,7 @@ function pastSheet(c) {
 }
 
 // --- a new session: a favorite in a folder pasted by path, started at once (asctl new) -------
-const newForm = { name: "", path: "", rc: false };
+const newForm = { name: "", path: "", rc: true };  // Remote control on unless turned off
 function newSheet() {
   const f = newForm, err = el("div", "", "res err");
   const field = (label, key, hint) => {
@@ -840,8 +894,7 @@ function newSheet() {
     return b;
   };
   return [el("h2", "New session"),
-    el("div", "A new favorite in a folder of yours, started now as a new conversation in auto mode. Paste the folder's path (pwd). " +
-              "A folder Claude Code does not trust yet waits for your Trust folder on its card.", "s2"),
+    el("div", "A new favorite in auto mode. Paste the folder's path (pwd); an untrusted folder waits for Trust folder on its card.", "s2"),
     field("Session name", "name", "my-app"),
     field("Folder", "path", "~/projects/app"),
     el("span", "SETTINGS", "lab"),
@@ -858,7 +911,7 @@ function newSheet() {
       if (!f.path) { err.textContent = "Paste the folder's path first."; return; }
       const j = await act({ action: "new", name: f.name, path: f.path, rc: f.rc });
       if (j.ok) {
-        Object.assign(newForm, { name: "", path: "", rc: false });
+        Object.assign(newForm, { name: "", path: "", rc: true });
         if (sheetOf && sheetOf.kind === "new") closeSheet();  // not another sheet opened meanwhile
       }
     }))];
@@ -866,6 +919,18 @@ function newSheet() {
 
 function renderSheet() {
   const sheet = $("sheet");
+  if (sheetOf.kind === "settings") {
+    if (sheetSig !== "settings") {  // drawn once, like New session
+      sheetSig = "settings";
+      const x = el("button", "\u2715", "x");
+      x.type = "button";
+      x.setAttribute("aria-label", "Close");
+      x.addEventListener("click", () => closeSheet());
+      sheet.replaceChildren(x, ...settingsSheet());
+    }
+    syncSettings();
+    return;
+  }
   if (sheetOf.kind === "new") {
     if (sheetSig === "new") return;  // drawn once: a refresh never redraws it under the typing
     sheetSig = "new";
@@ -966,6 +1031,7 @@ document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && sheetO
 let pastTimer;
 $("q").addEventListener("input", () => { clearTimeout(pastTimer); pastTimer = setTimeout(loadPast, 300); });
 $("rf").addEventListener("click", () => { refresh(); loadPast(); });
+$("gear").addEventListener("click", () => openSheet("settings", "settings"));
 setInterval(() => { if (document.visibilityState === "visible") refresh(); }, 5000);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") { lastOk = Math.max(lastOk, Date.now() - 5000); refresh(); }

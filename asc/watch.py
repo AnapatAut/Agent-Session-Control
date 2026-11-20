@@ -21,7 +21,8 @@ Each run, one at a time (watch.lock; a run that finds another still going does n
     session and anyone attached) only when every one holds (plan row 7): auto-restart is on
     (asctl auto-restart on; off by default), it ended by a signal (143 SIGTERM, 137 SIGKILL) in
     this boot under an hour ago, memory pressure was seen around then, memory has been steady at
-    START_PCT for 2 min and has room for it, it was not started again in the last 30 min, its
+    the start limit for 2 min and has room for it, it was not started again in the last 10 min
+    (30 min after two restarts within an hour: it keeps being killed; restart_wait), its
     session is that one pane, still the shell asctl-wrap left (the PID in the exit record),
     running nothing, not scrolled back and with no one typing in the last 2 min (cli.pane_free,
     checked again just before), and no other restart in this run.
@@ -40,7 +41,9 @@ import time
 
 from . import cli, events, live, memory, past, rclive, registry, tmuxctl
 
-RESTART_EVERY = 1800   # at most one automatic restart of a favorite per 30 min
+RESTART_EVERY = 600    # at most one automatic restart of a favorite per 10 min,
+RESTART_LOOP = 1800    # and per 30 min once two came within an hour of each other (a kill loop)
+LOOP_WITHIN = 3600
 RESTART_WITHIN = 3600  # and only for an end at most this old
 RENAME_TRIES = 3       # a pending rename that fails after typing this often is dropped
 SIZE_CHANGE = 0.10     # rss_kb is rewritten only when it moved by more than this
@@ -158,7 +161,7 @@ def _memory_warning(st, s):
     pct = s["avail_pct"]
     if pct < memory.WARN_PCT and not st["warned"]:
         st["warned"] = True
-        msg = f"memory low: {pct}% available (under {memory.WARN_PCT}%); starts wait for {memory.START_PCT}%"
+        msg = f"memory low: {pct}% available (under {memory.WARN_PCT}%); starts wait for {memory.start_pct()}%"
         events.log("memory", None, msg)
         _tell_tmux("asctl: " + msg)
     elif pct >= memory.WARN_PCT + 1 and st["warned"]:  # 1 point over, so it does not flap
@@ -287,6 +290,16 @@ def _ended(st, e, samples, run):
     st["ended"][e["id4"]]["reason"] = reason
 
 
+def restart_wait(last, prev, now):
+    """"" when a favorite last restarted at last (and before that at prev; 0: never) may be
+    restarted at now, else why not. abs: a stamp from a clock that ran ahead still waits."""
+    if abs(now - last) < RESTART_EVERY:
+        return f"it was started again under {RESTART_EVERY // 60} min ago"
+    if 0 <= last - prev < LOOP_WITHIN and abs(now - last) < RESTART_LOOP:  # prev 0 (none): never within the hour
+        return f"it was started again under {RESTART_LOOP // 60} min ago, the second time within an hour (it keeps being killed)"
+    return ""
+
+
 def _why_not(e, ex, has, proof, busy_run, samples):
     code, t, boot, pid = ex
     settings = registry.load().get("settings")
@@ -302,9 +315,10 @@ def _why_not(e, ex, has, proof, busy_run, samples):
         return proof or "no memory evidence"
     if pid is None:
         return "its exit record names no pane (an asctl-wrap from before this check)"
-    last = e.get("auto_restarted") if type(e.get("auto_restarted")) is int else 0
-    if abs(time.time() - last) < RESTART_EVERY:  # abs: a stamp from a clock that ran ahead
-        return f"it was started again under {RESTART_EVERY // 60} min ago"
+    stamp = lambda k: e.get(k) if type(e.get(k)) is int else 0
+    why = restart_wait(stamp("auto_restarted"), stamp("auto_restarted_prev"), time.time())
+    if why:
+        return why
     if busy_run:
         return "another restart in this run (one at a time)"
     panes = tmuxctl.panes(e["tmux"], strict=True)
@@ -327,7 +341,8 @@ def _restart(e, ex, proof, run):
         return "its tmux session changed"
     def starting():
         run["restarted"] = True
-        _set(e, {}, {"auto_restarted": int(time.time())})
+        last = e.get("auto_restarted") if type(e.get("auto_restarted")) is int else 0
+        _set(e, {}, {"auto_restarted": int(time.time()), "auto_restarted_prev": last})
     try:
         r = cli._on(e["id4"], False, loud=False, pane=panes[0]["pane_id"], pane_pid=ex[3], starting=starting)
     except registry.RegistryError as x:

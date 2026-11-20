@@ -305,4 +305,100 @@ check("on header: the figure after the count; no note, no third part", `(() => {
       && bare.kids.length === 1;
   } finally { document = saved; }
 })()`);
+// Settings: the start limit from the state (asc/memory.py's LIMITS, % used; anything else: 80).
+check("start limit: each of 60 to 85 by 5 as saved; anything else (62, 90, 55, a string, 70.5, true, null, none, no state): 80", `(() => {
+  const was = S, at = (v) => { S = { settings: { start_limit: v } }; return startLimit(); };
+  try {
+    return [60, 65, 70, 75, 80, 85].every((v) => at(v) === v) && [62, 90, 55, 0, -80, "70", 70.5, true, null, undefined].every((v) => at(v) === 80)
+      && (S = { settings: null }, startLimit() === 80) && (S = {}, startLimit() === 80) && (S = null, startLimit() === 80);
+  } finally { S = was; }
+})()`);
+check("start limit: boot's words name it", `(() => { const was = S; S = { settings: { start_limit: 65 } };
+  try { return bootWhy("memory: watched for under 30 s") === "Starts once memory has stayed under 65% used for 30 s."; } finally { S = was; } })()`);
+check("new session: Remote control on unless turned off", `newForm.rc === true`);
+// The orange mark: drawn at the start limit (drawMem on stand-ins, as the memory card checks above).
+const markAt = (v) => `(() => {
+  const els = {}, saved = document, was = S;
+  const mk = () => { const e = { hidden: false, textContent: "", style: { setProperty() {} }, kids: [], get firstElementChild() { return this.kids[0]; } };
+    e.classList = { toggle() {} }; e.replaceChildren = (...k) => { e.kids = k; }; return e; };
+  document = { getElementById: (id) => els[id] || (els[id] = mk()), createTextNode: (t) => ({ text: t }),
+    createElement: (tag) => { const e = { tag, kids: [] }; e.append = (c) => e.kids.push(c); return e; } };
+  S = { settings: { start_limit: ${JSON.stringify(v)} } };
+  try { drawMem({ favorites: [], on: 0, top: ${TOP}, memory: { total_kb: 33554432, avail_kb: 4823831, avail_pct: 14.4, warn: true, swap_total_kb: 0, swap_free_kb: 0 } }); }
+  finally { document = saved; S = was; }
+  return els["mem-gate"].style.left;
+})()`;
+check("the orange mark at the start limit: 60, 85; a bad one at 80", `${markAt(60)} === "60%" && ${markAt(85)} === "85%" && ${markAt(90)} === "80%" && ${markAt("70")} === "80%"`);
+// The Settings sheet on a small stand-in DOM: elements with classes, children, attributes,
+// listeners and focus; closest() and querySelector(All) for the few selectors the sheet uses.
+// settingsRig(body): the sheet opened (S.settings: start_limit 70, auto-restart off), then body
+// runs (async) with lim (the slider), out (its figure), go(type) (an event on it), sent (what
+// act sent) and reply (what the server answers); returns body's result. One at a time (chain).
+run(`var settingsRig = (body) => (chain = chain.then(async () => {
+  const saved = document, all = [], wasS = S, wasFetch = fetch;
+  const has = (e, c) => (" " + e.className + " ").includes(" " + c + " ");
+  const under = (e, ok) => { const out = []; const walk = (x) => { for (const k of x.kids) { if (ok(k)) out.push(k); walk(k); } }; walk(e); return out; };
+  const match = (sel) => sel === "[role=switch]" ? (e) => e.attrs.role === "switch"
+    : sel.includes(" ") ? ((c, tag) => (e) => e.tag === tag.toUpperCase() && (() => { for (let p = e.parent; p; p = p.parent) if (has(p, c)) return true; return false; })())(...sel.slice(1).split(" "))
+    : (e) => has(e, sel.slice(1));
+  const mk = (tag) => {
+    const e = { tag: tag.toUpperCase(), kids: [], parent: null, attrs: {}, on: {}, style: {}, dataset: {}, textContent: "", className: "", disabled: false, isConnected: true };
+    e.append = (...cs) => { for (const c of cs) { e.kids.push(c); c.parent = e; } };
+    e.replaceChildren = (...cs) => { e.kids = []; e.append(...cs); };
+    e.setAttribute = (k, v) => { e.attrs[k] = String(v); }; e.getAttribute = (k) => e.attrs[k] ?? null;
+    e.addEventListener = (k, f) => { e.on[k] = f; };
+    e.classList = { toggle: (c, on) => { const s = new Set(e.className.split(" ").filter(Boolean)); on ? s.add(c) : s.delete(c); e.className = [...s].join(" "); },
+      contains: (c) => has(e, c) };
+    e.closest = (sel) => { for (let x = e; x; x = x.parent) if (match(sel)(x)) return x; return null; };
+    e.querySelector = (sel) => under(e, match(sel))[0] || null; e.querySelectorAll = (sel) => under(e, match(sel));
+    e.focus = () => { doc.activeElement = e; };
+    all.push(e); return e;
+  };
+  const body0 = mk("body"), sheet = mk("div"); sheet.id = "sheet";
+  const doc = { activeElement: body0, body: body0, createElement: mk, createTextNode: (t) => ({ text: t }),
+    getElementById: (id) => all.find((e) => e.id === id && (e === sheet || under(sheet, (k) => k === e).length)) || saved.getElementById(id) };
+  document = doc;
+  const sent = [], answer = { reply: { ok: true, out: "done" } };
+  fetch = async (u, o) => { if (o && o.body) sent.push(JSON.parse(o.body)); return { status: 200, json: async () => answer.reply }; };
+  S = { settings: { start_limit: 70, auto_restart: false } };
+  sheetOf = { kind: "settings", key: "settings" }; sheetSig = ""; limDrag = false;
+  try {
+    renderSheet();
+    const lim = $("lim"), out = lim.closest(".lim").querySelector(".v");
+    const go = async (type, v) => { if (v !== undefined) lim.value = String(v); await lim.on[type](); };
+    return await body({ lim, out, go, sent, answer, sheet, doc });
+  } finally { document = saved; S = wasS; fetch = wasFetch; sheetOf = null; sheetSig = ""; limDrag = false; pending.delete("start_limit"); pending.delete("auto_restart"); }
+}))`);
+const rig = (code) => `settingsRig(async ({ lim, out, go, sent, answer, sheet, doc }) => { ${code} })`;
+const labels = `lim.closest(".lim").querySelectorAll(".lbls span")`;
+check("settings sheet: the slider at the saved value (70), its figure, 60 to 85 by 5, the label at 70 bold, default under 80 alone, said as 70%",
+  rig(`const ls = ${labels};
+  return lim.value === "70" && lim.min === "60" && lim.max === "85" && lim.step === "5" && lim.type === "range" && out.textContent === "70%"
+    && ls.map((s) => [s.textContent, ...s.kids.map((k) => k.textContent)].join("/")).join() === "60,65,70,75,80/default,85"
+    && ls.filter((s) => s.classList.contains("on")).map((s) => s.dataset.v).join() === "70"
+    && ls.map((s) => s.style.left).join() === "0%,20%,40%,60%,80%,100%"
+    && lim.getAttribute("aria-valuetext") === "70%" && lim.getAttribute("aria-label") === "Start limit, % of memory used";`));
+check("settings sheet: moved: the figure, the bold label and what is said follow; nothing sent until let go; at 80 said as default",
+  rig(`await go("input", 65); const a = out.textContent === "65%" && ${labels}.filter((s) => s.classList.contains("on")).map((s) => s.dataset.v).join() === "65"
+    && lim.getAttribute("aria-valuetext") === "65%" && sent.length === 0;
+  await go("input", 80); return a && lim.getAttribute("aria-valuetext") === "80% (default)" && out.textContent === "80%" && sent.length === 0;`));
+check("settings sheet: let go on a new value: sent once, the value as a number; then it shows the saved one",
+  rig(`await go("input", 85); const p = go("change"); const busy = lim.disabled === true; S = { settings: { start_limit: 85 } }; await p;
+  return busy && JSON.stringify(sent) === '[{"action":"start_limit","id":"start_limit","pct":85}]' && lim.value === "85" && lim.disabled === false && out.textContent === "85%";`));
+check("settings sheet: let go on the saved value (moved and back): nothing sent", rig(`await go("input", 75); await go("input", 70); await go("change"); return sent.length === 0 && lim.value === "70";`));
+check("settings sheet: refused: back to the saved value",
+  rig(`answer.reply = { ok: false, error: "start limit: no" }; await go("input", 60); await go("change"); return sent.length === 1 && lim.value === "70" && out.textContent === "70%";`));
+check("settings sheet: a redraw while it is being moved leaves it; after let go it follows the state",
+  rig(`await go("input", 85); S = { settings: { start_limit: 60 } }; syncSettings(); const kept = lim.value === "85" && out.textContent === "85%";
+  limDrag = false; syncSettings(); return kept && lim.value === "60" && out.textContent === "60%";`));
+check("settings sheet: while a save runs: disabled, and a redraw does not move it",
+  rig(`pending.add("start_limit"); S = { settings: { start_limit: 60 } }; syncSettings(); const a = lim.disabled === true && lim.value === "70";
+  pending.delete("start_limit"); syncSettings(); return a && lim.disabled === false && lim.value === "60";`));
+check("settings sheet: a keyboard's save gives the focus back to the slider (disabled meanwhile, which drops it)",
+  rig(`lim.focus(); doc.activeElement = doc.body; await go("input", 75); await go("change"); return doc.activeElement === lim;`));
+check("settings sheet: the auto-restart switch follows the state, off while its save runs",
+  rig(`const b = sheet.querySelector("[role=switch]"); const a = b.getAttribute("aria-checked") === "false";
+  S = { settings: { auto_restart: true } }; syncSettings(); const c = b.getAttribute("aria-checked") === "true" && b.disabled === false;
+  pending.add("auto_restart"); syncSettings(); return a && c && b.disabled === true;`));
+check("settings sheet: drawn once; a redraw keeps the same slider", rig(`renderSheet(); return $("lim") === lim;`));
 Promise.all(later).then(() => process.exit(fail ? 1 : 0));

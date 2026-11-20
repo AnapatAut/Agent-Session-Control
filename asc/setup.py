@@ -19,7 +19,8 @@ changes nothing):
   session; the running server stays that unit's until the next boot). Each is recorded in
   setup.json first, and --remove enables it again;
 - asctl-tmux.service, asctl-boot.service, asctl-watch.timer and asctl-dash.socket enabled, the
-  timer and the socket started.
+  timer and the socket started;
+- on a first setup (none of those enabled yet, auto-restart never set): auto-restart on.
 It says when linger is off (the units start at boot only with it: loginctl enable-linger, which
 it does not run) and when the dashboard has no config yet. A second run does only what is
 missing.
@@ -320,6 +321,15 @@ def _not_root():
         raise RegistryError("run it as the user who wants asctl, not as root (it sets up that user's own units)")
 
 
+def _auto_restart_unset():
+    """True when the user never set auto-restart (a registry that cannot be read: False, left alone)."""
+    try:
+        s = registry.load().get("settings")
+    except (RegistryError, OSError):
+        return False
+    return not (isinstance(s, dict) and "auto_restart" in s)
+
+
 def setup(yes=False):
     _not_root()
     manager_env()
@@ -351,6 +361,7 @@ def setup(yes=False):
     old_units = tmux_units()
     to_enable = [u for u in UNITS if not _enabled(u)]
     to_start = [u for u in STARTED if _prop(u, "ActiveState") != "active"]
+    first = len(to_enable) == len(UNITS) and _auto_restart_unset()  # a first setup: auto-restart on
     plan = []
     if state == "missing":
         plan.append(f"write {dropin} (a kernel OOM kill of one claude does not end its tmux session)")
@@ -361,6 +372,8 @@ def setup(yes=False):
         plan.append("enable " + ", ".join(to_enable))
     if to_start:
         plan.append("start " + ", ".join(to_start))
+    if first:
+        plan.append("turn auto-restart on (a first setup; asctl auto-restart off turns it off)")
     notes = _notes()
     if state == "differs":
         notes.append(f"{dropin} is not the one asctl ships: left as it is")
@@ -403,6 +416,14 @@ def setup(yes=False):
         if to_start:
             _must("start", *to_start)
             done.append("started " + ", ".join(to_start))
+        if first:
+            with registry.changing() as data:
+                s = data.get("settings")
+                if not isinstance(s, dict):
+                    s = data["settings"] = {}
+                s.setdefault("auto_restart", True)  # one set meanwhile stays
+            events.log("setting", None, "auto-restart on (a first setup)")  # its own: the setup event is cut short
+            done.append("turned auto-restart on")
     except (RegistryError, OSError) as x:
         msg = f"setup stopped part way ({'; '.join(done) or 'nothing done'}): {x}; run asctl setup again to finish"
         events.log("failed", None, msg)

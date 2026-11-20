@@ -444,6 +444,54 @@ seen 'would leave 5.9% available, under 15%' <<<"$out" && ok "on refused when th
 asctl on "$id2" --force-memory >/dev/null && ok "on --force-memory starts anyway" || bad "on --force-memory starts anyway" "on --force-memory failed"
 asctl off "$id2" --force >/dev/null
 mem 32000000 16000000
+echo "== the start limit (asctl start-limit)"
+asctl start-limit | seen -x 'start limit: 80% used (the default)' && ok "start-limit with no value: the default, said so" || bad "start-limit with no value: the default, said so" "start-limit: $(asctl start-limit)"
+before=$(jq -c '.settings // null' "$REG"); n=0
+for v in 55 90 62 59 86 100 0 080 060 8O abc "" 60.0 " 60" 6 -60 60x; do errof start-limit "$v" | seen -F 'start limit: 60, 65, 70, 75, 80, 85 (% used) or default' && n=$((n + 1)); done
+[ "$n" = 17 ] && [ "$(jq -c '.settings // null' "$REG")" = "$before" ] && ok "start-limit 55, 90, 62, 59, 86, 100, 0, 080, 060, 8O, abc, empty, 60.0, ' 60', 6, -60, 60x: refused, nothing changed" \
+	|| bad "start-limit 55, 90, 62, 59, 86, 100, 0, 080, 060, 8O, abc, empty, 60.0, ' 60', 6, -60, 60x: refused, nothing changed" "refused $n of 17; settings $before -> $(jq -c '.settings // null' "$REG")"
+asctl start-limit 60 | seen -x 'start limit: 60% used: a start needs 40% of memory available' && [ "$(jqe .settings.start_limit)" = 60 ] \
+	&& last setting | jq -e '.text == "start limit 60% used" and .by == "cli"' >/dev/null && asctl start-limit | seen -x 'start limit: 60% used' \
+	&& ok "start-limit 60: kept, said, logged" || bad "start-limit 60: kept, said, logged" "60: $(jq -c .settings "$REG") / $(last setting)"
+# memory.gate at each edge (a claude of 1 kB expected, so only the start rule speaks; 32,000,000 kB in all)
+gate() { mem 32000000 "$1"; python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import memory; print(memory.gate(1))' "$REPO"; }
+[ -z "$(gate 12800000)" ] && [ "$(gate 12799999)" = "memory: 40.0% available, a start needs 40%" ] \
+	&& ok "limit 60: a start at 40.0% available exactly, refused just under" || bad "limit 60: a start at 40.0% available exactly, refused just under" "40%: $(gate 12800000) / $(gate 12799999)"
+mem 32000000 12480000; seen -F 'memory: 39.0% available, a start needs 40% (asctl on' <<<"$(errof on "$id2")" && ! tm has-session -t "=chat-$id2" 2>/dev/null \
+	&& ok "asctl on follows the limit (60: refused at 39%), nothing started" || bad "asctl on follows the limit (60: refused at 39%), nothing started" "on at 39%: $(errof on "$id2")"
+asctl start-limit 85 >/dev/null
+[ "$(gate 4799999)" = "memory: 15.0% available, a start needs 15%" ] && gate 4800000 | seen 'would leave 15.0% available, under 15%' && [ -z "$(gate 4800001)" ] \
+	&& ok "limit 85: just under 15% refused by it; at 15% the room left after the start decides (under 15%: refused)" || bad "limit 85: just under 15% refused by it; at 15% the room left after the start decides (under 15%: refused)" "15%: $(gate 4799999) / $(gate 4800000) / $(gate 4800001)"
+asctl start-limit default | seen -x 'start limit: 80% used: a start needs 20% of memory available' && jq -e '.settings | has("start_limit") | not' "$REG" >/dev/null \
+	&& last setting | jq -e '.text == "start limit 80% used (the default)"' >/dev/null && [ -z "$(gate 6400000)" ] && [ "$(gate 6399999)" = "memory: 20.0% available, a start needs 20%" ] \
+	&& ok "start-limit default: dropped from the registry, 20% again at its edge" || bad "start-limit default: dropped from the registry, 20% again at its edge" "default: $(jq -c .settings "$REG") / $(gate 6400000) / $(gate 6399999)"
+asctl start-limit 75 >/dev/null; asctl start-limit 80 >/dev/null; jq -e '.settings | has("start_limit") | not' "$REG" >/dev/null \
+	&& ok "start-limit 80: the default, not kept" || bad "start-limit 80: the default, not kept" "80: $(jq -c .settings "$REG")"
+# a start limit the registry holds that is none of them: the default; one it cannot read: the default too, no error
+lim() { python3 -I -c 'import json, sys; sys.path.insert(0, sys.argv[1]); from asc import memory, registry
+with registry.changing() as d: d["settings"] = json.loads(sys.argv[2])
+print(memory.start_limit(), memory.start_pct())' "$REPO" "$1"; }
+n=0; for s in '{"start_limit": "70"}' '{"start_limit": 70.0}' '{"start_limit": true}' '{"start_limit": 90}' '{"start_limit": 62}' '{"start_limit": null}' '[70]' '"70"' 'null' '{}'; do
+	[ "$(lim "$s")" = "80 20" ] && n=$((n + 1)); done
+[ "$n" = 10 ] && [ "$(lim '{"start_limit": 85}')" = "85 15" ] && ok "a saved limit that is none of 60..85 by 5 (a string, 70.0, true, 90, 62, null), or settings not an object: the default" \
+	|| bad "a saved limit that is none of 60..85 by 5 (a string, 70.0, true, 90, 62, null), or settings not an object: the default" "$n of 10"
+lim '[70]' >/dev/null; asctl start-limit 65 >/dev/null && [ "$(jq -c .settings "$REG")" = '{"start_limit":65}' ] \
+	&& ok "start-limit over settings that are not an object: they become one" || bad "start-limit over settings that are not an object: they become one" "settings: $(jq -c .settings "$REG")"
+cp "$REG" "$T/reg.keep"; echo '{not json' > "$REG"
+r=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import memory; print(memory.start_limit())' "$REPO" 2>&1); cp "$T/reg.keep" "$REG"
+[ "$r" = 80 ] && ok "a registry that cannot be read: the default limit, no error" || bad "a registry that cannot be read: the default limit, no error" "got: $r"
+# memory.steady follows it (samples at 35% available: enough for 70 (30%), not for 60 (40%))
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import memory, registry
+b = memory.boot_id(); S = lambda t: {"t": t, "boot": b, "avail_pct": 35, "oom_kill": 0, "psi_full_us": 0, "pswpin": 0, "pswpout": 0}
+xs = [S(1000 + 30 * i) for i in range(12)]
+def at(v):
+    with registry.changing() as d: d["settings"] = {"start_limit": v}
+    return memory.steady(xs, now=1340)
+assert at(65) == "" and at(60) == "memory: down to 35% available in the last 2 min (a start needs 40% steady)", (at(65), at(60))
+assert memory.steady(xs, now=1340, pct=20) == ""
+with registry.changing() as d: d["settings"] = {}' "$REPO" \
+	&& ok "steady follows the limit (35% available: steady for 65, not for 60); a pct given wins" || bad "steady follows the limit (35% available: steady for 65, not for 60); a pct given wins" "steady and the limit"
+mem 32000000 16000000
 echo "== rc, resurrect, note"
 asctl rc "$id2" on --title "My chat" >/dev/null && [ "$(jqe ".entries[\"$id2\"].rc")" = true ] && [ "$(jqe ".entries[\"$id2\"].rc_title")" = "My chat" ] && ok "rc on with a title" || bad "rc on with a title" "rc on failed"
 asctl on "$id2" >/dev/null; lastargs | seen -- '--remote-control My chat' && ok "started with --remote-control and its title" || bad "started with --remote-control and its title" "rc not passed: $(lastargs)"
@@ -1288,8 +1336,11 @@ mkdir -p "$HOME/.claude/projects/-x"
 printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SH" > "$HOME/.claude/projects/-x/$SH.jsonl"
 asctl fav "$SH" --name heldb >/dev/null || stop "a favorite holding SH"
 echo "== watcher: memory warnings, following, a pending rename, duplicates"
-m0=$(evn memory); mem 32000000 3200000; watch; watch
-[ "$(evn memory)" = $((m0 + 1)) ] && last memory | seen 'memory low: 10.0% available' && ok "memory under 15%: one warning, not one per run" || bad "memory under 15%: one warning, not one per run" "memory warning: $(evn memory) $(last memory)"
+m0=$(evn memory); asctl start-limit 70 >/dev/null; mem 32000000 3200000; watch; watch
+[ "$(evn memory)" = $((m0 + 1)) ] && last memory | jq -r .text | seen -x 'memory low: 10.0% available (under 15%); starts wait for 30%' \
+	&& ok "memory under 15%: one warning, not one per run; it names what starts wait for (the start limit 70: 30% available)" \
+	|| bad "memory under 15%: one warning, not one per run; it names what starts wait for (the start limit 70: 30% available)" "memory warning: $(evn memory) $(last memory)"
+asctl start-limit default >/dev/null
 mem 32000000 4900000; watch; [ "$(evn memory)" = $((m0 + 1)) ] && ok "15.3%: still warned (back only 1 point over)" || bad "15.3%: still warned (back only 1 point over)" "memory warning flaps"
 mem 32000000 16000000; watch; last memory | seen 'memory back: 50.0% available' && ok "memory back: logged once" || bad "memory back: logged once" "memory back: $(last memory)"
 # A favorite started by asctl in its own session
@@ -1390,7 +1441,29 @@ pn=$(claude_in "wat2-$idw") && [ "$pn" != "$pw" ] && last restarted | jq -r .tex
 	&& ok "restarted: ended by a signal, an OOM kill seen, memory steady" || bad "restarted: ended by a signal, an OOM kill seen, memory steady" "not restarted: $(ended) / $(last waiting) / $(last restarted)"
 last on | jq -e '.by == "watch"' >/dev/null && ok "its on is by watch" || bad "its on is by watch" "on by: $(last on)"
 pw=$pn; bump; watch; kill -TERM "$pw"; sleep 1.2; bump; watch
-ended | seen 'started again under 30 min ago' && ok "not again within 30 min" || bad "not again within 30 min" "30 min: $(ended)"
+ended | seen 'started again under 10 min ago' && ok "not again within 10 min" || bad "not again within 10 min" "10 min: $(ended)"
+# a kill loop: its last restart 11 min ago, the one before 25 min before that (within the hour): 30 min
+python3 -I -c 'import sys, time; sys.path.insert(0, sys.argv[1]); from asc import registry
+with registry.changing() as d: d["entries"][sys.argv[2]].update(auto_restarted=int(time.time()) - 660, auto_restarted_prev=int(time.time()) - 2160)' "$REPO" "$idw"
+watch; last waiting | jq -r .text | seen -F 'started again under 30 min ago, the second time within an hour (it keeps being killed)' && ! claude_now "wat2-$idw" >/dev/null 2>&1 \
+	&& ok "two restarts within an hour: the next waits 30 min, said so" || bad "two restarts within an hour: the next waits 30 min, said so" "loop: $(last waiting)"
+# the rule itself at each edge (watch.restart_wait: last, prev, now)
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import watch as w
+N = 10 ** 6
+ten = lambda r: "under 10 min" in r
+thirty = lambda r: "under 30 min" in r and "it keeps being killed" in r
+assert w.restart_wait(0, 0, N) == ""                                   # never restarted
+assert ten(w.restart_wait(N - 599, 0, N)) and w.restart_wait(N - 600, 0, N) == ""   # 10 min, to the second
+assert ten(w.restart_wait(N + 599, 0, N)) and w.restart_wait(N + 600, 0, N) == ""   # a clock that ran ahead
+assert thirty(w.restart_wait(N - 600, N - 600 - 3599, N))              # the one before 59:59 earlier: a loop
+assert w.restart_wait(N - 600, N - 600 - 3600, N) == ""                # an hour earlier: not one
+assert thirty(w.restart_wait(N - 1799, N - 2399, N)) and w.restart_wait(N - 1800, N - 2400, N) == ""   # 30 min, to the second
+assert ten(w.restart_wait(N - 300, N - 900, N))                        # a loop under 10 min: 10 said first
+assert thirty(w.restart_wait(N - 600, N - 600, N))                     # the same second twice: a loop
+assert w.restart_wait(N - 600, N - 500, N) == "" and w.restart_wait(1, N - 50, N) == ""   # the one before after it (a stamp set by hand): no loop
+assert w.restart_wait(N - 600, 0, N) == ""                             # none before' "$REPO" \
+	&& ok "restart gap: 10 min, 30 after two within an hour, each to the second; a clock ahead; stamps out of order" \
+	|| bad "restart gap: 10 min, 30 after two within an hour, each to the second; a clock ahead; stamps out of order" "restart_wait"
 python3 -I -c 'import sys, json; sys.path.insert(0, sys.argv[1]); from asc import registry
 with registry.changing() as d: d["entries"][sys.argv[2]]["auto_restarted"] = 1' "$REPO" "$idw"
 tm send-keys -t "=wat2-$idw:" 'sleep 300' Enter; sleep 0.8; seed; watch
@@ -1511,6 +1584,8 @@ mem 32000000 16000000
 flock "$SD/locks/$idw" sleep 3 & fl=$!; sleep 0.3; seed; watch
 claude_now "wat2-$idw" >/dev/null 2>&1 && bad "an entry an action holds: left alone" "started while an action held it" || ok "an entry an action holds: left alone"
 wait $fl; seed; watch; pw=$(claude_in "wat2-$idw") && ok "and started once the action is done" || bad "and started once the action is done" "not started after the lock: $(last waiting)"
+[ "$(jq ".entries[\"$idw\"].auto_restarted_prev" "$REG")" = 1 ] && [ "$(jq ".entries[\"$idw\"].auto_restarted > 1" "$REG")" = true ] \
+	&& ok "a restart keeps the one before it (1, set above)" || bad "a restart keeps the one before it (1, set above)" "stamps: $(jq -c ".entries[\"$idw\"] | [.auto_restarted, .auto_restarted_prev]" "$REG")"
 # A claude started by hand in the pane after an end: that end is never acted on again.
 python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import registry
 with registry.changing() as d: d["entries"][sys.argv[2]]["auto_restarted"] = 1' "$REPO" "$idw"
@@ -1711,7 +1786,7 @@ H2="$T/h2" F2="$T/h2/fake-units"; mkdir -p "$H2" "$T/linger"
 AT=@; IM="tmux${AT}main.service"
 ALL="[\"envtmux.service\",\"shtmux.service\",\"tmux.service\",\"$IM\"]"
 su2() { HOME="$H2" ASC_LINGER_DIR="$T/linger" "$REPO/bin/asctl" setup "$@" 2>&1; }
-SUD="$H2/.config/systemd/user" SJ="$H2/.local/state/agent-session-control/setup.json"
+SUD="$H2/.config/systemd/user" SJ="$H2/.local/state/agent-session-control/setup.json" R2="$H2/.local/state/agent-session-control/registry.json"
 en() { [ -e "$F2/enabled/$1" ]; }
 calls() { grep -c -E "^--user ($1)" "$H2/systemctl.log" 2>/dev/null || true; }
 out=$(su2 --yes); rc=$?
@@ -1769,7 +1844,8 @@ touch "$F2/fail-show-environment"; out=$(su2 --yes); rc=$?; rm "$F2/fail-show-en
 out=$(su2 </dev/null); rc=$?
 [ "$rc" = 1 ] && seen "disable tmux.service, which runs tmux" <<<"$out" && seen "enable asctl-tmux.service, asctl-boot.service, asctl-watch.timer, asctl-dash.socket" <<<"$out" \
 	&& seen "run asctl setup --yes to do it" <<<"$out" && en tmux.service && ! en asctl-tmux.service && ! [ -e "$SUD/tmux-spawn-.scope.d/asctl.conf" ] \
-	&& ok "setup, no terminal and no --yes: shows the plan, changes nothing" || bad "setup, no terminal and no --yes: shows the plan, changes nothing" "setup, no --yes: rc $rc $out"
+	&& seen -x "  - turn auto-restart on (a first setup; asctl auto-restart off turns it off)" <<<"$out" && ! jq -e '.settings' "$R2" >/dev/null 2>&1 \
+	&& ok "setup, no terminal and no --yes: shows the plan (a first setup: auto-restart on too), changes nothing" || bad "setup, no terminal and no --yes: shows the plan (a first setup: auto-restart on too), changes nothing" "setup, no --yes: rc $rc $out"
 out=$(su2 --yes); rc=$?
 dropin_ok() { cmp -s "$SUD/tmux-spawn-.scope.d/asctl.conf" "$REPO/systemd/tmux-spawn-.scope.d/asctl.conf" && [ "$(stat -c %a "$SUD/tmux-spawn-.scope.d/asctl.conf")" = 644 ]; }
 [ "$rc" = 0 ] && ! en tmux.service && ! en envtmux.service && ! en shtmux.service && ! en $IM && en web.service && en asctl-old.service && en notmux.service && dropin_ok \
@@ -1782,9 +1858,12 @@ seen "note: linger is off" <<<"$out" && seen "note: the dashboard has no config 
 	&& ok "notes: linger off, no dashboard config" || bad "notes: linger off, no dashboard config" "  notes: $out"
 jq -s -e 'last | .kind == "setup" and .by == "cli" and (.text | test("disabled tmux.service"))' "$H2/.local/state/agent-session-control/events.jsonl" >/dev/null \
 	&& ok "logged (kind setup)" || bad "logged (kind setup)" "  setup event: $(tail -1 "$H2/.local/state/agent-session-control/events.jsonl")"
+[ "$(jq -c .settings "$R2")" = '{"auto_restart":true}' ] && seen -x "turned auto-restart on" <<<"$out" \
+	&& jq -s -e '[.[] | select(.kind == "setting")] | length == 1 and last.text == "auto-restart on (a first setup)"' "$H2/.local/state/agent-session-control/events.jsonl" >/dev/null \
+	&& ok "a first setup turns auto-restart on, said and logged (a setting)" || bad "a first setup turns auto-restart on, said and logged (a setting)" "settings: $(jq -c .settings "$R2" 2>&1) / $out"
 n=$(calls 'enable|disable|start'); : > "$T/linger/$(id -un)"
 out=$(su2 --yes); rc=$?
-[ "$rc" = 0 ] && seen "asctl is set up already: nothing to do" <<<"$out" && [ "$(calls 'enable|disable|start')" = "$n" ] && ! seen "linger" <<<"$out" \
+[ "$rc" = 0 ] && seen "asctl is set up already: nothing to do" <<<"$out" && [ "$(calls 'enable|disable|start')" = "$n" ] && ! seen "linger" <<<"$out" && ! seen "auto-restart" <<<"$out" \
 	&& ok "setup again: nothing to do, nothing called (and no linger note with linger on)" || bad "setup again: nothing to do, nothing called (and no linger note with linger on)" "setup again: rc $rc $out"
 echo "# mine" >> "$SUD/tmux-spawn-.scope.d/asctl.conf"
 out=$(su2 --yes); rc=$?
@@ -1822,6 +1901,25 @@ out=$(su2 --yes); rc=$?
 	&& [ "$(jq '.disabled | index("tmux.service")' "$SJ")" = null ] && jq -e '.disabled | index("envtmux.service")' "$SJ" >/dev/null \
 	&& ok "setup, a tmux unit a disable does not turn off: stops, says why, and does not record it" || bad "setup, a tmux unit a disable does not turn off: stops, says why, and does not record it" "setup, global unit: rc $rc $out $(cat "$SJ")"
 rm "$F2/global-tmux.service"
+# auto-restart at setup again: one turned off stays off; an earlier user's (units enabled, never set) stays unset;
+# a registry that cannot be read is left alone
+su2 --remove --yes >/dev/null; jq '.settings = {"start_limit": 70}' "$R2" > "$T/r2" && cp "$T/r2" "$R2"
+out=$(su2 --yes); rc=$?
+[ "$rc" = 0 ] && [ "$(jq -cS .settings "$R2")" = '{"auto_restart":true,"start_limit":70}' ] && seen -x "turned auto-restart on" <<<"$out" \
+	&& ok "a first setup with settings that hold no auto-restart (a start limit): turned on, the limit kept" || bad "a first setup with settings that hold no auto-restart (a start limit): turned on, the limit kept" "limit only: rc $rc $(jq -c .settings "$R2") $out"
+su2 --remove --yes >/dev/null; HOME="$H2" "$REPO/bin/asctl" auto-restart off >/dev/null
+out=$(su2 --yes); rc=$?
+[ "$rc" = 0 ] && en asctl-tmux.service && [ "$(jq -cS .settings "$R2")" = '{"auto_restart":false,"start_limit":70}' ] && ! seen "auto-restart" <<<"$out" \
+	&& ok "setup with auto-restart turned off before: it stays off" || bad "setup with auto-restart turned off before: it stays off" "off kept: rc $rc $(jq -c .settings "$R2") $out"
+jq 'del(.settings)' "$R2" > "$T/r2" && cp "$T/r2" "$R2"; rm "$F2/enabled/asctl-dash.socket"
+out=$(su2 --yes); rc=$?
+[ "$rc" = 0 ] && en asctl-dash.socket && ! jq -e 'has("settings")' "$R2" >/dev/null && ! seen "auto-restart" <<<"$out" \
+	&& ok "setup of one already set up (a unit enabled again), auto-restart never set: left unset (off)" || bad "setup of one already set up (a unit enabled again), auto-restart never set: left unset (off)" "earlier user: rc $rc $(jq -c . "$R2") $out"
+su2 --remove --yes >/dev/null; echo '{not json' > "$R2"
+out=$(su2 --yes); rc=$?
+[ "$rc" = 0 ] && [ "$(cat "$R2")" = '{not json' ] && ! seen "auto-restart" <<<"$out" \
+	&& ok "setup with a registry that cannot be read: auto-restart left alone (the registry untouched)" || bad "setup with a registry that cannot be read: auto-restart left alone (the registry untouched)" "unreadable: rc $rc $(cat "$R2") $out"
+su2 --remove --yes >/dev/null; rm "$R2"
 ud() { HOME="$H2" XDG_CONFIG_HOME="$1" python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import setup; print(setup.unit_dir())' "$REPO"; }
 [ "$(ud "$T/shellcfg")" = "$H2/.config/systemd/user" ] && echo "XDG_CONFIG_HOME=$H2/mgrcfg" > "$F2/environment" && [ "$(ud "$T/shellcfg")" = "$H2/mgrcfg/systemd/user" ] \
 	&& ok "the unit folder follows the manager's XDG_CONFIG_HOME, not the shell's" || bad "the unit folder follows the manager's XDG_CONFIG_HOME, not the shell's" "unit_dir: $(ud "$T/shellcfg")"
