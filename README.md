@@ -3,27 +3,32 @@
 A control panel for Claude Code sessions in tmux. You mark the conversations you care about as
 favorites, and turn each one on (a tmux session in its folder, the conversation resumed) and off
 from a command line (`asctl`) or a dashboard behind `tailscale serve`. After a reboot only the
-favorites with resurrect on come back, one at a time, once there is memory for them. What is
-built and what comes next: [`ROADMAP.md`](ROADMAP.md).
+favorites that were on and have resurrect on come back, one at a time, once there is memory for
+them. What is built and what comes next: [`ROADMAP.md`](ROADMAP.md).
 
 Linux with systemd only (it reads `/proc`, and each user's units run in their systemd user
 manager). Needs tmux (3.x; built with systemd, as distribution packages are, for the pane
 scopes below), Python 3.9 or newer (standard library only), and Claude Code.
 
-**Contributing:** install the privacy hooks once per clone, `tools/install-hooks.sh` (again after
-changing them). They refuse a commit or push that names a machine, a user, a claude.ai session
-or a credential ([`tools/privacy-rules`](tools/privacy-rules)). They run from copies inside
-`.git`, so checking out an older commit does not turn them off. Your own real names (host, users, logins,
-addresses) go in `.git/privacy-local`, one per line: it is inside `.git`, so it is never
-committed. `tests/lint.sh` runs the same check on every tracked file.
+**Contributing:** install the privacy hooks once per clone, `tools/install-hooks.sh` (again
+after changing the hooks, `tools/privacy-check.sh` or `tools/privacy-rules`). They refuse a
+commit or push that names a machine, a user, a claude.ai session or a credential
+([`tools/privacy-rules`](tools/privacy-rules)). They run from copies inside `.git`, so checking
+out an older commit does not turn them off. Your own real names (host, users, logins, addresses)
+go in `.git/privacy-local`, one per line: it is inside `.git`, so it is never committed.
+`tests/lint.sh` runs the same check on every tracked file.
 
 ## Install
 
-**For the whole machine**, from a checkout, as root:
+**For the whole machine**, from a release (its source archive on the repo's Releases page,
+unpacked), as root:
 
 ```bash
-sudo ./install.sh              # install, or upgrade to this checkout
-sudo ./install.sh --uninstall  # remove it (refused while a user still has it set up)
+sudo ./install.sh              # install, or upgrade to this release
+sudo ./install.sh --uninstall  # remove it (refused while a user still has it set up, or a
+                               # process runs its code, such as a claude asctl started)
+sudo ./install.sh --force      # replace unit files changed since the last install; with
+                               # --uninstall: despite running processes or homes it cannot read
 ```
 
 The code goes in `/opt/agent-session-control/releases/<id>`. It belongs to root and users can
@@ -32,22 +37,21 @@ only read it. `current` points at the release in use, and `/usr/local/bin/asctl`
 switches `current` with one rename. A running asctl keeps the release it started from; this
 release, the one before it and the last one installed to the end stay, older ones go once no
 process runs them. The installer
-copies the checkout once, refusing a link at any level, and reads nothing from it after that.
+copies the folder once, refusing a link at any level, and reads nothing from it after that.
 It refuses, changing nothing, when a path it would write is not its own (a folder or
 `/usr/local/bin/asctl` it did not make, a unit file it did not write, a unit file changed
 since: keep a change in a drop-in, `<unit>.d/`), when the code does not compile or start, or
 when a release it would use again has changed. Every write is flushed to disk and renamed
 into place, every delete renames first: an install or uninstall stopped at any point (a kill,
 Ctrl-C) is finished by running it again, with no `--force`. Users' managers read changed
-units at their next `systemctl --user daemon-reload`.
+units at their next `systemctl --user daemon-reload`. Tests: `tests/install.sh`.
 
-**Updating**: get the new code (`git pull` in the checkout, or the source archive of a newer
-release from the repo's Releases page, which has all the installer needs), then run
-`sudo ./install.sh` again from it. The same code is the same release ("installed already",
-nothing written). Users run nothing: their favorites, settings and event log stay. A running
-dashboard keeps the old code until it next starts (after 10 idle minutes, or `systemctl --user
-restart asctl-dash.service`), and only when the installer says the units changed does each
-user who has it set up run `systemctl --user daemon-reload`.
+**Updating**: unpack the source archive of a newer release, then run `sudo ./install.sh` again
+from its folder. The same code is the same release ("installed already": only its marker is
+written again). Users keep their favorites, settings and event log, and run nothing unless the
+installer says the units changed: then each user who has it set up runs `systemctl --user
+daemon-reload`. A running dashboard keeps the old code until it next starts (after 10 minutes
+with no request, so not while a page is in view; or `systemctl --user restart asctl-dash.service`).
 
 **Each user** who wants it then runs, as themselves, in a login session of their own (not as
 root, not through `sudo -u` or `su`: it needs that user's systemd manager):
@@ -57,7 +61,8 @@ asctl setup                    # shows what it will do and asks; --yes does not 
 asctl setup --remove           # off again: favorites, the event log and the settings stay
 ```
 
-Setup refuses, changing nothing, while an older tmux-claude-restore install is there (remove it
+Setup refuses, changing nothing, while asctl's units are not installed, while an older
+tmux-claude-restore install is there (remove it
 first with its own `install.sh --uninstall`; this repo has that installer up to commit
 `dd28b57`), or while tmux-continuum's restore or boot is on (`set -g @continuum-restore 'off'`
 and `set -g @continuum-boot 'off'` in your tmux config: a continuum restore brings every saved
@@ -75,7 +80,8 @@ there: they touch no session. Then it:
   through a script of its own is not seen. It never stops one: a stop ends every session, so the
   running server stays that unit's until the next boot. `setup --remove` enables it again;
 - enables `asctl-tmux.service`, `asctl-boot.service`, `asctl-watch.timer` and
-  `asctl-dash.socket`, and starts the timer and the socket.
+  `asctl-dash.socket`, and starts the timer and the socket;
+- on a first setup, turns auto-restart on (`asctl auto-restart off` turns it off).
 
 It says when linger is off: without it the units start only once you log in, so after a reboot
 nothing comes back until then (`sudo loginctl enable-linger NAME`). The server gets the user
@@ -83,7 +89,8 @@ manager's environment, not a login shell's: something your old tmux unit set in 
 (such as `DISPLAY`) goes in a drop-in, `~/.config/systemd/user/asctl-tmux.service.d/`.
 
 **The dashboard** needs `~/.config/agent-session-control/dash.json` (it and its folder yours
-and writable only by you):
+and writable only by you; read when the dashboard starts, so after a change run
+`systemctl --user restart asctl-dash.service`):
 
 ```json
 {"login": "<your Tailscale login>", "host": "<MagicDNS name>:<port>"}
@@ -92,19 +99,22 @@ and writable only by you):
 `"name"` (optional) names the app: the home screen's label, the tab's title, the page's
 heading. It is 1 to 24 ASCII letters, digits, `.`, `_` or `-`, with single spaces between words,
 such as `"asctl home"`. Without it, the label is "Sessions" and the title "Agent Session
-Control". A phone shows a new name once the app is added to it again.
+Control". A phone shows a new name once the app is added to it again. `"prefix"` (optional) is
+the path `tailscale serve --set-path` mounts it on, such as `"/user"`.
 
-and an admin's `tailscale serve`, one port per user (each user's dashboard needs an origin of
-its own; see `asc/dash.py`):
+and an admin's `tailscale serve` (HTTPS certificates on for the tailnet), one port per user (each
+user's dashboard needs an origin of its own; see `asc/dash.py`), on a port `tailscale serve
+status` does not list yet: serve replaces an entry already there without asking.
 
 ```bash
-sudo tailscale serve --bg --https=<port> unix:/run/user/<uid>/asctl/dash.sock
+sudo tailscale serve --bg --https=<port> unix:/run/user/<uid>/asctl/dash.sock   # uid: id -u NAME
 ```
 
 **A checkout of your own**, without the machine install: `tools/install-units.sh` writes the
-units into `~/.config/systemd/user/` with that checkout's `bin/asctl` in them. A unit there that
-is not the same is shown and left, unless `--force`. Your own units come before the machine's.
-Then run `bin/asctl setup` from the checkout.
+units and the scope drop-in into `~/.config/systemd/user/` (or `$XDG_CONFIG_HOME`'s, or a folder
+you name) with that checkout's `bin/asctl` in them. A unit there that is not the same is shown
+and left, unless `--force`. Your own units come before the machine's. Then run
+`systemctl --user daemon-reload` and `bin/asctl setup` from the checkout.
 
 ## asctl
 
@@ -126,8 +136,8 @@ asctl new ~/projects/app --name app
                             # --rc); a claude
                             # that does not come up leaves nothing (no favorite, no tmux session)
 asctl trust 0421            # yes to Claude Code's trust prompt for its folder, where a start left
-                            # its claude waiting; asctl never answers that prompt by itself (Off
-                            # closes a waiting one)
+                            # its claude waiting, only for a folder `asctl new` would take; asctl
+                            # never answers that prompt by itself (Off closes a waiting one)
 asctl off 0421              # refuses while claude works or another pane runs something; --force
                             # ends it anyway (SIGTERM, then its tmux session closed); a claude
                             # that lives on through both is a failure, said: it runs outside tmux
@@ -146,13 +156,16 @@ asctl rename 0421 db        # db-0421; a running claude, when idle, gets /rename
                             # which claude also sends to its claude.ai session (the rc title)
 asctl restart 0421          # off and on again (--resume), only when idle and running nothing;
                             # a claude of it outside its tmux session is moved into it
-asctl forget 0421
-asctl events 0421           # what happened to it (on, off, rename, refused, ended, ...): its last 200
+asctl forget 0421           # drop the favorite; a running session is left alone
+asctl events 0421           # what happened to it (on, off, rename, refused, ended, ...): the
+                            # last 50 (--limit N; 200 are kept); no ID: all, machine events too
 asctl start-limit 75        # settings: start only under 75% of memory used (60 to 85 in steps of 5;
                             # `default` is 80; no value shows it)
 asctl auto-restart on       # the watcher starts again a favorite killed under memory pressure (off:
                             # it only logs; see below). The dashboard's gear sets both too
 ```
+
+`asctl --help` lists every command and flag.
 
 MCP servers are off first for a new favorite: when its first start (`asctl new`, or the Trust
 after it) meets Claude Code's prompt for new servers of the folder's `.mcp.json`, one or several,
@@ -213,20 +226,23 @@ gate expects), follows a new session id (a branch, a rewind) and a new folder (`
 a rename that claude was too busy to take. A favorite wanted on whose claude ended with its tmux
 session still up is logged once, with its exit code and the memory evidence. With
 `asctl auto-restart on` (off by default, it only logs; a first `asctl setup` turns it on) it is started again in its own pane when
-all hold: ended by a signal (143 SIGTERM, 137 SIGKILL) in this boot, memory pressure seen around
-that end, memory steady under the start limit for 2 minutes with room for its size, not started
-again in the last 10 minutes (30 once it was started again twice within an hour: it keeps being
-killed), its session one pane running only its shell, one restart per run. The watcher
-never turns a favorite off or on; an entry an action is changing is left to the next run.
+all hold: ended by a signal (143 SIGTERM, 137 SIGKILL) in this boot under an hour ago, memory
+pressure seen around that end, memory steady under the start limit for 2 minutes with room for
+its size, not started again in the last 10 minutes (30 once it was started again twice within an
+hour: it keeps being killed), its session one pane running only the shell its claude left (the
+exit record names it), not scrolled back and not typed in for 2 minutes, one restart per run.
+The watcher never changes whether a favorite is wanted on (only On, Off and Forget do); an
+entry an action is changing is left to the next run.
 
-`asctl boot` (`asctl-boot.service`, once per boot) starts again the favorites with resurrect
-on that were on, the one turned on last first, one at a time: each needs memory under the start limit steady
-for 30 seconds (boot samples it every 10 seconds, so the first start comes about 40 seconds after
-the boot at the earliest, and each next one at least 30 seconds after the last) and room for its
-size; before the first it waits up to 2 minutes for claude.ai, then starts anyway. A favorite
-whose tmux session is up already is left to the watcher. What waits is logged; after an hour the
-rest are left for Start. After a tmux server that ended without a reboot:
-`systemctl --user start asctl-boot.service`.
+`asctl boot` (`asctl-boot.service`, once per boot) starts again the favorites with resurrect on
+that were on, the one turned on last first, one at a time: each needs memory under the start
+limit steady for 30 seconds (boot samples it every 10 seconds, so the first start comes about 30
+seconds after claude.ai answers at the earliest, and each next one at least 30 seconds after the
+last) and room for its size; before the first it waits up to 2 minutes for claude.ai, then
+starts anyway. A favorite whose tmux session is up already is left to the watcher, and one whose
+conversation a live claude holds is left alone. What waits is logged; after an hour the rest are
+left for Start. After a tmux server that ended without a reboot: `systemctl --user start
+asctl-boot.service`.
 
 `asctl-tmux.service` (`Type=forking`) runs `asctl tmux-server`: a server kept up with no
 session (`exit-empty off`), or nothing when one runs already (the old tmux unit's, on the day
@@ -265,10 +281,13 @@ One that Claude Code asks something else at start shows "Waiting at a prompt" an
 When tmux does not answer (a hang, or a client that cannot reach its server), asctl never takes
 that for "no server": the page says "tmux did not answer: ...", every card "Unknown" and its
 power button off; On, new, boot and asctl tmux-server refuse (none starts a server), and the
-watcher does nothing that run, logging it once until tmux answers again. Every request needs that login and host; every action the page's token and Origin; the config
-must be its user's and writable only by them. A refused page shows only its title and icon;
-the manifest's `x_title` names it for readers that list serve ports. See `asc/dash.py`;
-tests: `tests/dash.sh`.
+watcher does nothing that run, logging it once until tmux answers again. Every request needs
+that login and host and must come from another machine (a request from this machine is refused,
+as any local user could make one), and every request is refused while another user is the
+Tailscale operator (`sudo tailscale set --operator=` clears it); every action needs the page's
+token and Origin; the config must be its user's and writable only by them. A refused page shows
+only its title and icon; the manifest's `x_title` names it for readers that list serve ports.
+See `asc/dash.py`; tests: `tests/dash.sh`.
 
 ## Tests
 

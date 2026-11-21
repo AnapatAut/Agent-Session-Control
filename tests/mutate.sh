@@ -2,7 +2,7 @@
 # The mutant run of tests/asc.sh, tests/dash.sh and tests/install.sh: each mutant
 # (tests/mutants-asc.txt, tests/mutants-dash.txt, tests/mutants-install.txt; read by
 # tests/mutantlint.py) is a change to asctl or its installer that its named check must catch. Each runs in a copy of its own, on this machine (the container runner comes later).
-#   tests/mutate.sh                   every mutant (about 20 min); exit 0 only if all are CAUGHT
+#   tests/mutate.sh                   every mutant (about 40 min); exit 0 only if all are CAUGHT
 #   MUTANT_JOBS=3 tests/mutate.sh     how many runs at a time (default 3: memory)
 #   MUTANTS_FULL=1 tests/mutate.sh    every mutant on its whole suite (slow; for comparing)
 # First the baseline: every case alone, which must be all ok, no skip, each case done, and show

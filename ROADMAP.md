@@ -10,12 +10,15 @@ Built:
   remote-control setting and permission mode, refreshed as it runs (`asctl`).
 - **On and off.** Off: the agent exits and its tmux session closes. On: a new tmux session in
   its folder, with the same conversation resumed. A busy session is not turned off unless
-  forced. Restart and rename work while it runs.
-- **Restore per session.** After a reboot, only favorites with resurrect on come back, one at a
-  time (`asctl-boot.service`). tmux-resurrect and tmux-continuum are not needed.
-- **Memory-aware starts.** A session starts only when enough memory is free and has been steady.
-  A session that a kernel out-of-memory kill ended can come back by itself (off by default).
-  That needs clear evidence of the kill, and happens at most once per 30 minutes (the watcher).
+  forced. Rename works while it runs; a restart only while it is idle.
+- **Restore per session.** After a reboot, only favorites that were on and have resurrect on come
+  back, one at a time (`asctl-boot.service`). tmux-resurrect and tmux-continuum are not needed
+  (setup refuses while continuum's restore or boot is on).
+- **Memory-aware starts.** A session starts only under a memory limit of your own (60 to 85%
+  used) with room for its size (a restart excepted); boot and the watcher also wait for memory
+  to be steady. A session that a kernel out-of-memory kill ended can come back by itself (a first
+  `asctl setup` turns this on). That needs clear evidence of the kill, and happens at most once
+  per 10 minutes, 30 once it keeps being killed (the watcher).
 - **A dashboard.** One web page per Linux user, reached through a unix socket that other local
   users cannot open, behind `tailscale serve`. It installs as an app.
 - **An event log** of every action: each favorite's last 200.

@@ -39,8 +39,8 @@ done < <(find . -type f -print0 | sort -z)
 for w in "${wrote[@]}"; do echo "wrote $w"; done
 [ ${#wrote[@]} -gt 0 ] || echo "nothing to write: the units there are these"
 cat <<EOF
-Next, by hand (nothing was enabled or started):
+Next (nothing was enabled or started):
   systemctl --user daemon-reload
-  systemctl --user enable asctl-tmux.service asctl-boot.service asctl-watch.timer asctl-dash.socket
+  $REPO/bin/asctl setup      (it checks first, then enables them)
 EOF
 exit "$left"

@@ -74,14 +74,14 @@ def gate(expected_kb=None):
     return ""
 
 
-# --- samples (the watcher, every 30 s) --------------------------------------------------------
+# --- samples (the watcher every 30 s; asctl boot every 10 s) ----------------------------------
 # Counters that only grow, so a short squeeze between two samples is still seen: PSI "full"
 # (time all tasks stalled on memory, µs), pages swapped in and out, the kernel's OOM kills.
 # $ASC_PRESSURE, $ASC_VMSTAT and $ASC_BOOT_ID name other files (the tests use fake ones).
 STEADY_S = 120      # a restart by the watcher needs start_pct() for this long (asctl boot: its own)
 GAP_S = 90          # samples further apart than this do not count as a watch (the timer stopped)
 KEEP_S = STEADY_S + 2 * GAP_S   # samples are kept this long (by age, so extra runs crowd nothing out)
-MAX_SAMPLES = 120   # and at most this many (a run every 4 s)
+MAX_SAMPLES = 120   # and at most this many (a run every 2.5 s)
 PSI_US = 100_000    # evidence: tasks stalled on memory for 0.1 s or more between two samples
 SWAP_PAGES = 2560   # evidence: 10 MB or more swapped in or out between two samples
 

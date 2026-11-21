@@ -2,7 +2,7 @@
 # install.sh, the machine install, run as root in a namespace of its own: installs, upgrades,
 # each refusal, uninstall, and a kill at every step it takes (then the next run must end as one
 # that was never killed).
-#   tests/install.sh                       about 2 min
+#   tests/install.sh                       about 1 min
 #   ASC_ONLY=<case,...> tests/install.sh   only those cases (tests/cases.sh)
 # Its mutants (changes to install.sh each check must catch) are in tests/mutants-install.txt,
 # run by tests/mutate.sh. TEST_STOP_AT=<check>: exit right after that check's FAIL.

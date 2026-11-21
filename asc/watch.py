@@ -19,8 +19,8 @@ Each run, one at a time (watch.lock; a run that finds another still going does n
     a favorite that is wanted on whose claude ended while its tmux session stayed: logged once
     with its exit code and the memory evidence. Started again (in its own pane, which keeps the
     session and anyone attached) only when every one holds (plan row 7): auto-restart is on
-    (asctl auto-restart on; off by default), it ended by a signal (143 SIGTERM, 137 SIGKILL) in
-    this boot under an hour ago, memory pressure was seen around then, memory has been steady at
+    (asctl auto-restart on; off by default, a first asctl setup turns it on), it ended by a
+    signal (143 SIGTERM, 137 SIGKILL) in this boot under an hour ago, memory pressure was seen around then, memory has been steady at
     the start limit for 2 min and has room for it, it was not started again in the last 10 min
     (30 min after two restarts within an hour: it keeps being killed; restart_wait), its
     session is that one pane, still the shell asctl-wrap left (the PID in the exit record),

@@ -36,8 +36,8 @@ name (optional) is the app's name: the home screen's label, the tab's title, the
 and what a reader such as serve-dash lists; 1 to 24 ASCII letters, digits, ".", "_" or "-", with
 single spaces between words. Without it: "Sessions" on the home screen, "Agent Session Control"
 elsewhere. A phone shows a new name once the app is added to it again.
-The server exits after --idle seconds without a request (systemd starts it again on the next),
-once no action is running; on SIGTERM it waits up to 100 s for running actions. The page token
+The server exits after --idle seconds without an allowed request (systemd starts it again on
+the next), once no action is running; on SIGTERM it waits up to 100 s for running actions. The page token
 is kept in the socket's folder (0600), so a page left open still works after a restart.
 """
 import fcntl

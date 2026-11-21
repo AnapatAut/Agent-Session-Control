@@ -31,7 +31,7 @@
                                    resurrect start always has rc
   asctl note ID TEXT               a note shown with it ("" clears it)
   asctl forget ID                  drop the favorite; a running session is left alone
-  asctl events [ID] [--limit N]    what happened, oldest first (a favorite's last 200; asc/events.py)
+  asctl events [ID] [--limit N]    what happened, oldest first (the last 50; 200 kept per favorite)
   asctl watch                      one watcher run (asctl-watch.timer, every 30 s; asc/watch.py)
   asctl auto-restart on|off        whether the watcher starts again a claude ended by a signal
                                    under memory pressure (off: it only logs; the default, but a
@@ -100,7 +100,7 @@ def refusals(e, what):
         raise
 
 
-# Commands that change something: each is logged when refused or failed (main).
+# Commands that change a session or a favorite: each is logged when refused or failed (main).
 ACTIONS = {"fav", "new", "trust", "on", "off", "rename", "restart", "mode", "rc", "resurrect", "forget"}
 
 

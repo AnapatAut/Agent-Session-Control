@@ -1,5 +1,5 @@
-"""Checks and waits in tests/asc.sh and tests/dash.sh, and page.js's check names (run by
-tests/lint.sh).
+"""Checks and waits in tests/asc.sh, tests/dash.sh and tests/install.sh, and page.js's check
+names (run by tests/lint.sh).
 
 A check has one fixed name: `cond && ok NAME || bad NAME [DETAILS]` (or an if or case with an ok
 and a bad), the same NAME both ways, a quoted literal with no value in it ($ or a backquote in

@@ -4,12 +4,12 @@ Seven scripts. None touches your own tmux, tmux config or systemd user units, no
 
 | Script | Time | Needs | Checks |
 |---|---|---|---|
-| `tests/lint.sh` | about 45 s | bash; `shellcheck` and `node` if installed | bash syntax and shellcheck for every script, Python compiles, app.js parses, the suites' checks and waits (`tests/checklint.py`, with `tests/bashtree.py`), the mutant lists, the case runner, how a mutant run is read (`tests/mutjudge.py`), the mutant runner on toy repos (`tests/mutate-test.sh`), the sandbox's container check with a fake docker (`tests/sandbox-lib-test.sh`); the privacy check of every tracked file |
-| `tests/asc.sh` | about 4 min | bash, tmux, jq, python3 | `asctl`: live, fav, on, off, rename, restart, mode, rc, the event log, the watcher, boot, the tmux server unit and `asctl setup`, with a fake claude on a tmux server of its own and a fake systemctl (`tests/asc/bin`) |
-| `tests/dash.sh` | about 1 min | bash, tmux, jq, curl, python3; node for the page's logic (skipped without) | the dashboard server: socket and folder modes, the login, Host, Origin and token checks, one request per connection, the API and its actions, past conversations, idle and SIGTERM exit, systemd socket activation; the notices (boot, setup, the watcher), the auto-restart setting, conversation lengths; the page's own logic (`tests/dash/page.js`: row reasons, history wording and folding) |
-| `tests/install.sh` | about 1 min | bash, python3, util-linux `unshare` with user namespaces open to users (on Ubuntu: `kernel.apparmor_restrict_unprivileged_userns = 0`) | the machine install (`install.sh`) as root of a namespace of its own, with a tmpfs over each folder it reads or writes and a passwd of its own (the machine's folders, homes and processes never seen): install, again, upgrades, switching back, units dropped and added, each refusal (nothing changed), uninstall and what stops it; a kill at each step of an install, an upgrade and an uninstall, and inside a delete, after which the next run ends as one never killed; each write flushed to disk before its rename |
-| `tests/sandbox.sh` | about 7 min | Docker, network for the build only | asctl under real systemd, in a container: the two suites above on a clean Ubuntu, the dashboard as user units, a real out-of-memory kill, the watcher, the units from a checkout, the machine install (`install.sh`) and `asctl setup` by a second user, a reboot, then `setup --remove` and `--uninstall` |
-| `tests/privacy.sh` | seconds (`PRIVACY_MUTANTS=1`: about 4 min) | bash, git | the privacy check and its hooks catch each kind of leak and let the allowed cases through |
+| `tests/lint.sh` | about 1 min | bash, python3, git, jq; `shellcheck` and `node` if installed | bash syntax and shellcheck for every script, `asc/*.py` compiles, the three JS files parse, the suites' checks and waits (`tests/checklint.py`, with `tests/bashtree.py`), the mutant lists, the case runner, how a mutant run is read (`tests/mutjudge.py`), the mutant runner on toy repos (`tests/mutate-test.sh`), the sandbox's container check with a fake docker (`tests/sandbox-lib-test.sh`); the privacy check of every tracked file |
+| `tests/asc.sh` | about 4 min | bash, tmux, jq, python3 | `asctl`: live, fav, on, off, rename, restart, mode, rc, forget, the start limit, the event log, the watcher, boot, the tmux server unit and `asctl setup`, with a fake claude on a tmux server of its own and a fake systemctl (`tests/asc/bin`) |
+| `tests/dash.sh` | about 1 min | bash, tmux, jq, curl, python3; node for the page's logic (skipped without) | the dashboard server: socket and folder modes, the login, Host, Origin and token checks, one request per connection, the API and its actions, past conversations, idle and SIGTERM exit, systemd socket activation; the notices (boot, setup, the watcher), the settings (auto-restart, start limit), conversation lengths; the page's own logic (`tests/dash/page.js`: row reasons, history wording and folding) |
+| `tests/install.sh` | about 1 min | bash, python3, tmux and systemctl on PATH (not run), util-linux `unshare` with user namespaces open to users (on Ubuntu: `kernel.apparmor_restrict_unprivileged_userns = 0`) | the machine install (`install.sh`) as root of a namespace of its own, with a tmpfs over each folder it reads or writes and a passwd of its own (the machine's folders, homes and processes never seen): install, again, upgrades, switching back, units dropped and added, each refusal (nothing changed), uninstall and what stops it; a kill at each step of an install, an upgrade and an uninstall, and inside a delete, after which the next run ends as one never killed; each write flushed to disk before its rename |
+| `tests/sandbox.sh` | about 8 min | Docker, network for the build only | asctl under real systemd, in a container: `asc.sh` and `dash.sh` on a clean Ubuntu, the dashboard as user units, a real out-of-memory kill, the watcher, the units from a checkout, the machine install (`install.sh`) and `asctl setup` by a second user, a reboot, then `setup --remove` and `--uninstall` |
+| `tests/privacy.sh` | seconds (`PRIVACY_MUTANTS=1`: about 2½ min) | bash, git | the privacy check and its hooks catch the leaks listed below and let the allowed cases through |
 | `tests/mutate.sh` | about 40 min (`MUTANT_JOBS=3`; its baseline about 3 min) | as `asc.sh`, `dash.sh` and `install.sh` | each mutant of `tests/mutants-asc.txt`, `tests/mutants-dash.txt` and `tests/mutants-install.txt`: one safeguard of asctl or its installer broken in a copy must make its named check fail |
 
 ```bash
@@ -43,17 +43,18 @@ failure) must have its status used: it fails a check, or `|| stop` ends the suit
 `setup: NAME`, where what did not come is something the test itself started (a claude in a
 session it made, a process of its own). The suites run without `set -e`, so a wait whose status
 is dropped goes on, and a "did not happen" check after it passes without testing anything; the
-lint refuses one, and a poll loop written out by hand. On exit each suite ends what it started
-(`tests/reap.sh`: its jobs and their children, then what the test tmux server's panes run)
-before removing its folder.
+lint refuses one, and a poll loop written out by hand. On exit `asc.sh` and `dash.sh` end what
+they started (`tests/reap.sh`: their jobs and their children, then what the test tmux server's
+panes run) before removing their folder; `install.sh`'s namespace ends everything in it.
 
 The dashboard's token never goes on a command line, where any user on the machine can read it
 with `ps`: `dash.sh` sends it as `-H @<(printf 'X-Asctl-Token: %s\n' "$TOK")` (printf is a
 builtin), and the lint refuses `$TOK` (or an `X-Asctl-Token` header with a `$`) in any word of
 any command, assignments and `$( )` text too, but in `printf` (not `-v`), `echo`, `[` and `test`.
 
-A mutant is a line `file %%% old %%% new %%% check %%% case` of `tests/mutants-asc.txt` or
-`tests/mutants-dash.txt`: a change to asctl, and the check, in its case, that must fail with it.
+A mutant is a line `file %%% old %%% new %%% check %%% case` of `tests/mutants-asc.txt`,
+`tests/mutants-dash.txt` or `tests/mutants-install.txt`: a change to asctl (or, in the last,
+to `install.sh` only), and the check, in its case, that must fail with it.
 Its old text must be found exactly once in its file (a `⏎` in old or new stands for a newline, so
 it can take in the line after or before it); the lint (`tests/mutantlint.py`) refuses one that is
 not, a line given twice, a change that no longer parses (a mutant that breaks the syntax fails
@@ -78,9 +79,10 @@ inodes free: a write failing there would look like a check failing), never gives
 UNCLEAR; and once there is pressure no more mutants start (the rest UNCLEAR). It is refused at
 the start when `/tmp` is that short of space. Each mutant's verdict is followed
 by its runs' times (`runs: 8.1 s, 8.3 s`; its case's runs, then the whole suite's), to see
-where the time goes. The suites' own folders and
-tmux sockets (`TMPDIR`, `TMUX_TMPDIR`) are in its folder. It holds a lock (one mutant run at a
-time), is refused while a process of an earlier run still runs (one killed with no cleanup), and
+where the time goes. `MUTANTS_FULL=1` runs every mutant on its whole suite (slow; for
+comparing). The suites' own folders and
+tmux sockets (`TMPDIR`, `TMUX_TMPDIR`) are in its folder. It holds a lock in
+`/run/user/<uid>` (one mutant run at a time), is refused while a process of an earlier run still runs (one killed with no cleanup), and
 on any exit ends every process it started and removes its folder. Do not edit a test script while it runs: bash reads a script
 as it goes, and the run breaks.
 
@@ -93,9 +95,9 @@ privileged, no new privileges, fewer capabilities, 1 GiB of memory and no swap, 
 limit and the highest OOM score. The options, and the whole `HostConfig` docker must give a
 container made with them, are written out in `tests/sandbox-lib.sh`: the container is
 created, compared field by field before it starts (any difference, a field more or less,
-aborts the run), then checked from inside after the start (`tests/sandbox-lib-test.sh`, run by
-the lint, shows each dangerous change reported). The Dockerfile's `base` stage has no repo
-files, for a run that copies its own into each container. Root inside is still root on the
+aborts the run; `tests/sandbox-lib-test.sh`, run by the lint, shows each dangerous change
+reported), then checked from inside after the start. The Dockerfile's `base` stage has no repo
+files, for a later runner that copies its own into each container. Root inside is still root on the
 host with fewer capabilities (systemd needs
 `SYS_ADMIN`), so the box is for this repo's own code only; the tests run as the two users,
 except `install.sh`, which runs as root by design. Its sections:
@@ -118,20 +120,21 @@ except `install.sh`, which runs as root by design. Its sections:
 8. a reboot (`docker restart`): each user's favorite with resurrect on comes back by
    `asctl-boot.service`, the second user's from the installed release, and the old unit stays
    off;
-9. `asctl setup --remove` (the old unit enabled again), then `install.sh --uninstall`: refused
-   while a user has it set up or a process runs its code, then removed.
+9. `install.sh --uninstall` refused while a user has it set up; that user's `asctl setup
+   --remove` (the old unit enabled again); `--uninstall` refused while a process runs its code,
+   then `--uninstall --force` removes it (that user's session left running).
 
 ## What `privacy.sh` covers
 
-In throwaway git repos (no network, no global git config): each kind of leak the generic
-rules know (a home folder outside the test users, a macOS home, a claude.ai session link or
+In throwaway git repos (no network, no global git config): these kinds of leak (a home folder outside the test users, a macOS home, a claude.ai session link or
 id, a real UUID, an email, a MagicDNS name, a tailnet address, a GitHub token, a private key)
-and a name from the local file in another case is caught by `--tree`; the allowed cases pass
+and a name from the local file in another case are caught by `--tree` (the rules for other
+tokens, such as Tailscale and Anthropic keys, are not tested one by one); the allowed cases pass
 (a test user's home, `/home/$u`, GitHub and Anthropic noreply emails, `git@github.com`, the
 one-digit test UUID, an address outside the tailnet range, a local name inside a longer
 word); a file name is checked; the rules file and checker pass their own check. `--staged`
 catches a leak, a binary file and an author email; `--msg` catches a session trailer and
-ignores git's comment lines. The hooks: a commit with a leak or a trailer is refused, a
+checks git's comment lines too (only the diff below a scissors line is left out). The hooks: a commit with a leak or a trailer is refused, a
 clean one passes; a push of a leak committed past the hooks and then removed is refused and
 the remote does not move; a new branch is checked only for the commits the remote lacks; a
 pushed message trailer and author email are refused; a force push over a remote commit this
@@ -147,17 +150,20 @@ hooks used straight from `.githooks` refuse; a moved clone keeps its hooks; a `g
 message body and a leak behind a stale tracking ref are refused; the installer keeps someone
 else's hook and refuses while `core.hooksPath` points elsewhere; a remote with 60000 refs still
 works; a git that fails part way (a missing object) stops the check with exit 2; a local file of only comments refuses nothing; a hand-made
-`gpgsig-x` header is checked. `PRIVACY_MUTANTS=1 tests/privacy.sh` (about four
-minutes) also breaks the checker and hooks 38 ways,
+`gpgsig-x` header is checked. `PRIVACY_MUTANTS=1 tests/privacy.sh` (about two and a half
+minutes) also breaks the checker, its rules, the hooks and their installer 38 ways,
 one at a time in a copy; each must make the test fail.
 
 ## What they change on the host
 
-`asc.sh` and `dash.sh`: a temp folder (their HOME) and a tmux server of their own
-(`tmux -L asc-test-<pid>`), both removed at the end. `sandbox.sh`: the image `asc-sandbox`, the
-container `asc-sandbox`, the network `asc-sandbox-net` (kept only as the run's lock) and the
-builder `asc-sandbox-builder`, all removed at the end unless `KEEP=1`; only those exact names
-are ever removed.
+`asc.sh` and `dash.sh`: a temp folder (their HOME) and tmux servers of their own
+(`tmux -L asc-test-<pid>` or `asc-dash-<pid>`, and short-lived `asc-*-<pid>` ones), all removed
+at the end. `install.sh`: nothing outside its own namespace. `privacy.sh`: a temp folder.
+`mutate.sh`: its folder `/tmp/asc-mut.<run id>`, removed at the end, and an empty lock file,
+`/run/user/<uid>/asc-mut.lock`, kept. `sandbox.sh`: the image `asc-sandbox`, the container `asc-sandbox` and the network
+`asc-sandbox-net` (kept only as the run's lock), removed at the end unless `KEEP=1`; the builder
+`asc-sandbox-builder`, removed after the build, and the BuildKit image if the run pulled it;
+only those exact names are ever removed.
 
 ## Limits
 

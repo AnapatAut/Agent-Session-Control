@@ -389,7 +389,7 @@ function draw() {
   $("lists").replaceChildren(...parts);
   sweepRows("fav:", "active:");
 
-  // this user's biggest processes, in the memory card (You in its key opens them): names and sizes only
+  // this user's biggest processes, in the memory card (its key opens them): names and sizes only
   const proc = (name, kb) => kids(el("div", null, "proc"), el("span", name), el("span", size(kb), "mono"));
   $("top").replaceChildren(...s.top.mine.map((p) => proc(p.name, p.mem_kb)));
 
@@ -580,7 +580,7 @@ async function refresh() {
   staleCheck();
 }
 
-// The one page-wide setting (its own function: draw() has an act of its own, the active rows).
+// The auto-restart setting (its own function: draw() has an act of its own, the active rows).
 async function autoRestart(on) {
   await act({ action: "auto_restart", id: "auto_restart", on });
   // the switch was disabled while it ran, which dropped the focus: back to it once enabled again
@@ -815,7 +815,7 @@ function favSheet(e) {
   const next = MODE[e.mode_next] || e.mode_next, cur = MODE[e.mode_used] || next;
   const perm = cur + (e.mode_used && cur !== next ? " · next start " + next : "");
   out.push(kids(el("div", null, "opts"),
-    opt("Resurrect", "Bring it back after a reboot or a tmux crash (always with remote control)",
+    opt("Resurrect", "Bring it back after a reboot, if it was on (always with remote control)",
       sw(e.resurrect, "Resurrect", () => act({ action: "resurrect", on: !e.resurrect, ...ref }), wait || !on))));  // off: like rc
 
   out.push(el("span", "SESSION", "lab"), kv([

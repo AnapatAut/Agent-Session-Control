@@ -1,5 +1,5 @@
-# Sourced by tests/asc.sh and tests/dash.sh (they define pass and fail): runs the suite's cases,
-# the functions case_<name>, in the order given, each once. ASC_ONLY=<name,...> runs only those,
+# Sourced by tests/asc.sh, tests/dash.sh and tests/install.sh (they define pass and fail): runs
+# the suite's cases, the functions case_<name>, in the order given, each once. ASC_ONLY=<name,...> runs only those,
 # and the run says so first. After a case returns: "case done NAME", then "== counts NAME <pass>
 # <fail>" (that case's own), NAME from the list, never typed in a case. A case that did not
 # return (a stop, a fail-fast exit) prints neither: it is unfinished. Exit 2 before any case

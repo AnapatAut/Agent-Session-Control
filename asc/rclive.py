@@ -1,20 +1,20 @@
 """Remote control of a running claude, now: asctl types /remote-control into its pane.
 
-The one command asctl types into a running claude, and only when it cannot land anywhere
-else: claude idle (its session file), its pane not in copy mode, its prompt empty (read from
-the screen, `capture-pane -e`). After typing, before Enter: the prompt shows exactly the
-command, claude is still idle, and no command menu opened (for on), or the menu would take
-/remote-control on Enter (for off, waited for up to 3 s: a claude with many commands draws it
-after the typed text). Claude draws its menu under the input box (2.1.316) or above it
-(2.1.318), and a status line or plugins may draw any number of lines on either side, some
-changing on their own; so the menu is never looked for at a place: it is the lines that
-changed since before typing and are shaped like menu entries, and Enter takes the one marked ❯.
-Otherwise what was typed is taken back, only when the prompt holds nothing but that. Nobody at
-its tmux session may have typed in the last TYPED_S seconds, nor while asctl types (its clients'
-last key; asctl's own keys are not a client's): else nothing is typed, or Enter not pressed and
-nothing taken back. A slow claude (a busy host) draws the typed keys late: its prompt is read
-once it stopped changing, and while it shows only a start of what asctl typed (the rest on its
-way), up to a limit.
+One of the two commands asctl types into a running claude (the other: /rename, rename()), and
+only when it cannot land anywhere else: claude idle (its session file), its pane not in copy
+mode, its prompt empty (read from the screen, `capture-pane -e`). After typing, before Enter:
+the prompt shows exactly the command, claude is still idle, and no command menu opened (for on),
+or the menu would take /remote-control on Enter (for off, waited for up to 3 s: a claude with
+many commands draws it after the typed text). Claude draws its menu under the input box
+(2.1.316) or above it (2.1.318), and a status line or plugins may draw any number of lines on
+either side, some changing on their own; so the menu is never looked for at a place: it is the
+lines that changed since before typing and are shaped like menu entries, and Enter takes the one
+marked ❯. Otherwise what was typed is taken back, only when the prompt holds nothing but that.
+Nobody at its tmux session may have typed in the last TYPED_S seconds, nor while asctl types
+(its clients' last key; asctl's own keys are not a client's): else nothing is typed, or Enter
+not pressed and nothing taken back. A slow claude (a busy host) draws the typed keys late: its
+prompt is read once it stopped changing, and while it shows only a start of what asctl typed
+(the rest on its way), up to a limit.
 On: `/remote-control <title>` (always the title: without one claude.ai shows a random name;
 only letters, digits, space, . _ -, as anything else could open a menu or be read by tmux).
 Off: `/remote-control` opens a dialog (Disconnect this session / Show QR code / Continue,

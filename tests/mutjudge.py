@@ -1,4 +1,4 @@
-"""What a run of tests/asc.sh or tests/dash.sh showed, for tests/mutate.sh.
+"""What a run of tests/asc.sh, tests/dash.sh or tests/install.sh showed, for tests/mutate.sh.
 
 A check line starts exactly with "  ok    ", "  FAIL  " or "  skip  " (details after a FAIL are
 indented further, so they never read as one). A name's status is FAIL if any of its lines is a

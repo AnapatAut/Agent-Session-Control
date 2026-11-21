@@ -2,11 +2,11 @@
 start again, one at a time.
 
 want_on changes only by the user's On, Off and Forget, so after a reboot it still says which were
-on. Each start needs the memory gates: memory at 20% steady for 30 s (asctl boot takes a sample
-every 10 s itself, also in its pause after each start, so the first start comes about 40 s after
-boot began at the earliest) and room for that claude's size. Before the first start it waits up
-to 2 min for claude.ai to answer (a resurrect start has remote control), then starts anyway: a
-remote control that does not come up shows on the dashboard. A favorite whose tmux session is up
+on. Each start needs the memory gates: memory steady under the start limit for 30 s (asctl boot
+takes a sample every 10 s itself, also in its pause after each start, so the first start comes
+about 30 s after claude.ai answers at the earliest) and room for that claude's size. Before the
+first start it waits up to 2 min for claude.ai to answer (a resurrect start has remote control),
+then starts anyway: a remote control that does not come up shows on the dashboard. A favorite whose tmux session is up
 already, or whose conversation a live claude holds, is left alone (the watcher looks after the
 first). What waits is logged once per reason; after --wait seconds the rest are left, each with
 a "refused" event (Start them by hand). After a tmux server that ended without a reboot, run it
@@ -27,7 +27,7 @@ from .registry import RegistryError
 
 TICK_S = 10    # while waiting: a sample and another look this often
 PAUSE_S = 30   # after a start, before the next: the samples meanwhile show what the last one took
-STEADY_S = 30  # memory at START_PCT this long before each start (the watcher's restart: memory.STEADY_S)
+STEADY_S = 30  # memory under start_pct() this long before each start (the watcher's restart: memory.STEADY_S)
 NET = "claude.ai:443"  # $ASC_NET: what must answer before the first start
 NET_TRY_S = 5
 STATUS = "boot.json"
