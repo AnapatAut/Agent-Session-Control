@@ -34,8 +34,11 @@ release and the one before it stay, older ones go once no process runs them. The
 copies the checkout once, refusing a link at any level, and reads nothing from it after that.
 It refuses, changing nothing, when a path it would write is not its own (a folder or
 `/usr/local/bin/asctl` it did not make, a unit file it did not write, a unit file changed
-since: keep a change in a drop-in, `<unit>.d/`). Users' managers read changed units at their
-next `systemctl --user daemon-reload`.
+since: keep a change in a drop-in, `<unit>.d/`), when the code does not compile or start, or
+when a release it would use again has changed. Every write is flushed to disk and renamed
+into place, every delete renames first: an install or uninstall stopped at any point (a kill,
+Ctrl-C) is finished by running it again, with no `--force`. Users' managers read changed
+units at their next `systemctl --user daemon-reload`.
 
 **Each user** who wants it then runs, as themselves, in a login session of their own (not as
 root, not through `sudo -u` or `su`: it needs that user's systemd manager):

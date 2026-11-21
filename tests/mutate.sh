@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# The mutant run of tests/asc.sh and tests/dash.sh: each mutant (tests/mutants-asc.txt,
-# tests/mutants-dash.txt; read by tests/mutantlint.py) is a change to asctl that its named check
-# must catch. Each runs in a copy of its own, on this machine (the container runner comes later).
+# The mutant run of tests/asc.sh, tests/dash.sh and tests/install.sh: each mutant
+# (tests/mutants-asc.txt, tests/mutants-dash.txt, tests/mutants-install.txt; read by
+# tests/mutantlint.py) is a change to asctl or its installer that its named check must catch. Each runs in a copy of its own, on this machine (the container runner comes later).
 #   tests/mutate.sh                   every mutant (about 20 min); exit 0 only if all are CAUGHT
 #   MUTANT_JOBS=3 tests/mutate.sh     how many runs at a time (default 3: memory)
 #   MUTANTS_FULL=1 tests/mutate.sh    every mutant on its whole suite (slow; for comparing)
@@ -175,7 +175,7 @@ LOCKED=1
 mkdir "$W/base" "$W/out" "$W/res" "$W/t" "$W/lim" || die "work folder"
 (cd "$REPO" && git ls-files -z | xargs -0 cp -P --parents -t "$W/base/") || die "copying the tracked files"
 B=$W/base
-[ -x "$B/bin/asctl" ] && [ -f "$B/tests/mutants-asc.txt" ] && [ -f "$B/tests/mutants-dash.txt" ] \
+[ -x "$B/bin/asctl" ] && [ -f "$B/tests/mutants-asc.txt" ] && [ -f "$B/tests/mutants-dash.txt" ] && [ -f "$B/tests/mutants-install.txt" ] \
 	|| die "copying the tracked files: bin/asctl or a mutant list missing (not git-added?)"
 
 # The sampler: a line "<from> <to> <why>" in $W/pressure for each second with memory under 15%,
@@ -293,7 +293,7 @@ run1() {
 runs() { jobs -rp | grep -cvxF "$SAMPLER"; }
 
 echo "mutate: run $RID, $JOBS at a time$([ "$FULL" = 1 ] && echo ", every mutant on its whole suite"); $earlyoom"
-SUITES=(asc dash)
+SUITES=(asc dash install)
 declare -A CASES LIMIT FLIMIT
 NS=() MS=() ML=() MC=() MK=() MN=()
 for s in "${SUITES[@]}"; do

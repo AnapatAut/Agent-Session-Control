@@ -1,15 +1,16 @@
 # Tests
 
-Six scripts. None touches your own tmux, tmux config or systemd user units.
+Seven scripts. None touches your own tmux, tmux config or systemd user units, nor the machine's install.
 
 | Script | Time | Needs | Checks |
 |---|---|---|---|
 | `tests/lint.sh` | about 45 s | bash; `shellcheck` and `node` if installed | bash syntax and shellcheck for every script, Python compiles, app.js parses, the suites' checks and waits (`tests/checklint.py`, with `tests/bashtree.py`), the mutant lists, the case runner, how a mutant run is read (`tests/mutjudge.py`), the mutant runner on toy repos (`tests/mutate-test.sh`), the sandbox's container check with a fake docker (`tests/sandbox-lib-test.sh`); the privacy check of every tracked file |
 | `tests/asc.sh` | about 4 min | bash, tmux, jq, python3 | `asctl`: live, fav, on, off, rename, restart, mode, rc, the event log, the watcher, boot, the tmux server unit and `asctl setup`, with a fake claude on a tmux server of its own and a fake systemctl (`tests/asc/bin`) |
 | `tests/dash.sh` | about 1 min | bash, tmux, jq, curl, python3; node for the page's logic (skipped without) | the dashboard server: socket and folder modes, the login, Host, Origin and token checks, one request per connection, the API and its actions, past conversations, idle and SIGTERM exit, systemd socket activation; the notices (boot, setup, the watcher), the auto-restart setting, conversation lengths; the page's own logic (`tests/dash/page.js`: row reasons, history wording and folding) |
+| `tests/install.sh` | about 1 min | bash, python3, util-linux `unshare` with user namespaces open to users (on Ubuntu: `kernel.apparmor_restrict_unprivileged_userns = 0`) | the machine install (`install.sh`) as root of a namespace of its own, with a tmpfs over each folder it reads or writes and a passwd of its own (the machine's folders, homes and processes never seen): install, again, upgrades, switching back, units dropped and added, each refusal (nothing changed), uninstall and what stops it; a kill at each step of an install, an upgrade and an uninstall, and inside a delete, after which the next run ends as one never killed; each write flushed to disk before its rename |
 | `tests/sandbox.sh` | about 7 min | Docker, network for the build only | asctl under real systemd, in a container: the two suites above on a clean Ubuntu, the dashboard as user units, a real out-of-memory kill, the watcher, the units from a checkout, the machine install (`install.sh`) and `asctl setup` by a second user, a reboot, then `setup --remove` and `--uninstall` |
 | `tests/privacy.sh` | seconds (`PRIVACY_MUTANTS=1`: about 4 min) | bash, git | the privacy check and its hooks catch each kind of leak and let the allowed cases through |
-| `tests/mutate.sh` | about 20 min (`MUTANT_JOBS=3`; its baseline about 2 min) | as `asc.sh` and `dash.sh` | each mutant of `tests/mutants-asc.txt` and `tests/mutants-dash.txt`: one safeguard of asctl broken in a copy must make its named check fail |
+| `tests/mutate.sh` | about 40 min (`MUTANT_JOBS=3`; its baseline about 3 min) | as `asc.sh`, `dash.sh` and `install.sh` | each mutant of `tests/mutants-asc.txt`, `tests/mutants-dash.txt` and `tests/mutants-install.txt`: one safeguard of asctl or its installer broken in a copy must make its named check fail |
 
 ```bash
 tests/lint.sh
@@ -17,11 +18,12 @@ tests/asc.sh                 # prints ok/FAIL per check and a summary; exit 0 = 
 ASC_ONLY=main tests/asc.sh   # only that case (tests/cases.sh)
 ASC_TRACE=1 tests/asc.sh     # after a FAIL, the end of the fake claudes' trace: to find a race
 tests/dash.sh
+tests/install.sh             # the machine install, in a namespace of its own (no sudo)
 tests/mutate.sh              # every mutant; exit 0 only if each is caught by its own check
 tests/sandbox.sh             # KEEP=1: leave the container up; --down removes what a run left
 ```
 
-In `asc.sh` and `dash.sh` each check prints `  ok    NAME` or `  FAIL  NAME`, the same fixed
+In `asc.sh`, `dash.sh` and `install.sh` each check prints `  ok    NAME` or `  FAIL  NAME`, the same fixed
 name both ways, and after a FAIL what was seen, each line indented further; `  skip  NAME` when
 it cannot run here. The lint
 refuses a name with a value in it (a pid, an id, a time), used twice in a suite, or on a check in
@@ -107,8 +109,10 @@ except `install.sh`, which runs as root by design. Its sections:
    started again in place;
 6. the units from a checkout (`tools/install-units.sh`): the tmux server unit, On with no
    server, the pane scopes;
-7. the machine install: refusals (not root, a path not its own, a changed unit, a link in the
-   checkout), the release and its modes, upgrades and pruning; then `asctl setup` by a second
+7. the machine install: refusals (not root, a path not its own, its folder another user's, a
+   changed unit, a link in the checkout), the release and its modes, upgrades and pruning, a
+   real SIGKILL before its first unit rename finished by a plain run (a user's manager then
+   loads the new unit); then `asctl setup` by a second
    user whose old `tmux.service` (as tmux-continuum writes it) runs: refused while continuum's
    boot is on, then that unit disabled but its server left up;
 8. a reboot (`docker restart`): each user's favorite with resurrect on comes back by
@@ -163,5 +167,11 @@ are ever removed.
 - The sandbox is Ubuntu 24.04, tmux 3.4 and systemd 255 only.
 - `dash.sh` uses a fake `ip` (`tests/dash/bin/ip`: loopback and 192.0.2.77, the same on every
   machine), so the dashboard's reading of a real `ip -j addr` is not tested.
-- `install.sh` is tested in the sandbox only (it needs root); the mutant runs cover `asctl`
-  and the dashboard, not `install.sh`.
+- `tests/install.sh` runs `install.sh` as root of a user namespace, not as real root: a folder
+  that is not root's, and running it as a user, are tested in the sandbox only (section 7),
+  with real systemd. A kill comes between two of its commands (`mv`, `rm`, `ln`, `mktemp`,
+  `sync`), or inside a folder's delete; not inside its Python copy, compile or import, which
+  write only the staging folder. A power cut is not tested: that each write is flushed before
+  its rename is. It does not run in the sandbox: Docker masks parts of the container's /proc,
+  so the kernel refuses the fresh /proc of its pid namespace (`unshare: mount /proc failed`);
+  the sandbox has its own real-root install checks (section 7).

@@ -1,0 +1,47 @@
+install.sh %%% mark "$pend" %%% rm -f "$pend" %%% then uninstall leaves nothing %%% kill_install
+install.sh %%% 			printf 'unit %s %s\n' "$UD/$u" "$(printf '%s\n' "$(render "$u")" | sha256sum | cut -d' ' -f1)" %%% 			: %%% then uninstall leaves nothing %%% kill_install
+install.sh %%% 		grep '^unit ' "$MARK" || true %%% 		true %%% then uninstall leaves nothing (each unit still known) %%% kill_upgrade
+install.sh %%% own_unit() { [ -f "$1" ] && ! [ -L "$1" ] && grep -qxF "$(sha "$1")" <<< "$(recorded "$1")"; } %%% own_unit() { [ -f "$1" ] && ! [ -L "$1" ] && [ "$(sha "$1")" = "$(recorded "$1" | tail -1)" ]; } %%% then uninstall leaves nothing (each unit still known) %%% kill_upgrade
+install.sh %%% recorded() { [ -f "$MARK" ] || return 0; awk %%% recorded() { awk %%% a unit file it did not write: refused, left %%% refuse
+install.sh %%% 	mv -T "$P" "$P.gone-$$"⏎	rm -rf --one-file-system -- "$P.gone-$$" %%% 	rm -rf --one-file-system -- "$P" %%% uninstall killed inside its delete (the marker gone first): a rerun leaves nothing %%% kill_uninstall
+install.sh %%% 	# First what a killed run left (an uninstall killed after it renamed $P leaves only that).⏎	clean_stale⏎ %%%  %%% uninstall killed at each step: a rerun leaves nothing %%% kill_uninstall
+install.sh %%% "$P.new-"* "$P.gone-"* "$P/releases/.new-"* %%% "$P.new-"* "$P/releases/.new-"* %%% uninstall killed at each step: a rerun leaves nothing %%% kill_uninstall
+install.sh %%% 	mv -T "$d" "$P/releases/.gone-$r"⏎	rm -rf --one-file-system -- "$P/releases/.gone-$r" %%% 	rm -rf --one-file-system -- "$d" %%% a release whose delete was cut short installs again whole %%% kill_prune
+install.sh %%%  "$P/releases/.gone-"*; do %%% ; do %%% then a plain rerun ends as an upgrade never killed %%% kill_upgrade
+install.sh %%% 	[ -z "$(users_of "$d")" ] || continue %%% 	true %%% an older release a process runs is kept %%% upgrade
+install.sh %%%  || [ "$r" = "$last" ] && continue %%%  && continue %%% then a plain rerun ends as an upgrade never killed %%% kill_upgrade
+install.sh %%%  || [ "releases/$r" = "$prev" ] %%%  %%% an upgrade killed, then another: the one current pointed at and the marker's kept, older ones go %%% upgrade
+install.sh %%% t=$(mktemp "$UD/.asctl-new.XXXXXX") %%% t=$(mktemp "$to.XXXXXX") %%% then a plain rerun ends as an install never killed %%% kill_install
+install.sh %%%  "$UD/.asctl-new."* "$BIN.new-"*; do %%%  "$BIN.new-"*; do %%% then a plain rerun ends as an install never killed %%% kill_install
+install.sh %%%  "$UD/.asctl-new."* "$BIN.new-"*; do %%%  "$UD/.asctl-new."*; do %%% then a plain rerun ends as an install never killed %%% kill_install
+install.sh %%% [ "$(cd "$R" && content_id)" = "$id" ] %%% true %%% a release there that is no longer what it was: refused, left %%% refuse
+install.sh %%% [ -z "$(find "$R" ! -type f ! -type d -print -quit)" ] &&  %%%  %%% a link put in it: refused, left %%% refuse
+install.sh %%% find . -name __pycache__ -prune -o -type f -print0 %%% find . -type f -print0 %%% install again: installed already, nothing written or changed %%% fresh
+install.sh %%% chmod 644 "$t" && sync -- "$t" && mv %%% chmod 644 "$t" && mv %%% install: each file flushed to disk before its rename, each folder after %%% sync
+install.sh %%% 	find "$stage" -exec sync -- {} + %%% 	: %%% install: each file flushed to disk before its rename, each folder after %%% sync
+install.sh %%% mark() { chmod 644 "$1" && sync -- "$1" && mv %%% mark() { chmod 644 "$1" && mv %%% install: each file flushed to disk before its rename, each folder after %%% sync
+install.sh %%% mv -f "$1" "$MARK" && sync -- "$P"; } %%% mv -f "$1" "$MARK"; } %%% install: each file flushed to disk before its rename, each folder after %%% sync
+install.sh %%% sync -- "$UD" %%% : %%% install: each file flushed to disk before its rename, each folder after %%% sync
+install.sh %%% 	sync -- "$P/releases" %%% 	: %%% install: each file flushed to disk before its rename, each folder after %%% sync
+install.sh %%% 	sync -- "$n/.asctl-install" "$n/releases" "$n" %%% 	sync -- "$n/releases" "$n" %%% install: each file flushed to disk before its rename, each folder after %%% sync
+install.sh %%%         importlib.import_module("asc." + m.name) %%%         pass %%% code that compiles but does not start: refused, nothing changed %%% refuse
+install.sh %%%     if m.name != "__main__": %%%     if True: %%% an asc/__main__.py is not run when the code is tried %%% refuse
+install.sh %%% flock -n 9 || die %%% true || die %%% another install.sh running: refused %%% refuse
+install.sh %%% for c in python3 tmux systemctl flock sha256sum; do %%% for c in python3 systemctl flock sha256sum; do %%% a command it needs missing: refused %%% refuse
+install.sh %%% sys.exit(sys.version_info < (3, 9)) %%% sys.exit(0) %%% python3 older than 3.9: refused %%% refuse
+install.sh %%%  && [ $(( 0$(stat -c %a "$P") & 022 )) = 0 ] %%%  %%% its folder writable by others: refused %%% refuse
+install.sh %%% 	[ -L "$BIN" ] && [ "$(readlink "$BIN")" = "$ASCTL" ] || die %%% 	true || die %%% an /usr/local/bin/asctl not its link: refused %%% refuse
+install.sh %%% 	[ -f "$to" ] && ! [ -L "$to" ] || die "$to is not a plain file: left as it is" %%% 	true %%% a unit path that is a folder: refused %%% refuse
+install.sh %%% 	[ -n "$(recorded "$to")" ] || die %%% 	true || die %%% a unit file it did not write: refused, left %%% refuse
+install.sh %%% [ ${#changed[@]} = 0 ] || [ "$force" = 1 ] || die %%% true || die %%% a unit file changed since: refused %%% refuse
+install.sh %%%         if stat.S_ISLNK(st.st_mode): %%%         if False: %%% a link in the checkout: refused %%% refuse
+install.sh %%%         if not NAME.fullmatch(name): %%%         if False: %%% an odd file name in the checkout: refused %%% refuse
+install.sh %%%             fail(f"{p} is not a plain file") %%%             pass %%% a fifo in the checkout: refused %%% refuse
+install.sh %%% [ -f bin/asctl ] && [ -f bin/asctl-wrap ] &&  %%% [ -f bin/asctl ] &&  %%% not a checkout (bin/asctl-wrap missing): refused %%% refuse
+install.sh %%% [ ${#units[@]} -ge 4 ] || die %%% true || die %%% fewer than 4 units: refused %%% refuse
+install.sh %%% 	if own_unit "$path"; then rm -f "$path"; wrote+=("$path (removed)"); fi %%% 	rm -f "$path"; wrote+=("$path (removed)") %%% a unit the new release drops: removed when unchanged, kept when changed; neither in the marker %%% upgrade
+install.sh %%% [ ${#users[@]} = 0 ] || die %%% true || die %%% uninstall while a user has its units enabled: refused, the user named %%% uninstall
+install.sh %%% 	for l in "$UD"/*.wants/asctl-*; do %%% 	for l in "$UD"/none/asctl-*; do %%% enabled for every user: refused %%% uninstall
+install.sh %%% [ ${#unread[@]} = 0 ] || [ "$force" = 1 ] || die %%% true || die %%% a home it cannot read: refused %%% uninstall
+install.sh %%% 	pids=$(users_of "$P/releases/[0-9a-f]{12}") %%% 	pids= %%% a process runs its code: refused %%% uninstall
+install.sh %%% 		if own_unit "$path"; then rm -f "$path"; echo "removed $path" %%% 		if true; then rm -f "$path"; echo "removed $path" %%% --force: removed, but a unit changed since is kept %%% uninstall

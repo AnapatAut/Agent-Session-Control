@@ -372,6 +372,30 @@ REL3=$(up 3)
 chk "  once nothing runs it, the older one is gone (the newest two stay)" \
 	'! x test -e $OPT/$REL && ! x test -e $OPT/$REL1 && x test -d $OPT/$REL2 && x test -d $OPT/$REL3' 'x ls $OPT/releases'
 x sed -i '/^# upgrade [123]$/d' /opt/asc/asc/events.py; x /opt/asc/install.sh >/dev/null 2>&1
+# What only real root can make: its folder another user's.
+REL=$(x readlink $OPT/current)
+x chown sbuser $OPT
+out=$(x /opt/asc/install.sh 2>&1); rc=$?
+x chown root $OPT
+chk "its folder not root's: refused, nothing changed" '[ "$rc" = 1 ] && has "is there but not this installer.s" && [ "$(x readlink $OPT/current)" = "$REL" ]' 'echo "rc $rc: $out"'
+# A real SIGKILL (root, the container's own file system) in an upgrade that changes a unit, just
+# before its first unit file is renamed into place: a sync stand-in first on PATH kills the
+# installer there. Then a plain run finishes it, and a user's manager loads the new unit.
+x sh -c 'mkdir -p /root/kshim && printf "%s\n" "#!/bin/bash" "case \"\$*\" in *\"/etc/systemd/user/.asctl-new.\"*) kill -9 \"\$PPID\"; exit 1 ;; esac" "exec /usr/bin/sync \"\$@\"" > /root/kshim/sync && chmod 755 /root/kshim/sync'
+x sh -c 'echo "# kill" >> /opt/asc/systemd/asctl-watch.timer'
+out=$(x env PATH="/root/kshim:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" /opt/asc/install.sh 2>&1); rc=$?
+chk "an upgrade killed (SIGKILL) before its first unit rename: a temp unit file and the pending marker left" \
+	'[ "$rc" = 137 ] && [ -n "$(x find /etc/systemd/user -maxdepth 1 -name ".asctl-new.*")" ] && x grep -qx "release ${REL#releases/}" $OPT/.asctl-install && [ "$(x readlink $OPT/current)" != "$REL" ]' \
+	'echo "rc $rc: $out"; x ls -a /etc/systemd/user; x cat $OPT/.asctl-install'
+out=$(x /opt/asc/install.sh 2>&1); rc=$?
+chk "  a plain run then finishes it: no --force, nothing left over, the marker at the new release" \
+	'[ "$rc" = 0 ] && x grep -qx "# kill" /etc/systemd/user/asctl-watch.timer && [ -z "$(x find /opt /etc/systemd/user /usr/local/bin -name ".asctl-new.*" -o -name ".mark.*" -o -name "*.stage-*" -o -name "*.gone-*" -o -name "*.new-*")" ] && x grep -qx "release $(x readlink $OPT/current | cut -d/ -f2)" $OPT/.asctl-install && x test -d $OPT/$REL' \
+	'echo "rc $rc: $out"; x ls -a /etc/systemd/user $OPT $OPT/releases'
+chk "  a user's manager loads the new unit (daemon-reload)" \
+	'u2 systemctl --user daemon-reload && [ "$(u2prop asctl-watch.timer LoadState)" = loaded ] && u2 systemctl --user cat asctl-watch.timer | grep -qx "# kill"' \
+	'u2 systemctl --user cat asctl-watch.timer | tail -3; echo "$(u2prop asctl-watch.timer LoadState)"'
+x sed -i '/^# kill$/d' /opt/asc/systemd/asctl-watch.timer; x rm -r /root/kshim; x /opt/asc/install.sh >/dev/null 2>&1
+chk "  back to this checkout's units" '! x grep -q "# kill" /etc/systemd/user/asctl-watch.timer && [ "$(x readlink $OPT/current)" = "$REL" ]' 'x tail -2 /etc/systemd/user/asctl-watch.timer; x readlink $OPT/current'
 u2 sh -ec 'mkdir -p ~/fb ~/w ~/.config/systemd/user && cp /bin/bash ~/fb/claude && echo ~/w > ~/fake-trusted
 printf "MemTotal: 32000000 kB\nMemAvailable: 16000000 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n" > ~/meminfo
 echo "set -g @continuum-boot '\''on'\''" > ~/.tmux.conf

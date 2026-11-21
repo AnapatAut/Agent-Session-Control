@@ -1,7 +1,7 @@
 """The mutant lists (run by tests/lint.sh), and the reader tests/mutate.sh uses for them.
 
-tests/mutants-asc.txt and tests/mutants-dash.txt hold the mutants of tests/asc.sh and
-tests/dash.sh, one a line: "file %%% old %%% new %%% check %%% case", exactly five fields. check
+tests/mutants-asc.txt, tests/mutants-dash.txt and tests/mutants-install.txt hold the mutants of
+tests/asc.sh, tests/dash.sh and tests/install.sh, one a line: "file %%% old %%% new %%% check %%% case", exactly five fields. check
 is the name of the check that must fail with that change, case the case it is in (both read from
 the suite's source by tests/checklint.py). The files are read byte for byte: no blank or comment
 line, nothing trimmed (an old text may start with indentation), the last byte a newline (a last
@@ -9,7 +9,7 @@ line without one would be lost to a line reader), not empty. tests/privacy.sh ke
 in a heredoc ending at MUTANTS, "file %%% old %%% new" (its runner is its own).
 A ⏎ in old or new stands for a newline. Refused: a line not in its form, a file that is not a
 plain file of the repo in the folders its runner copies (asc/ or bin/; for privacy.sh tools/ or
-.githooks/), an empty old text, a new text the same as the old, an old text not found exactly once
+.githooks/; for mutants-install.txt the file install.sh only), an empty old text, a new text the same as the old, an old text not found exactly once
 in its file (never "the first one"), a line given twice in a list, a change that no longer parses
 (Python by compile() in memory, bash by `bash -n`, JS by `node --check` if node is here: a mutant
 that breaks the syntax fails every check, so it would be a catch that tests nothing), and a check
@@ -43,7 +43,18 @@ import checklint  # noqa: E402
 SEP = ' %%% '
 NL = '⏎'
 ROOTS = {'privacy.sh': ('tools/', '.githooks/')}  # else asc/ and bin/: product code only
-SUITES = {'mutants-asc.txt': 'asc.sh', 'mutants-dash.txt': 'dash.sh'}
+SUITES = {'mutants-asc.txt': 'asc.sh', 'mutants-dash.txt': 'dash.sh', 'mutants-install.txt': 'install.sh'}
+# What a suite's mutants may change (a folder ends in "/", else that one file): its product code.
+PRODUCT = {'mutants-install.txt': ('install.sh',)}
+
+
+def product(list_path):
+    return PRODUCT.get(os.path.basename(list_path), ('asc/', 'bin/'))
+
+
+def under(f, roots):
+    """f is in one of roots: a folder (ending in "/", or "" for any) holds it, or it is that file."""
+    return any(f.startswith(r) if r == '' or r.endswith('/') else f == r for r in roots)
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ISOLATION = '# isolation:'
 # a new text that names one of these more often than the old one: refused (the real command, or a
@@ -138,7 +149,7 @@ def parses(path, body):
 
 def change(f, old, new, read, roots):
     """(the file's text with the change, '') or (None, why not)."""
-    body = None if f.startswith('/') or '..' in f.split('/') or not f.startswith(roots) else read(f)
+    body = None if f.startswith('/') or '..' in f.split('/') or not under(f, roots) else read(f)
     if body is None:
         return None, f'{f} is not a plain file of the repo under {" or ".join(roots)}'
     if '\r' in body or not body.endswith('\n') or body.endswith('\n\n'):
@@ -254,7 +265,7 @@ def check_file(path, data, read, owners, only=None):
             faults.append(f'{where}: no check {check!r} in case {case}'
                           + (f' (it is in case {owners[check]})' if check in owners else ''))
             continue
-        _, why = change(f, old, new, read, ('asc/', 'bin/'))
+        _, why = change(f, old, new, read, product(path))
         if why:
             faults.append(f'{where}: {why}')
             continue
@@ -441,7 +452,7 @@ def main(args):
             print('\n'.join(faults) or f'no mutant at line {args[2]}')
             return 3
         _, _, f, old, new, _, _ = m[0]
-        out, why = change(f, old, new, repo_file(ROOT), ('asc/', 'bin/'))
+        out, why = change(f, old, new, repo_file(ROOT), product(args[1]))
         if why:
             print(why)
             return 3

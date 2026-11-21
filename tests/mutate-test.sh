@@ -9,7 +9,7 @@
 # mutant's run and in the baseline, and after each run: no process of it left (refused runs too),
 # its work folder gone, and no toy suite's folder left (only its EXIT trap removes it: a suite cut short by a
 # SIGKILL, or a second TERM, leaves it). A toy repo holds the real runner and its readers,
-# a product (asc/prod.sh) and two small suites with cases; its pressure readings and lock are in a
+# a product (asc/prod.sh), an installer (install.sh) and three small suites with cases; its pressure readings and lock are in a
 # folder of its own (ASC_MUT_PROC), so this never reads or locks the machine's. The runs go 6 at a
 # time, each in its own toy repo; their checks are printed in order at the end.
 set -uo pipefail
@@ -34,7 +34,7 @@ export HOME="$T/home"
 mkdir "$HOME"
 
 # The toy suites: asc has cases one (a is 1, b is 2) and two (no marker: a file case one's mark
-# would leave), dash one case. They follow the real suites' rules (tests/checklint.py).
+# would leave), dash one case, install one case (of the toy installer). They follow the real suites' rules (tests/checklint.py).
 suite() {
 	cat <<'EOF'
 #!/usr/bin/env bash
@@ -66,6 +66,15 @@ case_two() {
 }
 run_cases asc one two
 EOF
+	elif [ "$1" = install ]; then
+		cat <<'EOF'
+# shellcheck source=/dev/null
+. "$REPO/install.sh"
+case_inst() {
+	[ "$(c)" = 3 ] && ok "c is 3" || bad "c is 3"
+}
+run_cases install inst
+EOF
 	else
 		cat <<'EOF'
 case_only() {
@@ -84,10 +93,13 @@ toy() {
 	: > "$r/tests/dash/page.js"
 	printf '#!/bin/sh\n' > "$r/bin/asctl"; chmod +x "$r/bin/asctl"
 	printf '%s\n' '#!/usr/bin/env bash' '# the toy product' 'a() { echo 1; }' 'b() { echo 2; }' 'mark() { :; }' 'slow() { :; }' > "$r/asc/prod.sh"
+	printf '%s\n' '#!/usr/bin/env bash' '# the toy installer' 'c() { echo 3; }' > "$r/install.sh"
 	suite asc > "$r/tests/asc.sh"
 	suite dash > "$r/tests/dash.sh"
+	suite install > "$r/tests/install.sh"
 	printf '%s\n' 'asc/prod.sh %%% echo 1 %%% echo 9 %%% a is 1 %%% one' > "$r/tests/mutants-asc.txt"
 	printf '%s\n' 'asc/prod.sh %%% echo 2 %%% echo 8 %%% b is 2 here %%% only' > "$r/tests/mutants-dash.txt"
+	printf '%s\n' 'install.sh %%% echo 3 %%% echo 6 %%% c is 3 %%% inst' > "$r/tests/mutants-install.txt"
 	printf '%s\n' 'MemTotal: 1000000 kB' 'MemAvailable: 900000 kB' > "$r/proc/meminfo"
 	echo "oom_kill 0" > "$r/proc/vmstat"
 	echo "900000 900000" > "$r/proc/disk"
@@ -153,7 +165,7 @@ judge() {
 
 toy caught; run caught
 result "a mutant its check fails in its case, twice: CAUGHT, exit 0, its two runs' times" 0 "caught by: a is 1 (one)" "caught by: b is 2 here (only)" \
-	"2 mutants: 2 caught (0 only by the whole suite)" "baseline asc: 3 checks, all ok" "        runs: " " s, "
+	"caught by: c is 3 (inst)" "3 mutants: 3 caught (0 only by the whole suite)" "baseline asc: 3 checks, all ok" "        runs: " " s, "
 toy caughtfull; run caughtfull MUTANTS_FULL=1
 result "MUTANTS_FULL=1: every mutant on its whole suite" 0 "caught by: a is 1 (one, full)" "caught by: b is 2 here (only, full)"
 
@@ -176,7 +188,7 @@ toy caughtio; stall_io caughtio
 printf '%s\n' 'asc/prod.sh %%% a() { echo 1; } %%% a() { stall_io; echo 9; } %%% a is 1 %%% one' > "$T/caughtio/tests/mutants-asc.txt"
 run caughtio
 result "tasks stalled on I/O while a mutant is caught: still CAUGHT (never judged), told in all" 0 "caught by: a is 1 (one)" \
-	"2 mutants: 2 caught" "mutate: I/O: tasks stalled on I/O for 150 ms in all" "!ms in its runs (PSI full"
+	"3 mutants: 3 caught" "mutate: I/O: tasks stalled on I/O for 150 ms in all" "!ms in its runs (PSI full"
 toy else
 printf '%s\n' 'asc/prod.sh %%% echo 2 %%% echo 7 %%% a is 1 %%% one' > "$T/else/tests/mutants-asc.txt"
 run else
@@ -202,7 +214,7 @@ result "a mutant that makes its module fail at import (a catch that tests nothin
 toy tmuxdir
 sed -i 's|^case_two() {$|case_two() {\n\t[[ $TMUX_TMPDIR == "$TMPDIR" \&\& $TMPDIR == /tmp/asc-mut.*/t ]] \&\& ok "tmux folder" \|\| bad "tmux folder"|' "$T/tmuxdir/tests/asc.sh"
 run tmuxdir
-result "the suites' tmux folder (TMUX_TMPDIR) and TMPDIR: the run's work folder" 0 "baseline asc: 4 checks, all ok" "2 caught"
+result "the suites' tmux folder (TMUX_TMPDIR) and TMPDIR: the run's work folder" 0 "baseline asc: 4 checks, all ok" "3 caught"
 
 toy twice
 printf '%s\n' 'asc/prod.sh %%% mark() { :; } %%% mark() { echo "  ok    a is 1"; } %%% a is 1 %%% one' > "$T/twice/tests/mutants-asc.txt"
@@ -218,13 +230,13 @@ toy mem
 printf '%s\n' 'asc/prod.sh %%% a() { echo 1; } %%% a() { printf "MemTotal: 1000000 kB\nMemAvailable: 1000 kB\n" > "$ASC_MUT_PROC/meminfo"; sleep 2; echo 9; } %%% a is 1 %%% one' > "$T/mem/tests/mutants-asc.txt"
 run mem MUTANT_JOBS=1
 result "memory under 15% while a run goes: UNCLEAR, and no more mutants started" 1 "UNCLEAR: pressure: memory: 1000 of 1000000 kB available" \
-	"UNCLEAR: not run: pressure: memory: 1000 of 1000000 kB available" "2 unclear"
+	"UNCLEAR: not run: pressure: memory: 1000 of 1000000 kB available" "3 unclear"
 
 toy disk
 printf '%s\n' 'asc/prod.sh %%% a() { echo 1; } %%% a() { echo "500 900000" > "$ASC_MUT_PROC/disk"; sleep 2; echo 9; } %%% a is 1 %%% one' > "$T/disk/tests/mutants-asc.txt"
 run disk MUTANT_JOBS=1
 result "/tmp under 1024 MiB free while a run goes: UNCLEAR, and no more mutants started" 1 "UNCLEAR: pressure: disk: 500 MiB free in /tmp (1024 MiB needed)" \
-	"UNCLEAR: not run: pressure: disk: 500 MiB free in /tmp (1024 MiB needed)" "2 unclear"
+	"UNCLEAR: not run: pressure: disk: 500 MiB free in /tmp (1024 MiB needed)" "3 unclear"
 
 toy oom
 printf '%s\n' 'asc/prod.sh %%% a() { echo 1; } %%% a() { echo "oom_kill 1" > "$ASC_MUT_PROC/vmstat"; sleep 2; echo 9; } %%% a is 1 %%% one' > "$T/oom/tests/mutants-asc.txt"
