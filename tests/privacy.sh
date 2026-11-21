@@ -133,6 +133,14 @@ git reset -q --hard HEAD~1    # a clean commit: only the names below can be refu
 git push -q origin HEAD:refs/heads/zorblax-fix 2>/dev/null && bad "pre-push: a local name in a branch name pushed" || ok "pre-push: a local name in a branch name refused"
 git tag zorblax-v1; git push -q origin zorblax-v1 2>/dev/null && bad "pre-push: a local name in a tag name pushed" || ok "pre-push: a local name in a tag name refused"
 git tag -d zorblax-v1 >/dev/null
+# A release tag vN.N.N only on a commit whose asc/VERSION says N.N.N; other tag names are not
+# held to it.
+mkdir -p asc; printf '1.2.3\n' > asc/VERSION; git add asc/VERSION; git commit -qm "version 1.2.3"
+git tag v1.2.4; git push -q origin refs/tags/v1.2.4 2>/dev/null && bad "pre-push: a release tag asc/VERSION does not match pushed" || ok "pre-push: a release tag asc/VERSION does not match refused"
+git tag -a v9.0.0 -m clean; git push -q origin refs/tags/v9.0.0 2>/dev/null && bad "pre-push: an annotated release tag asc/VERSION does not match pushed" || ok "pre-push: an annotated release tag asc/VERSION does not match refused"
+git tag -a v1.2.3 -m clean; git push -q origin refs/tags/v1.2.3 2>/dev/null && ok "pre-push: a release tag asc/VERSION matches pushed" || bad "pre-push: a release tag asc/VERSION matches refused"
+git tag v2.0; git push -q origin refs/tags/v2.0 2>/dev/null && ok "pre-push: a tag not named vN.N.N not held to asc/VERSION" || bad "pre-push: a tag not named vN.N.N held to asc/VERSION"
+git tag -d v1.2.4 v9.0.0 >/dev/null
 # A branch without the hook files (like an old commit): the installed copies still run.
 git checkout -q --orphan bare; git rm -rqf .; printf '%s\n' "${H}me/alice" > x.txt; git add x.txt
 git commit -qm bare 2>/dev/null && bad "pre-commit: gone in a checkout without .githooks" || ok "pre-commit: still runs in a checkout without .githooks"
@@ -223,7 +231,7 @@ newrepo; printf '(unclosed\n' >> "$T/r/tools/privacy-rules"; printf 'x\n' > "$T/
 chk --staged; [ $? = 2 ] && ok "a broken rule stops the check (exit 2), never passes" || bad "a broken rule lets the check pass"
 
 # PRIVACY_MUTANTS=1: break the checker or a hook one way at a time, in a copy; each must make
-# this test fail (its run stops at its first FAIL). About 2½ min (38 mutants). As in
+# this test fail (its run stops at its first FAIL). About 2½ min (42 mutants). As in
 # tests/mutate.sh: the old text must be found exactly once in its file, a ⏎ stands for a newline,
 # and a line given twice fails.
 if [ "${PRIVACY_MUTANTS:-}" = 1 ]; then
@@ -285,6 +293,10 @@ tools/privacy-rules %%% (?<![A-Za-z0-9-])-home- %%% -home-
 tools/privacy-check.sh %%% git log --root --no-color %%% git log --no-color
 tools/privacy-check.sh %%% git cat-file commit "$c" > "$tmp/obj" %%% : > "$tmp/obj"
 tools/privacy-check.sh %%% if [ "${HERE##*/}" = tools ]; then REPO= %%% if true; then REPO=
+.githooks/pre-push %%% 2>/dev/null)" != "$t" ]; then %%% 2>/dev/null)" = "never" ]; then
+.githooks/pre-push %%% t=${rref#refs/tags/v} %%% t=$rref
+.githooks/pre-push %%% [[ $t =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] %%% [[ $t =~ . ]]
+.githooks/pre-push %%% asc/VERSION is not $t" >&2; rc=1 %%% asc/VERSION is not $t" >&2
 MUTANTS
 fi
 

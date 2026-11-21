@@ -16,7 +16,9 @@ commit or push that names a machine, a user, a claude.ai session or a credential
 ([`tools/privacy-rules`](tools/privacy-rules)). They run from copies inside `.git`, so checking
 out an older commit does not turn them off. Your own real names (host, users, logins, addresses)
 go in `.git/privacy-local`, one per line: it is inside `.git`, so it is never committed.
-`tests/lint.sh` runs the same check on every tracked file.
+`tests/lint.sh` runs the same check on every tracked file. A release: raise `asc/VERSION`
+(`MAJOR.MINOR.PATCH`), then tag that commit `v` and the same number; the pre-push hook refuses a
+tag `vN.N.N` whose commit's `asc/VERSION` says otherwise.
 
 ## Install
 
@@ -36,22 +38,27 @@ only read it. `current` points at the release in use, and `/usr/local/bin/asctl`
 `current/bin/asctl`. The units go in `/etc/systemd/user/`, enabled for no one. An upgrade
 switches `current` with one rename. A running asctl keeps the release it started from; this
 release, the one before it and the last one installed to the end stay, older ones go once no
-process runs them. The installer
-copies the folder once, refusing a link at any level, and reads nothing from it after that.
-It refuses, changing nothing, when a path it would write is not its own (a folder or
-`/usr/local/bin/asctl` it did not make, a unit file it did not write, a unit file changed
-since: keep a change in a drop-in, `<unit>.d/`), when the code does not compile or start, or
-when a release it would use again has changed. Every write is flushed to disk and renamed
-into place, every delete renames first: an install or uninstall stopped at any point (a kill,
-Ctrl-C) is finished by running it again, with no `--force`. Users' managers read changed
-units at their next `systemctl --user daemon-reload`. Tests: `tests/install.sh`.
+process runs them. The installer copies the folder once, refusing a link at any level, and reads
+nothing from it after that. It refuses, changing nothing, when a path it would write is not its
+own (a folder or `/usr/local/bin/asctl` it did not make, a unit file it did not write, a unit
+file changed since: keep a change in a drop-in, `<unit>.d/`), when the folder is not a whole
+release (one of its six unit files, or `asc/VERSION`, missing), when the code does not compile
+or start, or when a release it would use again has changed. It says the version it installed
+(`asctl 1.1.0: /usr/local/bin/asctl`) and, when it changed, the one before (`version 1.0.2 ->
+1.1.0`; an older one is installed too, said so: a rollback is one command). Every write is
+flushed to disk and renamed into place, every delete renames first: an install or uninstall
+stopped at any point (a kill, Ctrl-C) is finished by running it again, with no `--force`. Users'
+managers read changed units at their next `systemctl --user daemon-reload`. Tests:
+`tests/install.sh`.
 
-**Updating**: unpack the source archive of a newer release, then run `sudo ./install.sh` again
-from its folder. The same code is the same release ("installed already": only its marker is
-written again). Users keep their favorites, settings and event log, and run nothing unless the
-installer says the units changed: then each user who has it set up runs `systemctl --user
-daemon-reload`. A running dashboard keeps the old code until it next starts (after 10 minutes
-with no request, so not while a page is in view; or `systemctl --user restart asctl-dash.service`).
+**Updating**: unpack the source archive of a newer release in a new folder (not over an old one:
+every file in its `asc/`, `bin/` and `systemd/` goes into the release), then run `sudo
+./install.sh` again from it. The same code is the same release ("installed already": only its
+marker is written again). Users keep their favorites, settings and event log, and run nothing
+unless the installer says the units changed: then each user who has it set up runs `systemctl
+--user daemon-reload`. A running dashboard keeps the old code until it next starts (after 10
+minutes with no request, so not while a page is in view; or `systemctl --user restart
+asctl-dash.service`).
 
 **Each user** who wants it then runs, as themselves, in a login session of their own (not as
 root, not through `sudo -u` or `su`: it needs that user's systemd manager):
@@ -126,6 +133,8 @@ starts again as new on the same session id (`--session-id`), as `--resume` would
 A claude that ends at once is said in seconds, with its exit code (on stderr: the page shows it).
 
 ```bash
+asctl --version             # asctl 1.1.0 (release <id>): asc/VERSION and the release it runs
+                            # from, or (checkout); the dashboard's Settings says the same
 asctl live                  # running claudes: pid, session id, tmux session, folder
 asctl fav 12345 --name das  # favorite one (by pid, session id or pane %N); its tmux session becomes das-0421
 asctl list                  # favorites and their state

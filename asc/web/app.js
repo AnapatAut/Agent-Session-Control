@@ -507,9 +507,12 @@ function limShow() {
   for (const s of inp.closest(".lim").querySelectorAll(".lbls span")) s.classList.toggle("on", s.dataset.v === String(v));
 }
 function settingsSheet() {
-  return [el("h2", "Settings"), kids(el("div", null, "opts"), limitRow(),
+  const out = [el("h2", "Settings"), kids(el("div", null, "opts"), limitRow(),
     opt("Restart after an out-of-memory kill", "Favorites only. At most every 10 min, 30 if killed again.",
       sw(false, "Restart after an out-of-memory kill", () => autoRestart(!(S.settings && S.settings.auto_restart)))))];
+  // which code this dashboard runs: asc/VERSION and its release (asctl --version says the same)
+  if (S && typeof S.version === "string" && S.version) out.push(el("p", "asctl " + S.version, "ver"));
+  return out;
 }
 // an open Settings sheet follows the state in place (drawn once: a drag or the focus stays)
 function syncSettings() {

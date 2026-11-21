@@ -26,6 +26,12 @@ while read -r lref lsha rref _; do
 		o=$(git cat-file tag "$o" | sed -n '1s/^object //p')
 	done
 	[ "$(git cat-file -t "$o")" = commit ] || { echo "privacy: refused: $o is a $(git cat-file -t "$o"), not a commit" >&2; rc=1; continue; }
+	# A release tag vN.N.N only on a commit whose asc/VERSION says N.N.N (what asctl --version and
+	# install.sh read): a tag and the code it names never disagree.
+	t=${rref#refs/tags/v}
+	if [ "$t" != "$rref" ] && [[ $t =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && [ "$(git show "$o:asc/VERSION" 2>/dev/null)" != "$t" ]; then
+		echo "release: refused: tag v$t on a commit whose asc/VERSION is not $t" >&2; rc=1
+	fi
 	"$check" --range --have "$have" "$lsha" || rc=1
 done
 exit $rc

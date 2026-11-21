@@ -1,5 +1,6 @@
 """asctl: list running agent sessions, favorite them, turn favorites on and off.
 
+  asctl --version                  asc/VERSION, and the release it runs from (or "checkout")
   asctl live                       running claudes: pid, session id, tmux, folder, favorite
   asctl list                       favorites and their state
   asctl fav REF [--name N] [--whole-session]
@@ -68,6 +69,21 @@ from . import events, live, memory, rclive, registry, tmuxctl
 from .registry import RegistryError
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+VERSION_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+
+
+def version():
+    """asc/VERSION ("unknown" when it is missing or not N.N.N) and what runs: "(release <id>)"
+    from a machine install's release folder (releases/<12 hex>, as install.sh names it), else
+    "(checkout)"."""
+    try:
+        with open(os.path.join(HERE, "asc", "VERSION"), encoding="utf-8") as f:
+            v = f.read(64).strip()
+    except (OSError, UnicodeDecodeError):
+        v = ""
+    rel = os.path.basename(HERE)
+    installed = re.fullmatch(r"[0-9a-f]{12}", rel) and os.path.basename(os.path.dirname(HERE)) == "releases"
+    return (v if VERSION_RE.fullmatch(v) else "unknown") + (f" (release {rel})" if installed else " (checkout)")
 
 
 def out(*a):
@@ -757,7 +773,11 @@ def cmd_on(args):
         return _on(e["id4"], args.force_memory)
 
 
-SYSTEMCTL_S = 30  # systemctl --user start asctl-tmux.service: a start takes a second or two
+# systemctl --user start asctl-tmux.service: a second or two, or longer when the user's tmux config
+# holds the start (a plugin line). Past this only systemctl is cut: tmux answers, and takes sessions,
+# while its config still loads, so the server_pid() after it finds the server; and the start
+# itself ends within tmuxctl.start_server's 60 s, before systemd's 90 s start limit.
+SYSTEMCTL_S = 30
 
 
 def ensure_server():
@@ -1315,6 +1335,7 @@ def main(argv=None):
     import argparse
     p = argparse.ArgumentParser(prog="asctl", description=__doc__.split("\n")[0],
                                 formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
+    p.add_argument("--version", action="version", version=f"asctl {version()}")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("live").set_defaults(f=cmd_live)
     sub.add_parser("list").set_defaults(f=cmd_list)

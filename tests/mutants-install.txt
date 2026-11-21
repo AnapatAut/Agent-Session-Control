@@ -38,7 +38,15 @@ install.sh %%%         if stat.S_ISLNK(st.st_mode): %%%         if False: %%% a 
 install.sh %%%         if not NAME.fullmatch(name): %%%         if False: %%% an odd file name in the checkout: refused %%% refuse
 install.sh %%%             fail(f"{p} is not a plain file") %%%             pass %%% a fifo in the checkout: refused %%% refuse
 install.sh %%% [ -f bin/asctl ] && [ -f bin/asctl-wrap ] &&  %%% [ -f bin/asctl ] &&  %%% not a checkout (bin/asctl-wrap missing): refused %%% refuse
-install.sh %%% [ ${#units[@]} -ge 4 ] || die %%% true || die %%% fewer than 4 units: refused %%% refuse
+install.sh %%% [ -f "systemd/$u" ] || die %%% true || die %%% a unit file missing: refused %%% refuse
+install.sh %%% asctl-watch.service asctl-watch.timer; do %%% asctl-watch.timer; do %%% a unit file missing: refused %%% refuse
+install.sh %%% [ "$ver" != unknown ] || die %%% true || die %%% asc/VERSION missing: refused %%% refuse
+install.sh %%% [[ $v =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "$v" %%% [ -n "$v" ] && echo "$v" %%% asc/VERSION not N.N.N: refused %%% refuse
+install.sh %%% echo "asctl $ver: $BIN" %%% echo "asctl: $BIN" %%% install: says the version it installed %%% fresh
+install.sh %%% if [ -n "$prev" ] && [ "$prev" != "releases/$id" ]; then %%% if [ -n "$prev" ]; then %%% install again: no version change said %%% fresh
+install.sh %%% if [ "$was" = "$ver" ]; then echo %%% if false; then echo %%% the same version, other code: said %%% versions
+install.sh %%% sort -V | head -1)" = "$ver" ]; then %%% sort -V | tail -1)" = "$ver" ]; then %%% a newer version: said, before and after %%% versions
+install.sh %%% elif [ "$was" != unknown ] && [ %%% elif [ %%% from a release before versions: unknown, then this one %%% versions
 install.sh %%% 	if own_unit "$path"; then rm -f "$path"; wrote+=("$path (removed)"); fi %%% 	rm -f "$path"; wrote+=("$path (removed)") %%% a unit the new release drops: removed when unchanged, kept when changed; neither in the marker %%% upgrade
 install.sh %%% [ ${#users[@]} = 0 ] || die %%% true || die %%% uninstall while a user has its units enabled: refused, the user named %%% uninstall
 install.sh %%% 	for l in "$UD"/*.wants/asctl-*; do %%% 	for l in "$UD"/none/asctl-*; do %%% enabled for every user: refused %%% uninstall

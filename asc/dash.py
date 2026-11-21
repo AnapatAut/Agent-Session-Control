@@ -64,6 +64,7 @@ from . import boot, cli, events, icons, live, memory, past, registry, tmuxctl
 from .registry import RegistryError
 
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+VERSION = cli.version()  # this server's own code: a dashboard keeps it until it next starts
 STATIC = {"/app.js": "application/javascript", "/splash.js": "application/javascript", "/app.css": "text/css"}
 MAX_BODY = 4096
 WEB_MODES = ("auto", "manual")
@@ -444,6 +445,7 @@ def _snapshot(tmux_error=""):
             "tmux_error": tmux_error,
             "favorites": favs, "active": active, "unknown_files": unknown,
             "boot": boot_status(), "watch_at": watch_at(), "setup": set_up(), "events_v": events_version(),
+            "version": VERSION,
             "settings": {"auto_restart": settings.get("auto_restart") is True,
                          "start_limit": memory.start_limit(settings)},
             "on": sum(1 for f in favs if f["state"] == "on")}, fav_sids | {s["session_id"] for s in seen}

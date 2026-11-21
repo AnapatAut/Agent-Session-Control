@@ -271,3 +271,6 @@ asc/web/app.js %%% (ev) => { ev.preventDefault(); history.back(); } %%% (ev) => 
 asc/web/app.js %%%   if (!from) return;⏎  const b %%%   const b %%% page: the page's script runs to its end, opened directly (no referrer) %%% page
 asc/web/app.js %%% backLink();⏎ %%%  %%% Back: a link hidden until the page shows it, on its own line just above the header; backLink runs at the start %%% pwa
 asc/web/index.html %%% <a class="back" id="back" href="#" hidden> %%% <a class="back" id="back" href="#"> %%% Back: a link hidden until the page shows it, on its own line just above the header; backLink runs at the start %%% pwa
+asc/dash.py %%%             "version": VERSION, %%%             "version": "", %%% state: the version this server runs %%% notices
+asc/web/app.js %%%   if (S && typeof S.version === "string" && S.version) out.push %%%   if (false) out.push %%% page: Settings: the version line, asctl and what the server runs; none without one %%% page
+asc/web/app.js %%% out.push(el("p", "asctl " + S.version, "ver")); %%% out.push(el("p", S.version, "ver")); %%% page: Settings: the version line, asctl and what the server runs; none without one %%% page

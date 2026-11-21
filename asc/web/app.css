@@ -213,6 +213,7 @@ html.locked, html.locked body { overflow: hidden; }
 .lab { display: block; font-size: 11px; line-height: 16px; font-weight: 700; color: var(--faint); letter-spacing: .04em; margin: 16px 0 6px; }
 .opts { background: var(--well); border-radius: 18px; overflow: hidden; }
 .sheet h2 + .opts { margin-top: 16px; }
+.sheet .ver { margin: 14px 4px 0; font-size: 12px; color: var(--mute); word-break: break-word; }
 /* the start limit: a range input on a track of our own, its ticks over the track, the thumb over both */
 .lim { padding: 12px 16px 8px; } .lim .head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
 .lim .t { font-size: 14px; font-weight: 600; } .lim .v { font-size: 14px; font-weight: 700; } .lim .d { font-size: 12px; color: var(--mute); margin-top: 1px; }

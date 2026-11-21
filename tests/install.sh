@@ -208,6 +208,8 @@ setup_a() { inst a >/dev/null; }
 co a
 co b; echo '# b' >> "$T/src/b/asc/events.py"; echo '# b' >> "$T/src/b/systemd/asctl-watch.timer"
 co c; echo '# c' >> "$T/src/c/asc/events.py"; echo '# c' >> "$T/src/c/systemd/asctl-watch.timer"
+V=$(cat "$T/src/a/asc/VERSION")
+[[ $V =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || stop "setup: asc/VERSION is N.N.N" "$V"
 
 case_fresh() {
 echo "== install, again, uninstall"
@@ -225,10 +227,13 @@ u=0; for f in $UNITS; do [ "$(cat "$UD/$f")" = "$(sed "s|@ASCTL@|$P/current/bin/
 [ -z "$(find /opt /etc/systemd/user /usr/local/bin -mindepth 1 \( -name '.*' ! -name .asctl-install -o -name '*.new-*' -o -name '*.stage-*' \))" ] \
 	&& ok "nothing else left: no staging folder, temp file or link" || bad "nothing else left: no staging folder, temp file or link" "$(find /opt /etc/systemd/user /usr/local/bin -mindepth 1 -name '.*')"
 grep -q '^usage: asctl' <<< "$("$BIN" --help 2>&1)" && ok "asctl on PATH runs from the release" || bad "asctl on PATH runs from the release" "$("$BIN" --help 2>&1 | head -3)"
+grep -qx "asctl $V: $BIN" <<< "$out" && ! has "^version " && ok "install: says the version it installed" || bad "install: says the version it installed" "$out"
+[ "$("$BIN" --version 2>&1)" = "asctl $V (release ${R#releases/})" ] && ok "asctl --version: the version and its release" || bad "asctl --version: the version and its release" "$("$BIN" --version 2>&1)"
 S1=$(snap)
 inst a
 [ "$rc" = 0 ] && has "release ${R#releases/}: installed already" && ! has "^wrote" && [ "$(snap)" = "$S1" ] \
 	&& ok "install again: installed already, nothing written or changed" || bad "install again: installed already, nothing written or changed" "exit $rc: $out"
+! has "^version " && ok "install again: no version change said" || bad "install again: no version change said" "$out"
 inst a --uninstall
 [ "$rc" = 0 ] && empty && has "removed $P" && ok "uninstall: nothing left" || bad "uninstall: nothing left" "exit $rc: $out; $(find /opt /etc/systemd/user /usr/local/bin -mindepth 1 | head)"
 inst a --uninstall
@@ -260,6 +265,9 @@ inst a; inst b
 fresh
 inst a
 co d; rm "$T/src/d/systemd/asctl-watch.timer" "$T/src/d/systemd/asctl-boot.service"
+# a release that drops units drops them from install.sh's list too
+sed -i 's/^for u in asctl-boot.service \(.*\) asctl-watch.timer; do$/for u in \1; do/' "$T/src/d/install.sh"
+grep -qx 'for u in asctl-dash.service asctl-dash.socket asctl-tmux.service asctl-watch.service; do' "$T/src/d/install.sh" || stop "setup: a release without two units"
 echo '# kept' >> "$UD/asctl-boot.service"
 inst d
 [ "$rc" = 0 ] && ! [ -e "$UD/asctl-watch.timer" ] && has "^wrote $UD/asctl-watch.timer (removed)$" && grep -qx '# kept' "$UD/asctl-boot.service" && ! grep -q 'asctl-watch.timer\|asctl-boot.service' "$MARK" \
@@ -282,6 +290,23 @@ co g; echo '# g' >> "$T/src/g/asc/events.py"
 inst g
 [ -n "$k" ] && [ "$krc" = 137 ] && [ "$RC" != "$RB" ] && [ "$rc" = 0 ] && [ -d "$P/$RB" ] && [ -d "$P/$RC" ] && ! [ -e "$P/$RA" ] \
 	&& ok "an upgrade killed, then another: the one current pointed at and the marker's kept, older ones go" || bad "an upgrade killed, then another: the one current pointed at and the marker's kept, older ones go" "kill at ${k:-none} (exit $krc), current then $RC; exit $rc: $out; $(ls "$P/releases")"
+}
+
+case_versions() {
+echo "== the version before and after: newer, older, the same, none"
+fresh
+inst a
+co h; printf '99.0.0\n' > "$T/src/h/asc/VERSION"
+inst h
+[ "$rc" = 0 ] && grep -qx "version $V -> 99.0.0" <<< "$out" && ok "a newer version: said, before and after" || bad "a newer version: said, before and after" "exit $rc: $out"
+inst a
+[ "$rc" = 0 ] && grep -qx "version 99.0.0 -> $V: an older version" <<< "$out" && ok "an older version: installed, said to be older" || bad "an older version: installed, said to be older" "exit $rc: $out"
+inst b
+[ "$rc" = 0 ] && grep -qx "version $V, as before (other code)" <<< "$out" && ok "the same version, other code: said" || bad "the same version, other code: said" "exit $rc: $out"
+# a release from before versions (no asc/VERSION): its version unknown
+rm "$P/$(rel)/asc/VERSION"
+inst a
+[ "$rc" = 0 ] && grep -qx "version unknown -> $V" <<< "$out" && ok "from a release before versions: unknown, then this one" || bad "from a release before versions: unknown, then this one" "exit $rc: $out"
 }
 
 case_refuse() {
@@ -340,9 +365,15 @@ inst f
 co w; rm "$T/src/w/bin/asctl-wrap"
 inst w
 [ "$rc" = 1 ] && has "is not a checkout of agent-session-control" && empty && ok "not a checkout (bin/asctl-wrap missing): refused" || bad "not a checkout (bin/asctl-wrap missing): refused" "exit $rc: $out"
-co u; rm "$T/src/u/systemd/asctl-boot.service" "$T/src/u/systemd/asctl-dash.service" "$T/src/u/systemd/asctl-dash.socket"
+co u; rm "$T/src/u/systemd/asctl-watch.service"
 inst u
-[ "$rc" = 1 ] && has "fewer than the 4 units" && empty && ok "fewer than 4 units: refused" || bad "fewer than 4 units: refused" "exit $rc: $out"
+[ "$rc" = 1 ] && has "systemd/asctl-watch.service is missing: not a whole release" && empty && ok "a unit file missing: refused" || bad "a unit file missing: refused" "exit $rc: $out"
+co v; rm "$T/src/v/asc/VERSION"
+inst v
+[ "$rc" = 1 ] && has "asc/VERSION is missing or not N.N.N" && empty && ok "asc/VERSION missing: refused" || bad "asc/VERSION missing: refused" "exit $rc: $out"
+co v; printf '1.1\n' > "$T/src/v/asc/VERSION"
+inst v
+[ "$rc" = 1 ] && has "asc/VERSION is missing or not N.N.N" && empty && ok "asc/VERSION not N.N.N: refused" || bad "asc/VERSION not N.N.N: refused" "exit $rc: $out"
 co s; printf 'def broken(:\n' > "$T/src/s/asc/broken.py"
 inst s
 [ "$rc" = 1 ] && has "does not compile" && empty && [ -z "$(find /opt -mindepth 1)" ] && ok "code that does not compile: refused" || bad "code that does not compile: refused" "exit $rc: $out"
@@ -473,7 +504,7 @@ r=$(awk '
 	&& ok "install: each file flushed to disk before its rename, each folder after" || bad "install: each file flushed to disk before its rename, each folder after" "exit $rc; $r"
 }
 
-run_cases install fresh upgrade refuse uninstall kill_install kill_upgrade kill_uninstall kill_prune sync
+run_cases install fresh upgrade versions refuse uninstall kill_install kill_upgrade kill_uninstall kill_prune sync
 
 echo "install: $pass passed, $fail failed"
 [ "$fail" = 0 ]

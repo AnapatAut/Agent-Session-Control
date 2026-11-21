@@ -16,8 +16,10 @@
 # ones go once no process runs them.
 # It refuses, changing nothing, when a path it would write is not its own: a folder there
 # without its marker, an /usr/local/bin/asctl that is not its link, a unit file it did not
-# write; or when a source file is a link or an odd name, the code does not compile or start,
-# or a release folder it would use again no longer holds what gave it its id. Every write is a
+# write; or when a source file is a link or an odd name, one of its six unit files or its
+# asc/VERSION (N.N.N) is missing, the code does not compile or start, or a release folder it
+# would use again no longer holds what gave it its id. It says the version it installed, and
+# the one before when that changed (an older one too: a rollback is allowed). Every write is a
 # rename into place, flushed to disk first (sync); every delete of a folder renames it out of
 # the way first. So a run killed at any point leaves what the next run (install or uninstall)
 # takes as its own: before any unit is written the marker holds each unit's sha256 as it is
@@ -52,6 +54,8 @@ flock -n 9 || die "another install.sh is running"
 # and as it will be).
 marked() { [ -f "$MARK" ] && ! [ -L "$MARK" ] && head -1 "$MARK" | grep -qx 'agent-session-control install 1'; }
 sha() { sha256sum < "$1" | cut -d' ' -f1; }
+# The version in a release folder: its asc/VERSION when N.N.N, else unknown (none before 1.1.0).
+ver_of() { local v; v=$(head -c 64 "$1/asc/VERSION" 2>/dev/null | tr -d '\n'); [[ $v =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "$v" || echo unknown; }
 # The sha256s the marker has for a unit path, one a line (none: no marker, or not in it).
 recorded() { [ -f "$MARK" ] || return 0; awk -v p="$1" '$1 == "unit" && $2 == p {print $3}' "$MARK"; }
 # The unit paths in the marker, each once.
@@ -211,7 +215,13 @@ find . -type d -exec chmod 755 {} + && find . -type f -exec chmod 644 {} + && ch
 files=() units=()
 while IFS= read -r -d '' f; do files+=("${f#./}"); done < <(find . -type f -print0 | sort -z)
 for f in "${files[@]}"; do case $f in systemd/*.service | systemd/*.timer | systemd/*.socket) units+=("${f#systemd/}") ;; esac; done
-[ ${#units[@]} -ge 4 ] || die "systemd/ has fewer than the 4 units"
+# A whole release: its six units by name (a folder missing one would install without it), and
+# its version.
+for u in asctl-boot.service asctl-dash.service asctl-dash.socket asctl-tmux.service asctl-watch.service asctl-watch.timer; do
+	[ -f "systemd/$u" ] || die "systemd/$u is missing: not a whole release"
+done
+ver=$(ver_of .)
+[ "$ver" != unknown ] || die "asc/VERSION is missing or not N.N.N: not a whole release"
 id=$(content_id)
 # A unit file there is its own when the marker has its sha256 (two while a run that was killed
 # had it pending), or when it holds what this run would write; changed when it is neither.
@@ -343,7 +353,15 @@ if [ "$prev" = "releases/$id" ]; then echo "release $id: installed already"
 elif [ "$new" = 1 ]; then echo "release $id installed in $P${prev:+ (was ${prev#releases/})}"
 else echo "release $id: switched back to it${prev:+ (was ${prev#releases/})}"; fi
 for w in ${wrote[@]+"${wrote[@]}"}; do echo "wrote $w"; done
-echo "asctl: $BIN"
+echo "asctl $ver: $BIN"
+# The version before, when the release changed: said plainly, an older one too (a rollback is
+# allowed; the release before is kept for it).
+if [ -n "$prev" ] && [ "$prev" != "releases/$id" ]; then
+	was=$(ver_of "$P/$prev")
+	if [ "$was" = "$ver" ]; then echo "version $ver, as before (other code)"
+	elif [ "$was" != unknown ] && [ "$(printf '%s\n' "$was" "$ver" | sort -V | head -1)" = "$ver" ]; then echo "version $was -> $ver: an older version"
+	else echo "version $was -> $ver"; fi
+fi
 cat <<EOF
 Nothing is enabled for anyone. Each user who wants asctl runs, as themselves:
   asctl setup

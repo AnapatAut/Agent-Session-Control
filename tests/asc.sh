@@ -147,6 +147,20 @@ asctl list >/dev/null && ok "list works with nothing set up" || bad "list works 
 asctl live | seen 'no live claude' && ok "live: none" || bad "live: none" "live: wrong when none"
 }
 
+case_version() {
+echo "== asctl --version"
+V=$(cat "$REPO/asc/VERSION")
+[ "$(asctl --version 2>&1)" = "asctl $V (checkout)" ] && ok "--version from a checkout: the version, (checkout)" || bad "--version from a checkout: the version, (checkout)" "$(asctl --version 2>&1)"
+# As a machine install has it: releases/<12 hex>/, reached through a link (bin/asctl follows it).
+mkdir -p "$T/opt/releases/0123456789ab" "$T/other/0123456789ab"
+cp -r "$REPO/asc" "$REPO/bin" "$T/opt/releases/0123456789ab/"; cp -r "$REPO/asc" "$REPO/bin" "$T/other/0123456789ab/"
+ln -s releases/0123456789ab "$T/opt/current"
+[ "$("$T/opt/current/bin/asctl" --version 2>&1)" = "asctl $V (release 0123456789ab)" ] && ok "--version from a release folder: the version and its release" || bad "--version from a release folder: the version and its release" "$("$T/opt/current/bin/asctl" --version 2>&1)"
+[ "$("$T/other/0123456789ab/bin/asctl" --version 2>&1)" = "asctl $V (checkout)" ] && ok "--version: a folder named like a release outside releases/ is a checkout" || bad "--version: a folder named like a release outside releases/ is a checkout" "$("$T/other/0123456789ab/bin/asctl" --version 2>&1)"
+printf '1.1.0<b>\n' > "$T/opt/releases/0123456789ab/asc/VERSION"
+[ "$("$T/opt/current/bin/asctl" --version 2>&1)" = "asctl unknown (release 0123456789ab)" ] && ok "--version: a VERSION not N.N.N said as unknown" || bad "--version: a VERSION not N.N.N said as unknown" "$("$T/opt/current/bin/asctl" --version 2>&1)"
+}
+
 # shellcheck disable=SC2329  # helpers run only through poll
 case_main() {
 echo "== fav"
@@ -2210,7 +2224,7 @@ kill -CONT "$srv"
 asctl forget "$idq" >/dev/null
 }
 
-run_cases asc no_tmux_server main shared_stale guards on_gates new_session rc_now rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot asctl_setup trust_watch mcp_prompt off_survivor shell_start tmux_silent
+run_cases asc no_tmux_server version main shared_stale guards on_gates new_session rc_now rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot asctl_setup trust_watch mcp_prompt off_survivor shell_start tmux_silent
 
 echo "asc: $pass passed, $fail failed"
 [ "$fail" = 0 ]

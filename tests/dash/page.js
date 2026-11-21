@@ -40,6 +40,16 @@ S = { home: "${HOME}", boot: { todo: ["0003", "0004", "0005"], why: "memory: wat
 var F = (id) => S.favorites.find((e) => e.id4 === id);`);
 
 check("the page's script runs to its end, opened directly (no referrer)", loadErr === null ? "true" : `${JSON.stringify(String(loadErr))}`);
+check("Settings: the version line, asctl and what the server runs; none without one", `(() => {
+  const plain = el; let seen = null;
+  el = (t, x, c) => { if (c === "ver") seen = x; return plain(t, x, c); };
+  try {
+    S.version = "1.2.3 (release 0123456789ab)";
+    const withIt = settingsSheet().length === 3 && seen === "asctl 1.2.3 (release 0123456789ab)";
+    delete S.version; seen = null;
+    return withIt && settingsSheet().length === 2 && seen === null;
+  } finally { el = plain; delete S.version; }
+})()`);
 check("1 day ago, 3 days ago", `ago(Date.now() / 1000 - 86400) === "1 day ago" && ago(Date.now() / 1000 - 3 * 86400) === "3 days ago"`);
 check("the time it was updated: day, month, year and seconds", `stamp(new Date(2026, 10, 4, 11, 27, 42)) === "4 Nov 2026, 11:27:42"`);
 check("outside its tmux session: where it runs", `look({ state: "on (outside its tmux session)", tmux: "x-0001",

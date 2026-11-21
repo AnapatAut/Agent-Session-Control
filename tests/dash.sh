@@ -901,6 +901,7 @@ stop_dash; ASC_SYSTEMCTL=/bin/false start_dash && state | jq -e '.setup == null'
 stop_dash; start_dash && ok "dash up again, the user manager answering" || bad "dash up again, the user manager answering" "no dash: $(cat "$T/dash.err")"
 rm -rf "$HOME/fake-units"
 state | jq -e '.settings == {"auto_restart": false, "start_limit": 80}' >/dev/null && ok "state: auto-restart off, start limit 80 by default" || bad "state: auto-restart off, start limit 80 by default" "settings: $(state | jq -c .settings)"
+state | jq -e --arg v "$(cat "$REPO/asc/VERSION") (checkout)" '.version == $v' >/dev/null && ok "state: the version this server runs" || bad "state: the version this server runs" "version: $(state | jq -c .version)"
 ev1=$(state | jq -r .events_v)
 [ "$(post '{"action":"auto_restart","on":true}' | tail -1)" = 200 ] && state | jq -e '.settings.auto_restart' >/dev/null \
 	&& [ "$(jq -r '.settings.auto_restart' "$REG")" = true ] && ok "auto-restart on from the page" || bad "auto-restart on from the page" "auto-restart on failed"

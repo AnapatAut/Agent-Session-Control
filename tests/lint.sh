@@ -3,7 +3,7 @@
 # waits (tests/checklint.py), their mutant lists (tests/mutantlint.py), the sandbox's HostConfig
 # check with a fake docker (tests/sandbox-lib-test.sh), the case runner (tests/cases-test.sh), the
 # mutant runner on toy repos (tests/mutate-test.sh, about 40 s), and the privacy check of every
-# tracked file. Changes nothing.
+# tracked file, and that asc/VERSION is N.N.N. Changes nothing.
 #   tests/lint.sh
 set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -28,6 +28,8 @@ else
 	echo "shellcheck: not installed, skipped (e.g. apt install shellcheck, or: uvx --from shellcheck-py shellcheck)"
 fi
 python3 -I -m py_compile asc/*.py && echo "python: ok (asc/*.py compile)" || rc=1
+v=$(cat asc/VERSION 2>/dev/null)
+[[ $v =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && [ "$(wc -l < asc/VERSION)" = 1 ] && echo "version: ok (asc/VERSION is $v)" || { echo "version: asc/VERSION must be one line N.N.N"; rc=1; }
 python3 -I tests/checklint.py --self-test && python3 -I tests/checklint.py tests/asc.sh tests/dash.sh tests/install.sh tests/dash/page.js \
 	&& echo "checks and waits: ok (one fixed name per check, run once; every wait's status used; no token on a command line)" || rc=1
 python3 -I tests/mutantlint.py --self-test && python3 -I tests/mutantlint.py tests/mutants-asc.txt tests/mutants-dash.txt tests/mutants-install.txt tests/privacy.sh \
