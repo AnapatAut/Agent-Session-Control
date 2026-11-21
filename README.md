@@ -30,7 +30,8 @@ The code goes in `/opt/agent-session-control/releases/<id>`. It belongs to root 
 only read it. `current` points at the release in use, and `/usr/local/bin/asctl` at
 `current/bin/asctl`. The units go in `/etc/systemd/user/`, enabled for no one. An upgrade
 switches `current` with one rename. A running asctl keeps the release it started from; this
-release and the one before it stay, older ones go once no process runs them. The installer
+release, the one before it and the last one installed to the end stay, older ones go once no
+process runs them. The installer
 copies the checkout once, refusing a link at any level, and reads nothing from it after that.
 It refuses, changing nothing, when a path it would write is not its own (a folder or
 `/usr/local/bin/asctl` it did not make, a unit file it did not write, a unit file changed
@@ -39,6 +40,14 @@ when a release it would use again has changed. Every write is flushed to disk an
 into place, every delete renames first: an install or uninstall stopped at any point (a kill,
 Ctrl-C) is finished by running it again, with no `--force`. Users' managers read changed
 units at their next `systemctl --user daemon-reload`.
+
+**Updating**: get the new code (`git pull` in the checkout, or the source archive of a newer
+release from the repo's Releases page, which has all the installer needs), then run
+`sudo ./install.sh` again from it. The same code is the same release ("installed already",
+nothing written). Users run nothing: their favorites, settings and event log stay. A running
+dashboard keeps the old code until it next starts (after 10 idle minutes, or `systemctl --user
+restart asctl-dash.service`), and only when the installer says the units changed does each
+user who has it set up run `systemctl --user daemon-reload`.
 
 **Each user** who wants it then runs, as themselves, in a login session of their own (not as
 root, not through `sudo -u` or `su`: it needs that user's systemd manager):
@@ -139,6 +148,10 @@ asctl restart 0421          # off and on again (--resume), only when idle and ru
                             # a claude of it outside its tmux session is moved into it
 asctl forget 0421
 asctl events 0421           # what happened to it (on, off, rename, refused, ended, ...): its last 200
+asctl start-limit 75        # settings: start only under 75% of memory used (60 to 85 in steps of 5;
+                            # `default` is 80; no value shows it)
+asctl auto-restart on       # the watcher starts again a favorite killed under memory pressure (off:
+                            # it only logs; see below). The dashboard's gear sets both too
 ```
 
 MCP servers are off first for a new favorite: when its first start (`asctl new`, or the Trust
