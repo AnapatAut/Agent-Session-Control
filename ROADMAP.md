@@ -24,7 +24,8 @@ Built:
 - **An event log** of every action: each favorite's last 200.
 - **A tmux server of its own** (`asctl-tmux.service`). Restarting the dashboard or the watcher
   never ends a session, and one session's out-of-memory kill does not end the others.
-- **A machine-wide install** (`sudo ./install.sh`). Each user opts in with `asctl setup`.
+- **A machine-wide install** (`sudo ./install.sh`). Each user opts in with `asctl setup`. It
+  says the version it installs; `asctl --version` and the dashboard's Settings say which runs.
 
 Next:
 

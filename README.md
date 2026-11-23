@@ -44,8 +44,8 @@ own (a folder or `/usr/local/bin/asctl` it did not make, a unit file it did not 
 file changed since: keep a change in a drop-in, `<unit>.d/`), when the folder is not a whole
 release (one of its six unit files, or `asc/VERSION`, missing), when the code does not compile
 or start, or when a release it would use again has changed. It says the version it installed
-(`asctl 1.1.0: /usr/local/bin/asctl`) and, when it changed, the one before (`version 1.0.2 ->
-1.1.0`; an older one is installed too, said so: a rollback is one command). Every write is
+(`asctl 1.1.0: /usr/local/bin/asctl`) and, when it changed, the one before (`version 1.1.0 ->
+1.2.0`; an older one is installed too, said so: a rollback is one command). Every write is
 flushed to disk and renamed into place, every delete renames first: an install or uninstall
 stopped at any point (a kill, Ctrl-C) is finished by running it again, with no `--force`. Users'
 managers read changed units at their next `systemctl --user daemon-reload`. Tests:
@@ -279,7 +279,8 @@ its conversation is (past 100,000 lines Claude Code stops sending it to claude.a
 history (its last 200 events, by day, repeats folded). Notices say when asctl boot is bringing
 favorites back after a reboot, when asctl is not set up for the user, and when the watcher has
 not run for 5 min. The gear by Refresh opens Settings: the start limit (a slider, 60 to 85% used,
-the orange mark on the memory bar) and the out-of-memory auto-restart switch. New session makes a
+the orange mark on the memory bar), the out-of-memory auto-restart switch, and under them the
+version its server runs (`asctl --version`'s, as of the server's start). New session makes a
 favorite from its name and a folder pasted by path (`asctl new`), in auto mode, Remote control on
 unless turned off there. Opened inside another installed app on this machine (such as the serve
 dashboard's, with this serve set to open in "This app"), the page shows Back above its title: a
