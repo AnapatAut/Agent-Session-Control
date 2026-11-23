@@ -992,7 +992,113 @@ else
 fi
 }
 
-run_cases dash page config socket pwa name state actions_token actions_fav actions_new past client operator stale tmux_hang transcripts token rc notices prefix systemd
+# A machine install's releases as install.sh lays them out, $R/releases/<12 hex> (copies of this
+# checkout's asc/ and bin/) and current pointing at one, served from systemd's socket the way
+# asctl-dash.socket does it (tests/dash/sockact.py: it starts the server again at the next
+# request once it exits).
+case_release() {
+echo "== a new release: the server follows it (from systemd's socket only)"
+fresh; dash_conf /u; tmux_up
+R="$T/opt" A=aaaaaaaaaaaa B=bbbbbbbbbbbb
+mkdir -p "$R/releases/$A" "$R/releases/$B" "$R/releases/dddddddddddd" "$R/releases/stage-x/bin" "$T/elsewhere/releases/cccccccccccc/bin"
+cp -r "$REPO/asc" "$REPO/bin" "$R/releases/$A/"; cp -r "$REPO/asc" "$REPO/bin" "$R/releases/$B/"
+cp "$REPO/bin/asctl" "$R/releases/stage-x/bin/"; cp "$REPO/bin/asctl" "$T/elsewhere/releases/cccccccccccc/bin/"
+V=$(cat "$REPO/asc/VERSION"); echo 9.9.9 > "$R/releases/$B/asc/VERSION"
+# current switched as install.sh switches it: a new link renamed over the old one
+point() { ln -sfn "$1" "$R/current.new" && mv -T "$R/current.new" "$R/current"; }
+point "releases/$A"
+mkdir -p "$T/sa"; chmod 700 "$T/sa"
+SOCK="$T/sa/s.sock"
+python3 -I "$REPO/tests/dash/sockact.py" "$SOCK" "$T/sa.log" "$R/current/bin/asctl" dash --idle 0 2>"$T/sa.err" & DPID=$!
+poll 3 [ -S "$SOCK" ] || stop "the test's socket activation listening"
+ver() { dc -m 5 "http://x/u/api/state" | jq -r '.version // empty' 2>/dev/null; }
+starts() { grep -c '^start' "$T/sa.log"; }
+[ "$(ver)" = "$V (release $A)" ] && ok "release: on systemd's socket it runs the release current points at" || bad "release: on systemd's socket it runs the release current points at" "version $(ver): $(tail -3 "$T/sa.err")"
+page_get
+seen "name=\"asctl-version\" content=\"$V (release $A)\"" "$T/page" && ok "release: the page carries the version of the server that sent it" || bad "release: the page carries the version of the server that sent it" "$(grep -o 'name="asctl-version"[^>]*' "$T/page")"
+# Each server looks once a second; one that exits takes up to 0.5 s more to stop taking requests
+stays() { sleep 2.5; ! seen 'installed: exiting' "$T/sa.err" && [ "$(starts)" = 1 ] && [ "$(ver)" = "$V (release $A)" ]; }
+stays && ok "release: current unchanged: the same server" || bad "release: current unchanged: the same server" "starts $(starts), version $(ver): $(tail -2 "$T/sa.err")"
+point "$T/elsewhere/releases/cccccccccccc"
+stays && ok "release: current at a release in another releases/ folder: it stays" || bad "release: current at a release in another releases/ folder: it stays" "starts $(starts), version $(ver): $(tail -2 "$T/sa.err")"
+point releases/stage-x
+stays && ok "release: current at a folder in releases/ not named as a release: it stays" || bad "release: current at a folder in releases/ not named as a release: it stays" "starts $(starts), version $(ver): $(tail -2 "$T/sa.err")"
+point releases/dddddddddddd
+stays && ok "release: current at a release folder without bin/asctl: it stays" || bad "release: current at a release folder without bin/asctl: it stays" "starts $(starts), version $(ver): $(tail -2 "$T/sa.err")"
+rm "$R/current"
+stays && ok "release: no current link: it stays" || bad "release: no current link: it stays" "starts $(starts), version $(ver): $(tail -2 "$T/sa.err")"
+point "releases/$A"
+TOK=$(token)
+# What release A's server runs for an action from now on (bin/asctl of its own release): a stub
+# that runs until the test says. It is not asctl: what is tested is the server waiting for it.
+printf '#!/bin/sh\n: > "%s/act-running"\ni=0\nwhile [ ! -e "%s/act-go" ] && [ $i -lt 300 ]; do sleep 0.1; i=$((i + 1)); done\necho held\n' "$T" "$T" > "$R/releases/$A/bin/asctl.new"
+chmod 755 "$R/releases/$A/bin/asctl.new"; mv "$R/releases/$A/bin/asctl.new" "$R/releases/$A/bin/asctl"
+(post '{"action":"auto_restart","id":"auto_restart","on":true}' | tail -1 > "$T/act-out") & act=$!
+poll 5 [ -e "$T/act-running" ] || stop "the test's held action running"
+# A page load the server takes before it exits: its first line now, the rest once told
+python3 -I -c 'import json, os, socket, sys, time
+s = socket.socket(socket.AF_UNIX); s.settimeout(20); s.connect(sys.argv[1])
+s.sendall(b"GET /u/api/state HTTP/1.1\r\n")
+open(sys.argv[2], "w").close()
+while not os.path.exists(sys.argv[3]):
+    time.sleep(0.05)
+data = b""
+try:
+    s.sendall(("Host: localhost\r\nTailscale-User-Login: %s\r\nX-Forwarded-Host: %s\r\nX-Forwarded-For: 192.0.2.10\r\n"
+               "Connection: close\r\n\r\n" % (sys.argv[4], sys.argv[5])).encode())
+    while True:
+        b = s.recv(65536)
+        if not b:
+            break
+        data += b
+except OSError:
+    pass
+head, _, body = data.partition(b"\r\n\r\n")
+try:
+    v = json.loads(body).get("version")
+except ValueError:
+    v = None
+print(head.split()[1].decode() if len(head.split()) > 1 else "none", v)' "$SOCK" "$T/slow-ready" "$T/slow-go" "$LOGIN" "$HOST" > "$T/slow-out" & slow=$!
+poll 5 [ -e "$T/slow-ready" ] || stop "the test's slow page load sent its first line"
+sleep 0.3
+point "releases/$B"
+sleep 2.5
+[ "$(ver)" = "$V (release $A)" ] && ! seen 'installed: exiting' "$T/sa.err" && ok "release: while an action runs, the old server still answers" || bad "release: while an action runs, the old server still answers" "version $(ver): $(tail -2 "$T/sa.err")"
+: > "$T/act-go"; wait "$act"
+[ "$(cat "$T/act-out")" = 200 ] && ok "release: the running action ends as it would (200)" || bad "release: the running action ends as it would (200)" "action: $(cat "$T/act-out")"
+poll 5 seen "release $B installed: exiting" "$T/sa.err" && ok "release: then the server exits, naming the release" || bad "release: then the server exits, naming the release" "$(tail -2 "$T/sa.err")"
+sleep 1
+: > "$T/slow-go"; wait "$slow"
+[ "$(cat "$T/slow-out")" = "200 $V (release $A)" ] && ok "release: a page load it took before it exits is answered, by it" || bad "release: a page load it took before it exits is answered, by it" "$(cat "$T/slow-out")"
+[ "$(ver)" = "9.9.9 (release $B)" ] && [ "$(starts)" = 2 ] && ok "release: the next request starts it again, from the new release" || bad "release: the next request starts it again, from the new release" "starts $(starts), version $(ver): $(tail -2 "$T/sa.err")"
+# shellcheck disable=SC2046  # pids
+kill $(pgrep -P "$DPID") "$DPID" 2>/dev/null; wait "$DPID" 2>/dev/null; DPID=
+cp "$REPO/bin/asctl" "$R/releases/$A/bin/asctl"; point "releases/$A"
+SOCK="$T/run/asctl/dash.sock"
+"$R/releases/$A/bin/asctl" dash --idle 600 2>"$T/dash.err" & DPID=$!  # as the unit runs it
+# shellcheck disable=SC2329  # called by poll
+up() { [ "$(code "http://x/u/app.css")" != 000 ]; }
+poll 5 up || stop "release A's dashboard on its own socket"
+point "releases/$B"
+sleep 2.5
+kill -0 "$DPID" 2>/dev/null && [ "$(ver)" = "$V (release $A)" ] && ok "release: without systemd's socket it keeps its release (nothing would start it again)" || bad "release: without systemd's socket it keeps its release (nothing would start it again)" "version $(ver): $(tail -2 "$T/dash.err")"
+stop_dash
+# A checkout on systemd's socket, in releases/checkout with a current link beside releases/ that
+# points at a whole release next to it: only a release's name is missing
+mkdir -p "$T/co/releases/checkout" "$T/co/releases/eeeeeeeeeeee/bin"
+cp -r "$REPO/asc" "$REPO/bin" "$T/co/releases/checkout/"; cp "$REPO/bin/asctl" "$T/co/releases/eeeeeeeeeeee/bin/"
+ln -s releases/eeeeeeeeeeee "$T/co/current"
+SOCK="$T/sa/s.sock"; rm -f "$SOCK"
+python3 -I "$REPO/tests/dash/sockact.py" "$SOCK" "$T/sa2.log" "$T/co/releases/checkout/bin/asctl" dash --idle 0 2>"$T/sa2.err" & DPID=$!
+poll 3 [ -S "$SOCK" ] || stop "the test's socket activation listening, for a checkout"
+first=$(ver); sleep 2.5
+[ "$first" = "$V (checkout)" ] && ! seen 'installed: exiting' "$T/sa2.err" && [ "$(ver)" = "$V (checkout)" ] && [ "$(grep -c '^start' "$T/sa2.log")" = 1 ] && ok "release: a checkout never follows one, even on systemd's socket" || bad "release: a checkout never follows one, even on systemd's socket" "version $first, then $(ver): $(tail -2 "$T/sa2.err")"
+# shellcheck disable=SC2046  # pids
+kill $(pgrep -P "$DPID") "$DPID" 2>/dev/null; wait "$DPID" 2>/dev/null; DPID=
+SOCK="$T/run/asctl/dash.sock"
+}
+
+run_cases dash page config socket pwa name state actions_token actions_fav actions_new past client operator stale tmux_hang transcripts token rc notices prefix systemd release
 
 echo "dash: $pass passed, $fail failed"
 [ "$fail" = 0 ]

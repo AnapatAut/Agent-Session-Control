@@ -117,6 +117,66 @@ check("MCP server(s) not used, another prompt: in words, the servers named",
 // act and Trust folder themselves, with a fetch that records what is sent and the confirm
 // answered no, then yes; one after the other (chain): each sets the page's fetch and ask
 run("var chain = Promise.resolve();");
+// followRelease: a page from release A, the state from B. Each check sets what it needs and puts
+// back what it changed; fetch answers the page as given, location.reload counts. One at a time
+// (chain).
+run(`var relTry = (o) => (chain = chain.then(async () => {
+  const keepRender = render;
+  render = () => {};  // drawing is not what is tested (the stubs' state is not a whole one)
+  const keep = { doc: globalThis.document, pageVer, S, version: S.version, sheetOf, fetch, location: globalThis.location, ss: globalThis.sessionStorage, cancel: ask.cancel };
+  let loads = 0, asked = 0;
+  pageVer = "1.1.0 (release aaaaaaaaaaaa)"; S.version = "1.2.0 (release bbbbbbbbbbbb)";
+  sheetOf = null; ask.cancel = null;
+  // the search box as given (empty), every other element the stub
+  const docWith = (q) => ({ getElementById: (id) => (id === "q" ? { value: q } : keep.doc.getElementById(id)), querySelector: () => null });
+  globalThis.document = docWith("");
+  globalThis.location = { href: "https://h/u/", reload() { loads++; } };
+  globalThis.fetch = async (u, opt) => {
+    if (u === "api/state") return { ok: true, json: async () => Object.assign({}, S, { version: "1.2.0 (release bbbbbbbbbbbb)" }) };
+    asked++; if (o.down) throw new TypeError("network"); return { ok: !o.status || o.status === 200 };
+  };
+  const store = new Map(o.stored ? [["asc-reloaded", o.stored]] : []);
+  globalThis.sessionStorage = o.noStorage ? { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); } }
+    : { getItem: (k) => store.has(k) ? store.get(k) : null, setItem: (k, v) => store.set(k, String(v)) };
+  if (o.q) globalThis.document = docWith(o.q);
+  if (o.set) o.set();
+  try {
+    // o.refresh: through an update of the state, as the page gets one every 5 s
+    const first = o.refresh ? (async () => { await refresh(); for (let i = 0; i < 50; i++) await null; return loads === 1; })() : followRelease();
+    const second = o.twice ? await followRelease() : undefined;
+    const r = await first;
+    return { r, second, loads, asked, stored: store.get("asc-reloaded") || null };
+  } finally {
+    pending.clear();
+    globalThis.document = keep.doc; render = keepRender; S = keep.S; pageVer = keep.pageVer; S.version = keep.version; sheetOf = keep.sheetOf; ask.cancel = keep.cancel;
+    globalThis.fetch = keep.fetch; globalThis.location = keep.location; globalThis.sessionStorage = keep.ss;
+  }
+}).catch((e) => e));  // a check that throws gives its error (a FAIL), and the chain goes on`);
+check("a new release: the page loads again, once it answers", `relTry({}).then((x) => x.r === true && x.loads === 1 && x.asked === 1 && x.stored === "1.2.0 (release bbbbbbbbbbbb)" || JSON.stringify(x))`);
+check("an update of the state from a new release: the page loads again", `relTry({ refresh: true }).then((x) => x.r === true && x.loads === 1 || JSON.stringify(x))`);
+check("the page's own version: its meta's, none without one", `pageVersion({ querySelector: (q) => q === 'meta[name="asctl-version"]' ? { content: "1.2.0 (release bbbbbbbbbbbb)" } : null })
+  === "1.2.0 (release bbbbbbbbbbbb)" && pageVersion({ querySelector: () => null }) === "" && pageVersion({ querySelector: () => ({}) }) === ""`);
+check("the same version, none, or a page without one: no load", `(async () => {
+  const same = await relTry({ set() { S.version = pageVer; } }), none = await relTry({ set() { delete S.version; } });
+  const odd = await relTry({ set() { S.version = 7; } }), empty = await relTry({ set() { S.version = ""; } });
+  const noPage = await relTry({ set() { pageVer = ""; } });
+  return [same, none, odd, empty, noPage].every((x) => x.r === false && x.loads === 0 && x.asked === 0) || JSON.stringify([same, none, odd, empty, noPage]);
+})()`);
+check("a sheet open, a question asked, an action running, a search typed: no load (the next update tries again)", `(async () => {
+  const sheet = await relTry({ set() { sheetOf = { kind: "new", key: "new" }; } });
+  const q = await relTry({ set() { ask.cancel = () => {}; } });
+  const act = await relTry({ set() { pending.add("0001"); } });
+  const typed = await relTry({ q: "db" });
+  return [sheet, q, act, typed].every((x) => x.r === false && x.loads === 0 && x.asked === 0) || JSON.stringify([sheet, q, act, typed]);
+})()`);
+check("the page not answering (502, the network down): it stays, the next update tries again", `(async () => {
+  const bad = await relTry({ status: 502 }), down = await relTry({ down: true });
+  return [bad, down].every((x) => x.r === false && x.loads === 0 && x.asked === 1 && x.stored === null) || JSON.stringify([bad, down]);
+})()`);
+check("loaded again for that version once already: not again", `relTry({ stored: "1.2.0 (release bbbbbbbbbbbb)" }).then((x) => x.r === false && x.loads === 0 && x.asked === 0 || JSON.stringify(x))`);
+check("sessionStorage blocked: it still loads again", `relTry({ noStorage: true }).then((x) => x.r === true && x.loads === 1 || JSON.stringify(x))`);
+check("one at a time: a second update while the first waits for the page does nothing", `relTry({ twice: true }).then((x) =>
+  x.r === true && x.second === false && x.loads === 1 && x.asked === 1 || JSON.stringify(x))`);
 const rec = `const sent = [], asked = [];
   fetch = async (u, o) => { if (o && o.body) sent.push(JSON.parse(o.body)); return { status: 200, json: async () => reply(sent[sent.length - 1]) }; };`;
 check("trust folder: sent only after a yes to a warning that names the folder, with only which favorite", `(chain = chain.then(async () => {

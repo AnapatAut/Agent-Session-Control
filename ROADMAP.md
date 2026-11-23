@@ -26,6 +26,7 @@ Built:
   never ends a session, and one session's out-of-memory kill does not end the others.
 - **A machine-wide install** (`sudo ./install.sh`). Each user opts in with `asctl setup`. It
   says the version it installs; `asctl --version` and the dashboard's Settings say which runs.
+  A running dashboard moves to a new release by itself, and its open page with it.
 
 Next:
 

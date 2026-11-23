@@ -436,6 +436,28 @@ wrapof() { u2 cat "/proc/$(u2 ps -o ppid= -p "$1" | tr -d " ")/cmdline" 2>/dev/n
 chk "its favorite runs from the installed release (asctl-wrap there), resurrect on" \
 	'wait_for 15 "[ -n \"\$(c2pid)\" ]" && wrapof "$(c2pid)" | grep -q " $OPT/releases/[0-9a-f]*/bin/asctl-wrap " && [ "$(u2 jq -r ".entries[\"$MID\"].resurrect" "$H2/.local/state/agent-session-control/registry.json")" = true ]' \
 	'echo "claude $(c2pid): $(wrapof "$(c2pid)")"'
+# A new release while sbuser2's dashboard runs (the machine's units, from setup): it exits by
+# itself and the next request starts it from the new release (asc/dash.py). Its config, and the
+# test's tailscale and ip first on its PATH (tests/dash/bin), as in section 3.
+u2 sh -ec 'c=~/.config/agent-session-control d=~/.config/systemd/user/asctl-dash.service.d
+mkdir -p "$c" "$d"
+printf "{\"login\": \"%s\", \"host\": \"%s\"}\n" "$1" "$2" > "$c/dash.json"; chmod 600 "$c/dash.json"; chmod 700 "$c"
+printf "%s\n" "[Service]" "Environment=PATH=/opt/asc/tests/dash/bin:/usr/bin:/bin" > "$d/test.conf"
+systemctl --user daemon-reload' _ "$LOGIN" "$HOST" >/dev/null 2>&1
+d2ver() { u2 sh -c 'curl -s -m 10 --unix-socket "$1/asctl/dash.sock" -H "Tailscale-User-Login: $2" -H "Host: localhost" -H "X-Forwarded-Host: $3" -H "X-Forwarded-For: 192.0.2.10" http://x/api/state | jq -r ".version // empty"' _ "$R2" "$LOGIN" "$HOST"; }
+V=$(x cat /opt/asc/asc/VERSION)
+chk "sbuser2's dashboard (the machine's units) runs the installed release" \
+	'[ "$(d2ver)" = "$V (release ${REL#releases/})" ] && [ "$(u2prop asctl-dash.service ActiveState)" = active ]' \
+	'echo "version $(d2ver), $(u2prop asctl-dash.service ActiveState)"'
+inv1=$(u2prop asctl-dash.service InvocationID)
+RELN=$(up 4)
+chk "a new release installed: that dashboard exits by itself, cleanly, and the next request starts it from the new one" \
+	'[ "$RELN" != "$REL" ] && wait_for 15 "[ \"\$(u2prop asctl-dash.service ActiveState)\" = inactive ]" && [ "$(u2prop asctl-dash.service Result)" = success ] && [ "$(d2ver)" = "$V (release ${RELN#releases/})" ] && [ "$(u2prop asctl-dash.service InvocationID)" != "$inv1" ]' \
+	'echo "$RELN: $(u2prop asctl-dash.service ActiveState) $(u2prop asctl-dash.service Result), version $(d2ver)"'
+x sed -i '/^# upgrade 4$/d' /opt/asc/asc/events.py; x /opt/asc/install.sh >/dev/null 2>&1
+chk "  back to this checkout's release, the dashboard with it" \
+	'[ "$(x readlink $OPT/current)" = "$REL" ] && wait_for 15 "[ \"\$(d2ver)\" = \"$V (release ${REL#releases/})\" ]"' \
+	'echo "$(x readlink $OPT/current), version $(d2ver)"'
 u2 env ASC_MEMINFO="$H2/meminfo" python3 -I -c 'import sys, time; sys.path.insert(0, "/opt/asc"); from asc import memory, registry
 s = memory.sample(); now = int(time.time())
 registry.write_private(registry.state_dir() + "/memory.json", [dict(s, t=now - 30 * i) for i in range(12, -1, -1)])'

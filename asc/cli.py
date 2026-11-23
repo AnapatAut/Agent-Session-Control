@@ -81,9 +81,15 @@ def version():
             v = f.read(64).strip()
     except (OSError, UnicodeDecodeError):
         v = ""
-    rel = os.path.basename(HERE)
-    installed = re.fullmatch(r"[0-9a-f]{12}", rel) and os.path.basename(os.path.dirname(HERE)) == "releases"
-    return (v if VERSION_RE.fullmatch(v) else "unknown") + (f" (release {rel})" if installed else " (checkout)")
+    rel = release(HERE)
+    return (v if VERSION_RE.fullmatch(v) else "unknown") + (f" (release {rel})" if rel else " (checkout)")
+
+
+def release(here):
+    """The release id of the code in folder here when it is a machine install's release folder
+    (releases/<12 hex>, as install.sh names it), else None (a checkout)."""
+    rel = os.path.basename(here)
+    return rel if re.fullmatch(r"[0-9a-f]{12}", rel) and os.path.basename(os.path.dirname(here)) == "releases" else None
 
 
 def out(*a):

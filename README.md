@@ -44,7 +44,7 @@ own (a folder or `/usr/local/bin/asctl` it did not make, a unit file it did not 
 file changed since: keep a change in a drop-in, `<unit>.d/`), when the folder is not a whole
 release (one of its six unit files, or `asc/VERSION`, missing), when the code does not compile
 or start, or when a release it would use again has changed. It says the version it installed
-(`asctl 1.1.0: /usr/local/bin/asctl`) and, when it changed, the one before (`version 1.1.0 ->
+(`asctl 1.2.0: /usr/local/bin/asctl`) and, when it changed, the one before (`version 1.1.0 ->
 1.2.0`; an older one is installed too, said so: a rollback is one command). Every write is
 flushed to disk and renamed into place, every delete renames first: an install or uninstall
 stopped at any point (a kill, Ctrl-C) is finished by running it again, with no `--force`. Users'
@@ -56,9 +56,12 @@ every file in its `asc/`, `bin/` and `systemd/` goes into the release), then run
 ./install.sh` again from it. The same code is the same release ("installed already": only its
 marker is written again). Users keep their favorites, settings and event log, and run nothing
 unless the installer says the units changed: then each user who has it set up runs `systemctl
---user daemon-reload`. A running dashboard keeps the old code until it next starts (after 10
+--user daemon-reload`. A running dashboard moves to the new release by itself: once no action
+runs, it answers what it took and exits, the next request starts it from the new release (one
+sent meanwhile waits), and an open page loads again once no sheet or question is open on it.
+A dashboard started from a release before 1.2.0 keeps its code until it next starts (after 10
 minutes with no request, so not while a page is in view; or `systemctl --user restart
-asctl-dash.service`).
+asctl-dash.service`). Run from a checkout, it never moves.
 
 **Each user** who wants it then runs, as themselves, in a login session of their own (not as
 root, not through `sudo -u` or `su`: it needs that user's systemd manager):
@@ -133,7 +136,7 @@ starts again as new on the same session id (`--session-id`), as `--resume` would
 A claude that ends at once is said in seconds, with its exit code (on stderr: the page shows it).
 
 ```bash
-asctl --version             # asctl 1.1.0 (release <id>): asc/VERSION and the release it runs
+asctl --version             # asctl 1.2.0 (release <id>): asc/VERSION and the release it runs
                             # from, or (checkout); the dashboard's Settings says the same
 asctl live                  # running claudes: pid, session id, tmux session, folder
 asctl fav 12345 --name das  # favorite one (by pid, session id or pane %N); its tmux session becomes das-0421

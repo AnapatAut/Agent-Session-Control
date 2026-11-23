@@ -37,8 +37,17 @@ and what a reader such as serve-dash lists; 1 to 24 ASCII letters, digits, ".", 
 single spaces between words. Without it: "Sessions" on the home screen, "Agent Session Control"
 elsewhere. A phone shows a new name once the app is added to it again.
 The server exits after --idle seconds without an allowed request (systemd starts it again on
-the next), once no action is running; on SIGTERM it waits up to 100 s for running actions. The page token
-is kept in the socket's folder (0600), so a page left open still works after a restart.
+the next), once no action is running; on SIGTERM it waits up to 100 s for running actions and the
+requests it took. The page token is kept in the socket's folder (0600), so a page left open
+still works after a restart.
+
+A new release: run from a machine install (releases/<12 hex>) on the socket systemd passes, the
+server looks each second where install.sh's current link points. Once that is another whole
+release, and no action runs, it takes no new request, answers the ones it took and exits:
+systemd starts it again from the new release at the next request (one sent meanwhile waits on
+systemd's socket). The page, which carries the version of the server that sent it, then loads
+again (asc/web/app.js). From a checkout, or without systemd's socket, it keeps its code until
+it next starts.
 """
 import fcntl
 import hmac
@@ -64,7 +73,7 @@ from . import boot, cli, events, icons, live, memory, past, registry, tmuxctl
 from .registry import RegistryError
 
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
-VERSION = cli.version()  # this server's own code: a dashboard keeps it until it next starts
+VERSION = cli.version()  # this server's own code, kept until it exits (for a new release too: serve())
 STATIC = {"/app.js": "application/javascript", "/splash.js": "application/javascript", "/app.css": "text/css"}
 MAX_BODY = 4096
 WEB_MODES = ("auto", "manual")
@@ -120,8 +129,9 @@ def refused_page(name):
 
 
 def page(text, token, name):
-    """index.html filled in: the page token, the icon version, the app's name (escaped)."""
-    return (text.replace("@TOKEN@", token).replace("@V@", ICON_VER)
+    """index.html filled in: the page token, the icon version, the server's version, the app's
+    name (escaped)."""
+    return (text.replace("@TOKEN@", token).replace("@V@", ICON_VER).replace("@VERSION@", html.escape(VERSION))
             .replace("@LABEL@", html.escape(name or LABEL)).replace("@TITLE@", html.escape(name or TITLE)))
 
 
@@ -713,7 +723,7 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
     def __init__(self, cfg, token, sock=None, path=None):
         self.cfg, self.token, self.last = cfg, token, time.monotonic()
         self.manifest, self.refused = manifest(cfg["name"]), refused_page(cfg["name"])
-        self.actions, self.running = threading.Condition(), 0
+        self.actions, self.running, self.taken = threading.Condition(), 0, 0
         socketserver.TCPServer.__init__(self, path, Handler, bind_and_activate=sock is None)
         if sock is not None:
             self.socket.close()
@@ -726,9 +736,46 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
     def touch(self):
         self.last = time.monotonic()
 
-    def wait_actions(self, timeout):
+    # Every request taken, counted from before its thread starts until it ends: an exit waits for
+    # them (a page load cut off by an exit would fail in the browser, while one not yet taken
+    # waits on systemd's socket for the next server).
+    def process_request(self, request, client_address):
         with self.actions:
-            self.actions.wait_for(lambda: self.running == 0, timeout)
+            self.taken += 1
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._done()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._done()  # its thread ends
+
+    def _done(self):
+        with self.actions:
+            self.taken -= 1
+            self.actions.notify_all()
+
+    def wait_actions(self, timeout):
+        """Until no action runs and every request taken is answered, at most timeout s."""
+        with self.actions:
+            self.actions.wait_for(lambda: self.running == 0 and self.taken == 0, timeout)
+
+
+def release_moved(here):
+    """The id of the release install.sh's current link points at, when it is another whole one
+    than here (a machine install's release folder, as bin/asctl gives it: links resolved): a
+    release folder beside it with bin/asctl. Else None (no current link, one that points
+    elsewhere or at this release)."""
+    releases = os.path.dirname(here)
+    new = os.path.realpath(os.path.join(os.path.dirname(releases), "current"))
+    if (new == here or os.path.dirname(new) != releases or not cli.release(new)
+            or not os.path.isfile(os.path.join(new, "bin", "asctl"))):
+        return None
+    return os.path.basename(new)
 
 
 def systemd_socket():
@@ -815,9 +862,20 @@ def serve(sock_path=None, idle=600):
         srv = Server(cfg, token, sock=sock)
     # SIGTERM (systemctl stop) ends the loop like the idle exit, so the socket file is removed.
     signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=srv.shutdown, daemon=True).start())
-    if idle:
+    # A new release is followed only from systemd's socket: it holds the requests that come while
+    # this server exits and starts the next; without it the dashboard would be gone.
+    follow = sock is not None and cli.release(cli.HERE) is not None
+    if idle or follow:
         def watch():
-            while time.monotonic() - srv.last < idle or srv.running:
+            while True:
+                if not srv.running:
+                    if idle and time.monotonic() - srv.last >= idle:
+                        break
+                    new = release_moved(cli.HERE) if follow else None
+                    if new:
+                        print(f"asctl dash: release {new} installed: exiting, the next request starts it",
+                              file=sys.stderr, flush=True)
+                        break
                 time.sleep(1)
             srv.shutdown()
         threading.Thread(target=watch, daemon=True).start()

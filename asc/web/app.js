@@ -4,6 +4,9 @@
 // Every value from the server is user text (titles, folders): it is set as textContent only.
 "use strict";
 const token = document.querySelector('meta[name="asctl-token"]').content;
+// The version of the server that sent this page (asctl --version's): followRelease() below.
+let pageVer = pageVersion(document);
+function pageVersion(doc) { const m = doc.querySelector('meta[name="asctl-version"]'); return m && typeof m.content === "string" ? m.content : ""; }
 const $ = (id) => document.getElementById(id);
 const STALE_MS = 20000;  // no good update for this long: the warning triangle
 const WATCH_LATE_S = 300;  // the watcher runs every 30 s: no run for this long, and it has stopped
@@ -579,8 +582,35 @@ async function refresh() {
     lastOkTime = new Date();
     render();  // outside the try: a bug here shows in the console, never as "not updating"
     if (sheetOf && sheetOf.kind === "fav" && S.events_v !== histV) loadHist(sheetOf.key);  // only when the log changed
+    followRelease();
   }
   staleCheck();
+}
+
+// A new release installed: the server came back with it (asc/dash.py), so the state says another
+// version than this page's. The page loads again, once: only while no sheet, question or action
+// is open and nothing is in the search box (a name or search typed, an answer awaited would be
+// lost; the next update tries again), and only once the page answers (a server that fails to
+// start leaves this page as it is, its triangle saying so). Once per version (sessionStorage;
+// without it, one server answers, so no loop). Gives a promise: whether it loads again.
+let reloading = false;
+function searching() { const q = $("q"); return !!q && typeof q.value === "string" && q.value !== ""; }
+async function followRelease() {
+  const v = S && S.version;
+  if (reloading || !pageVer || typeof v !== "string" || !v || v === pageVer || sheetOf || pending.size || ask.cancel || searching()) return false;
+  try { if (sessionStorage.getItem("asc-reloaded") === v) return false; } catch (e) { /* no storage */ }
+  reloading = true;
+  try {
+    const r = await fetch(location.href, { cache: "no-store" });
+    if (!r.ok) return false;
+    try { sessionStorage.setItem("asc-reloaded", v); } catch (e) { /* no storage */ }
+    location.reload();
+    return true;
+  } catch (e) {
+    return false;  // the network: the next update tries again
+  } finally {
+    reloading = false;
+  }
 }
 
 // The auto-restart setting (its own function: draw() has an act of its own, the active rows).

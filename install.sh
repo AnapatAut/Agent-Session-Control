@@ -367,6 +367,6 @@ Nothing is enabled for anyone. Each user who wants asctl runs, as themselves:
   asctl setup
 EOF
 [ ${#wrote[@]} = 0 ] || echo "Users who have it set up: systemctl --user daemon-reload (the units changed)."
-[ -z "$prev" ] || [ "$prev" = "releases/$id" ] || echo "Running dashboards keep the old code until they next start (after 10 idle minutes)."
+[ -z "$prev" ] || [ "$prev" = "releases/$id" ] || echo "Running dashboards move to it by themselves (one started from before 1.2.0: at its next start, after 10 idle minutes)."
 exit
 }
