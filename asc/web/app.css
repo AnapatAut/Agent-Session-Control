@@ -155,14 +155,7 @@ h1 { font-size: 26px; line-height: 31px; font-weight: 700; margin: 0; letter-spa
 .search { display: block; width: 100%; border: 2px solid var(--line); border-radius: 14px; padding: 11px 14px; font: inherit;
           font-size: 16px; background: var(--card); color: var(--ink); outline: none; margin-bottom: 10px; }
 .search:focus { border-color: var(--blue); }
-details.top { margin-top: 22px; }
-details.top summary { font-size: 16px; font-weight: 700; cursor: pointer; list-style: none; display: flex; gap: 8px; align-items: center; }
-details.top summary::-webkit-details-marker { display: none; }
-details.top summary::after { content: "›"; color: var(--faint); font-size: 20px; transition: transform .15s; }
-details.top[open] summary::after { transform: rotate(90deg); }
-.procs { margin-top: 10px; }
 .proc { display: flex; justify-content: space-between; gap: 12px; padding: 9px 16px; border-top: 1px solid var(--line); font-size: 13px; }
-.proc:first-child { border-top: 0; }
 
 @media (max-width: 760px) {
   /* the date is too long beside the title: its own line under the host; the login stays top right */
@@ -238,7 +231,6 @@ html.locked, html.locked body { overflow: hidden; }
 .opt { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--line); }
 .opt:first-child { border-top: 0; }
 .opt .t { font-size: 14px; font-weight: 600; } .opt .d { font-size: 12px; color: var(--mute); margin-top: 1px; }
-details.top .opts { background: var(--card); margin-top: 10px; }
 /* a favorite's history in its sheet: by day, newest first */
 .lab .n { color: var(--faint); }
 .hist { background: var(--well); border-radius: 18px; overflow: hidden; }

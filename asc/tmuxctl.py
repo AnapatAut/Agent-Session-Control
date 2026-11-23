@@ -142,10 +142,6 @@ def capture(name):
     return r.stdout if r.returncode == 0 else ""
 
 
-def send_key(name, key):
-    return run("send-keys", "-t", "=" + name + ":", key)
-
-
 # By pane id (%N): one exact pane, never the session's active one by chance.
 def capture_pane(pane, escapes=False):
     r = run("capture-pane", "-p", *(["-e"] if escapes else []), "-t", pane)

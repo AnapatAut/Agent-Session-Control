@@ -415,14 +415,14 @@ def _snapshot(tmux_error=""):
         fav_tmux.add(e["tmux"])
         favs.append({
             "id4": e["id4"], "name": e["name"], "tmux": e["tmux"], "cwd": e["cwd"],
-            "session_id": e.get("session_id"), "rc": bool(e.get("rc")), "rc_title": e.get("rc_title") or "",
+            "session_id": e.get("session_id"), "rc": bool(e.get("rc")),
             "rc_live": bool(s and s["rc"]), "claude_name": s["name"] if s else "",  # its name since it started
             "claude_name_kept": bool(s and s["peer_name"]),  # one a restart does not change
             "mode": e.get("mode", "auto"), "resurrect": bool(e.get("resurrect")),
             # the mode claude runs in now (else last ran in), and what a start would use
             "mode_used": cli.mode_now(s) if s else cli.last_mode(e["session_id"]) if e.get("session_id") else None,
             "mode_next": cli.start_mode(e),
-            "want_on": bool(e.get("want_on")), "note": e.get("note") or "",
+            "note": e.get("note") or "",
             "last_on": e.get("last_on"), "last_off": e.get("last_off"), "state": st,
             # what Claude Code asks, while its start left its claude at a prompt other than trust
             "prompt": cli.prompt_title(tmuxctl.capture(e["tmux"])) if st == "waiting at a prompt" else "",
