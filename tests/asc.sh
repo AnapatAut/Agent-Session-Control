@@ -1934,6 +1934,16 @@ out=$(su2 --yes); rc=$?
 [ "$rc" = 0 ] && [ "$(cat "$R2")" = '{not json' ] && ! seen "auto-restart" <<<"$out" \
 	&& ok "setup with a registry that cannot be read: auto-restart left alone (the registry untouched)" || bad "setup with a registry that cannot be read: auto-restart left alone (the registry untouched)" "unreadable: rc $rc $(cat "$R2") $out"
 su2 --remove --yes >/dev/null; rm "$R2"
+# Listing the enabled services: a real failure (a message) refuses; none enabled (systemd 255 says
+# that with exit 1 and no output) is no failure (issue #1)
+: > "$F2/fail-list-unit-files"; out=$(su2 --yes); rc=$?; rm "$F2/fail-list-unit-files"
+[ "$rc" = 1 ] && seen "systemctl --user list-unit-files: Failed to list unit files: Access denied" <<<"$out" && ! en asctl-tmux.service && en tmux.service \
+	&& ok "setup, listing the enabled services failing: refused, its message said, nothing changed" || bad "setup, listing the enabled services failing: refused, its message said, nothing changed" "list fails: rc $rc $out"
+mkdir -p "$T/en-kept"; mv "$F2"/enabled/*.service "$T/en-kept/"
+out=$(su2 --yes); rc=$?
+[ "$rc" = 0 ] && en asctl-tmux.service && en asctl-dash.socket && ! seen "disable" <<<"$out" && ! [ -e "$SJ" ] \
+	&& ok "setup with no user service enabled (listed as none, exit 1): set up, nothing to disable" || bad "setup with no user service enabled (listed as none, exit 1): set up, nothing to disable" "none enabled: rc $rc $out"
+su2 --remove --yes >/dev/null; mv "$T/en-kept"/* "$F2/enabled/"; rm -f "$R2"
 ud() { HOME="$H2" XDG_CONFIG_HOME="$1" python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import setup; print(setup.unit_dir())' "$REPO"; }
 [ "$(ud "$T/shellcfg")" = "$H2/.config/systemd/user" ] && echo "XDG_CONFIG_HOME=$H2/mgrcfg" > "$F2/environment" && [ "$(ud "$T/shellcfg")" = "$H2/mgrcfg/systemd/user" ] \
 	&& ok "the unit folder follows the manager's XDG_CONFIG_HOME, not the shell's" || bad "the unit folder follows the manager's XDG_CONFIG_HOME, not the shell's" "unit_dir: $(ud "$T/shellcfg")"

@@ -8,7 +8,9 @@
 # disable (enabled for every user); $F/environment is the manager's environment, and
 # fail-show-environment makes it not answer. show -p LoadState|ExecStart|ActiveState --value,
 # show-environment, list-unit-files --state=enabled --type=service --no-legend (no template
-# instances, as systemd lists them), is-enabled, enable, disable, start, stop, daemon-reload.
+# instances, as systemd lists them; none: exit 1 and no output, as systemd 255;
+# fail-list-unit-files makes it fail with a message), is-enabled, enable, disable, start, stop,
+# daemon-reload.
 echo "$*" >> "$HOME/systemctl.log"
 if [ "$*" = "--user start asctl-tmux.service" ] && ! [ -e "$HOME/fake-units/asctl-tmux.service" ]; then
 	if [ -e "$HOME/fake-systemctl-fail" ]; then
@@ -37,11 +39,13 @@ show)
 	esac ;;
 list-unit-files)
 	[ "$*" = "--state=enabled --type=service --no-legend" ] || { echo "fake systemctl: not faked: list-unit-files $*" >&2; exit 1; }
+	[ -e "$F/fail-list-unit-files" ] && { echo "Failed to list unit files: Access denied" >&2; exit 1; }
+	n=0
 	for e in "$F"/enabled/*.service; do
 		case ${e##*/} in *@?*.service) continue ;; esac
-		[ -e "$e" ] && echo "$(basename "$e") enabled enabled"
+		[ -e "$e" ] && echo "$(basename "$e") enabled enabled" && n=$((n + 1))
 	done
-	exit 0 ;;
+	[ "$n" -gt 0 ] ;;  # none listed: exit 1 with no message, as systemd 255
 show-environment)
 	[ -e "$F/fail-show-environment" ] && { echo "Failed to connect to bus: No medium found" >&2; exit 1; }
 	cat "$F/environment" 2>/dev/null

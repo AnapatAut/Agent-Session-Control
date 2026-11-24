@@ -217,6 +217,9 @@ def runs_tmux(execstart):
 def tmux_units():
     """Enabled user services, other than asctl's, that run tmux."""
     r = _sc("list-unit-files", "--state=enabled", "--type=service", "--no-legend")
+    # With none enabled, systemd (255) lists nothing and exits 1, with no message: none, not a failure.
+    if r.returncode == 1 and not r.stdout.strip() and not r.stderr.strip():
+        return []
     if r.returncode != 0:
         raise RegistryError(f"systemctl --user list-unit-files: {(r.stderr or r.stdout).strip()}")
     names = []
