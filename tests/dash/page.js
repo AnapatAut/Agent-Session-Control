@@ -111,6 +111,32 @@ check("waiting at a prompt: needs attention, says what Claude Code asks and wher
   return l.group === "attention" && l.label === "Waiting at a prompt" && !isOn({ state: "waiting at a prompt" })
     && l.why === "Claude Code asks: “2 new MCP servers found in this project”. Answer it in its pane (tmux attach -t =fresh-0007); Off closes it."
     && n.why === "Its claude has not come up: Claude Code may ask something in its pane (tmux attach -t =fresh-0007); Off closes it."; })()`);
+check("ended, its tmux session up: Restart in tmux named, never Turn on", `(() => {
+  const a = look({ state: "ended by a signal (137), tmux up" }), b = look({ state: "tmux up, claude ended (0)" });
+  return a.label === "Ended unexpectedly" && b.label === "Claude ended" && b.why.startsWith("Claude ended (exit 0); its tmux session is still up.")
+    && [a, b].every((l) => l.group === "attention" && l.why.endsWith("Restart in tmux starts it there again; Off closes it.") && !/Turn it on/.test(l.why));
+})()`);
+check("a Duplicate: its conversation, not its name; Restart in tmux named", `(() => { const l = look({ state: "duplicate" });
+  return l.label === "Duplicate" && l.group === "attention" && !/its name/.test(l.why) && /Restart in tmux ends them all and starts one/.test(l.why); })()`);
+// restartActs with a tiny DOM of plain objects (tag, text, class, children), so what it shows is seen
+run(`var withDom = (f) => { const d = document; document = { createElement: (tag) => ({ tag, textContent: "", className: "", kids: [],
+  append(c) { this.kids.push(c); }, addEventListener() {} }) }; try { return f(); } finally { document = d; } };
+var domShown = (xs) => xs.map((x) => x.className.trim() + ":" + (x.textContent || x.kids.map((k) => k.textContent).join("|")));`);
+check("Restart in tmux of a Duplicate: a copy busy: a warning naming it, no button; all idle: the button", `(() => {
+  const ref = { id: "0009", tmux: "d-0009" };
+  const busy = withDom(() => domShown(restartActs({ tmux: "d-0009", copies: [{ pid: 1, where: "its tmux session d-0009", busy: "" },
+    { pid: 2, where: "tmux session x", busy: "its claude is working" }] }, ref, false, true, false)));
+  const idle = withDom(() => domShown(restartActs({ tmux: "d-0009", copies: [{ pid: 1, where: "a", busy: "" }, { pid: 2, where: "b", busy: "" }] }, ref, false, true, false)));
+  return JSON.stringify(busy) === JSON.stringify(["warn:Restart in tmux once every copy is idle: claude 2 in tmux session x: its claude is working."])
+    && JSON.stringify(idle) === JSON.stringify(["acts:Restart in tmux"])
+    && withDom(() => restartActs({ copies: null }, ref, false, true, false)).length === 0 || JSON.stringify([busy, idle]);
+})()`);
+check("Restart in tmux of one that ended: again empty (it can): the button; a reason: a warning and Off; not known: nothing", `(() => {
+  const ref = { id: "0009", tmux: "d-0009" }, at = (again, ended) => withDom(() => domShown(restartActs({ tmux: "d-0009", again }, ref, ended, false, false)));
+  const r = [at("", true), at("its tmux session has 2 panes", true), at(null, true), at("", false)];
+  return JSON.stringify(r) === JSON.stringify([["acts:Restart in tmux"],
+    ["warn:Restart in tmux is not possible: its tmux session has 2 panes. Off closes its tmux session; then turn it on."], [], []]) || JSON.stringify(r);
+})()`);
 check("unknown (tmux did not answer): needs attention, says nothing is changed", `(() => { const l = look({ state: "unknown" });
   return l.group === "attention" && l.label === "Unknown" && !isOn({ state: "unknown" })
     && l.why === "tmux did not answer, so whether it runs is not known. Nothing is changed until tmux answers."; })()`);

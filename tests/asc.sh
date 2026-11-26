@@ -1221,7 +1221,7 @@ seen "busy: its claude is working (its claude runs in a terminal outside tmux" <
 sfile "$tp" "$OS" "$(start_of "$tp")" ',"kind":"interactive","status":"idle"'
 tm new-session -d -s "outer-$ido" -- sleep 300
 o=$(errof restart "$ido"); tm kill-session -t "=outer-$ido"
-seen "is up without it: close that session first" <<<"$o" && kill -0 "$tp" && ok "restart refused: its tmux session is up without it (nothing ended)" || bad "restart refused: its tmux session is up without it (nothing ended)" "outside restart, session up: $o"
+seen "is up without it, where claude cannot start again (no exit record names its pane .*): close that session first$" <<<"$o" && kill -0 "$tp" && ok "restart refused: its tmux session is up without it (nothing ended)" || bad "restart refused: its tmux session is up without it (nothing ended)" "outside restart, session up: $o"
 asctl restart "$ido" >/dev/null 2>&1; r=$?
 pn=$(claude_in "outer-$ido") && [ $r = 0 ] && ! kill -0 "$tp" 2>/dev/null && seen "^pid=$pn .*--resume $OS" "$HOME/claude-args.log" \
 	&& ok "restart: the idle claude outside ended, and started in its tmux session on the same conversation" || bad "restart: the idle claude outside ended, and started in its tmux session on the same conversation" "outside restart: rc $r tp $tp pn $pn"
@@ -1280,6 +1280,119 @@ pn=$(claude_in "outer-$ido") && [ $r = 0 ] && ! kill -0 "$bp" 2>/dev/null && [ "
 	&& ok "restart of a background session: claude stop, then started in its tmux session" || bad "restart of a background session: claude stop, then started in its tmux session" "bg restart: rc $r pn $pn"
 asctl off "$ido" >/dev/null; asctl forget "$ido" >/dev/null
 [ "$(grep 'line: ' "$HOME/claude-args.log" | grep -vc 'line: /rename ')" = 0 ] && ok "outside: nothing but /rename ever reached a prompt" || bad "outside: nothing but /rename ever reached a prompt" "lines entered: $(grep 'line: ' "$HOME/claude-args.log")"
+}
+
+# A favorite rcp on in its tmux session (started by asctl), with a transcript (so a start resumes it): its session id
+# CS, its id idc, its claude pc; copy NAME starts another claude on the same conversation in tmux
+# session NAME (outside its own), its pid in cp.
+#   copies_setup <CS>
+copies_setup() {
+server_up
+CS=$1
+tm new-session -d -s rcp0 -c "$W" -- "$ASC_CLAUDE" --session-id "$CS"
+pc=$(claude_in rcp0) || stop "a claude in rcp0"
+mkdir -p "$HOME/.claude/projects/-x"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$CS" > "$HOME/.claude/projects/-x/$CS.jsonl"
+asctl fav "$pc" --name rcp >/dev/null || stop "a favorite of the claude in rcp0"
+idc=$(jq -r --arg s "$CS" '.entries[] | select(.session_id == $s) | .id4' "$REG")
+asctl off "$idc" >/dev/null; asctl on "$idc" >/dev/null  # its claude asctl's (asctl-wrap: its pane stays when it ends)
+pc=$(claude_in "rcp-$idc") || stop "its claude in rcp-<id>, started by asctl"
+}
+copy() { tm new-session -d -s "$1" -c "$W" -- "$ASC_CLAUDE" --resume "$CS"; cp=$(claude_in "$1") || stop "a copy of its conversation in another tmux session"; }
+holders() { "$REPO/bin/asctl" live | awk -v s="$CS" '$2 == s' | wc -l; }
+
+case_restart_copies() {
+copies_setup eeeeeeee-0000-4000-8000-0000000000c1
+echo "== restart of a Duplicate: every copy of its conversation ended, one started in its tmux session"
+copy cp1; p1=$cp
+touch "$HOME/fake-busy"; flagged
+o=$(errof restart "$idc")
+seen "^asctl: busy: claude $pc in its tmux session rcp-$idc: claude is working; claude $p1 in tmux session cp1: its claude is working; nothing was done$" <<<"$o" \
+	&& kill -0 "$pc" && kill -0 "$p1" && ok "a Duplicate with copies working: refused, each named (pid, where, why), none ended" || bad "a Duplicate with copies working: refused, each named (pid, where, why), none ended" "busy: $o"
+rm -f "$HOME/fake-busy"; flagged
+o=$(errof restart "$idc" --outside)
+seen "two or more claudes hold its conversation: asctl restart without --outside ends them all" <<<"$o" && kill -0 "$p1" \
+	&& ok "restart --outside of a Duplicate: refused, none ended" || bad "restart --outside of a Duplicate: refused, none ended" "outside dup: $o"
+o=$(errof restart "$idc" --expect ended)
+seen "it changed since the page showed it: now two or more claudes hold its conversation; nothing was done" <<<"$o" && kill -0 "$pc" && kill -0 "$p1" \
+	&& ok "restart --expect: another state now: refused, none ended" || bad "restart --expect: another state now: refused, none ended" "expect: $o"
+o=$(asctl restart "$idc" --expect duplicate 2>&1); r=$?
+pn=$(claude_in "rcp-$idc") && [ $r = 0 ] && ! kill -0 "$pc" 2>/dev/null && ! kill -0 "$p1" 2>/dev/null && [ "$(holders)" = 1 ] && seen "^pid=$pn .*--resume $CS" "$HOME/claude-args.log" \
+	&& ok "a Duplicate (one copy in its tmux session, one outside): both ended, one started in its tmux session (--resume)" || bad "a Duplicate (one copy in its tmux session, one outside): both ended, one started in its tmux session (--resume)" "dup restart: rc $r $o / holders $(holders)"
+[ "$(jq -r --arg i "$idc" '.entries[$i].want_on' "$REG")" = true ] && seen "claude $p1 in tmux session cp1 ended, to start again in its tmux session" "$SD/events.jsonl" \
+	&& ok "a Duplicate restarted: marked on, the copy outside logged as ended where it ran" || bad "a Duplicate restarted: marked on, the copy outside logged as ended where it ran" "dup events: $(tail -4 "$SD/events.jsonl")"
+asctl off "$idc" >/dev/null; copy cp2; p2=$cp; copy cp3; p3=$cp
+o=$(asctl restart "$idc" 2>&1); r=$?
+pn=$(claude_in "rcp-$idc") && [ $r = 0 ] && ! kill -0 "$p2" 2>/dev/null && ! kill -0 "$p3" 2>/dev/null && [ "$(holders)" = 1 ] \
+	&& ok "a Duplicate of two copies outside, none in its tmux session: both ended, one started there" || bad "a Duplicate of two copies outside, none in its tmux session: both ended, one started there" "two outside: rc $r $o / holders $(holders)"
+# a copy that does not end on SIGTERM: what ended before it is said; the one in its tmux session is left
+copy cp4; p4=$cp
+printf '%s\n' 'trap "" TERM' 'sleep 300 & wait; wait' > "$T/hold.sh"
+( exec -a claude "$FAKE_BASH" "$T/hold.sh" ) >/dev/null 2>&1 & ph=$!; sleep 0.3
+sfile "$ph" "$CS" "$(start_of "$ph")" ',"kind":"interactive","status":"idle"'
+o=$(errof restart "$idc")
+seen "^asctl: claude $p4 in tmux session cp4 ended; then claude $ph in a process outside tmux, with no terminal.* still runs 15 s later; nothing was started$" <<<"$o" \
+	&& ! kill -0 "$p4" 2>/dev/null && [ "$(claude_now "rcp-$idc")" = "$pn" ] && last failed | seen "restart: claude $p4 in tmux session cp4 ended; then" \
+	&& ok "a copy that does not end: stopped there, what ended said and logged as failed, its claude in tmux left running" || bad "a copy that does not end: stopped there, what ended said and logged as failed, its claude in tmux left running" "hold: $o / $(last failed)"
+kill -KILL "$ph" 2>/dev/null; wait "$ph" 2>/dev/null; rm -f "$HOME/.claude/sessions/$ph.json"
+# one copy outside while its tmux session is up without its claude: claude again in that pane
+pane=$(tm list-panes -t "=rcp-$idc:" -F '#{pane_id}'); kill -KILL "$pn"
+# shellcheck disable=SC2329  # called by poll
+gone_pn() { ! kill -0 "$pn" 2>/dev/null; }
+poll 5 gone_pn || stop "its claude ended"
+copy cp5; p5=$cp
+o=$(asctl restart "$idc" 2>&1); r=$?
+pn=$(claude_in "rcp-$idc") && [ $r = 0 ] && ! kill -0 "$p5" 2>/dev/null && [ "$(tm list-panes -t "=rcp-$idc:" -F '#{pane_id}')" = "$pane" ] \
+	&& ok "a claude outside, its tmux session up without it: ended, claude again in that session's pane" || bad "a claude outside, its tmux session up without it: ended, claude again in that session's pane" "outside + ended: rc $r $o"
+asctl off "$idc" >/dev/null; asctl forget "$idc" >/dev/null
+}
+
+case_restart_ended() {
+copies_setup eeeeeeee-0000-4000-8000-0000000000c2
+echo "== restart of a claude that ended with its tmux session up: claude again in its pane"
+pane=$(tm list-panes -t "=rcp-$idc:" -F '#{pane_id}')
+kill -INT "$pc"
+# shellcheck disable=SC2329  # called by poll
+nended0() { asctl list | seen -E "^$idc  rcp-$idc +tmux up, claude ended \(0\)"; }
+poll 5 nended0 || stop "its claude ended with exit 0, its tmux session up"
+o=$(errof on "$idc"); seen "tmux session 'rcp-$idc' already exists" <<<"$o" && ok "on of a claude that ended (exit 0), its tmux session up: refused, as before" || bad "on of a claude that ended (exit 0), its tmux session up: refused, as before" "on: $o"
+o=$(errof restart "$idc" --expect outside)
+seen "it changed since the page showed it: now claude ended, its tmux session up; nothing was done" <<<"$o" && ok "restart --expect outside of one that ended: refused" || bad "restart --expect outside of one that ended: refused" "expect: $o"
+o=$(errof restart "$idc" --outside); seen "no claude of it runs outside 'rcp-$idc'" <<<"$o" && ! claude_now "rcp-$idc" >/dev/null 2>&1 \
+	&& ok "restart --outside of one that ended: refused, nothing started" || bad "restart --outside of one that ended: refused, nothing started" "outside: $o"
+tm split-window -t "$pane"
+o=$(errof restart "$idc"); seen "claude cannot start again in tmux session 'rcp-$idc': its tmux session has 2 panes; nothing was done (Off closes that session, then On starts it)" <<<"$o" \
+	&& ok "restart refused: its tmux session has two panes" || bad "restart refused: its tmux session has two panes" "two panes: $o"
+tm kill-pane -t "$(tm list-panes -t "=rcp-$idc:" -F '#{pane_id}' | grep -vxF "$pane")"
+tm copy-mode -t "$pane"
+o=$(errof restart "$idc"); seen -xF "asctl: claude cannot start again in tmux session 'rcp-$idc': its pane is in copy mode (someone is reading it); nothing was done (Off closes that session, then On starts it)" <<<"$o" && ok "restart refused: its pane in copy mode" || bad "restart refused: its pane in copy mode" "copy mode: $o"
+tm send-keys -t "$pane" -X cancel
+mv "$SD/exit/$idc" "$T/exit-$idc"
+o=$(errof restart "$idc"); seen "no exit record names its pane (its claude was not started there by asctl)" <<<"$o" && ok "restart refused: no exit record names its pane" || bad "restart refused: no exit record names its pane" "no record: $o"
+mv "$T/exit-$idc" "$SD/exit/$idc"
+mem 32000000 1000000
+o=$(errof restart "$idc"); seen "^asctl: memory: .* (asctl restart $idc --force-memory starts it anyway)$" <<<"$o" && ! claude_now "rcp-$idc" >/dev/null 2>&1 \
+	&& ok "restart past memory: refused, the command that forces it named" || bad "restart past memory: refused, the command that forces it named" "memory: $o"
+o=$(asctl restart "$idc" --expect ended --force-memory 2>&1); r=$?
+mem 32000000 16000000
+pn=$(claude_in "rcp-$idc") && [ $r = 0 ] && [ "$(tm list-panes -t "=rcp-$idc:" -F '#{pane_id}')" = "$pane" ] && seen "^pid=$pn .*--resume $CS" "$HOME/claude-args.log" \
+	&& last on | seen "past the memory gate" && last restart | seen "restarted: rcp-$idc (same conversation)" \
+	&& ok "restart of one that ended (exit 0): claude again in the same pane, on the same conversation (forced past memory)" || bad "restart of one that ended (exit 0): claude again in the same pane, on the same conversation (forced past memory)" "ended restart: rc $r $o"
+kill -KILL "$pn"
+# shellcheck disable=SC2329  # called by poll
+gone_pn() { ! kill -0 "$pn" 2>/dev/null; }
+poll 5 gone_pn || stop "its claude killed"
+# shellcheck disable=SC2329  # called by poll
+nended9() { asctl list | seen -E "^$idc  rcp-$idc +ended by a signal \(137\), tmux up"; }
+poll 5 nended9 || stop "its claude ended by a signal"
+o=$(asctl restart "$idc" --expect ended 2>&1); r=$?
+pn=$(claude_in "rcp-$idc") && [ $r = 0 ] && [ "$(tm list-panes -t "=rcp-$idc:" -F '#{pane_id}')" = "$pane" ] \
+	&& ok "restart of one ended by a signal (137): claude again in the same pane" || bad "restart of one ended by a signal (137): claude again in the same pane" "137 restart: rc $r $o"
+kill -INT "$pn"; poll 5 nended0 || stop "its claude ended again"
+o=$(asctl off "$idc" 2>&1); r=$?
+[ $r = 0 ] && ! tm has-session -t "=rcp-$idc" 2>/dev/null && [ "$(jq -r --arg i "$idc" '.entries[$i].want_on' "$REG")" = false ] \
+	&& ok "off of one that ended: its tmux session closed, marked off (the page's power button there)" || bad "off of one that ended: its tmux session closed, marked off (the page's power button there)" "off: rc $r $o"
+asctl forget "$idc" >/dev/null
 }
 
 case_watcher_memory() {
@@ -2271,7 +2384,7 @@ kill -CONT "$srv"
 asctl forget "$idq" >/dev/null
 }
 
-run_cases asc no_tmux_server version main shared_stale guards on_gates new_session rc_now rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot asctl_setup trust_watch mcp_prompt off_survivor shell_start tmux_silent
+run_cases asc no_tmux_server version main shared_stale guards on_gates new_session rc_now rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg restart_copies restart_ended watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot asctl_setup trust_watch mcp_prompt off_survivor shell_start tmux_silent
 
 echo "asc: $pass passed, $fail failed"
 [ "$fail" = 0 ]

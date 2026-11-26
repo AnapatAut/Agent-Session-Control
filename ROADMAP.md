@@ -10,7 +10,9 @@ Built:
   remote-control setting and permission mode, refreshed as it runs (`asctl`).
 - **On and off.** Off: the agent exits and its tmux session closes. On: a new tmux session in
   its folder, with the same conversation resumed. A busy session is not turned off unless
-  forced. Rename works while it runs; a restart only while it is idle.
+  forced. Rename works while it runs; a restart only while it is idle. Restart in tmux brings
+  a favorite back to one claude in its own tmux session: one that runs elsewhere, two or more
+  holding its conversation, or one that ended with its tmux session still up.
 - **Restore per session.** After a reboot, only favorites that were on and have resurrect on come
   back, one at a time (`asctl-boot.service`), with no login needed (`asctl setup` turns linger
   on). tmux-resurrect and tmux-continuum are not needed (setup refuses while continuum's

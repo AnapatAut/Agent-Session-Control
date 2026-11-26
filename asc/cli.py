@@ -18,10 +18,16 @@
   asctl rename ID NAME [--restart] a new name (the tmux session too, if it runs); a running
                                    claude, when idle, gets /rename NAME, also its claude.ai title
                                    (--restart: restart it instead)
-  asctl restart ID [--outside]     off and on again on the same conversation, only when its
-                                   claude is idle and runs no command or subagent; one that runs
-                                   outside its tmux session (a terminal, a Claude Code background
-                                   session) is moved into it (--outside: only that, the page's)
+  asctl restart ID [--outside] [--expect STATE] [--force-memory]
+                                   its claude once, in its tmux session, on the same conversation,
+                                   only when every claude of it is idle and runs no command or
+                                   subagent: off and on again; one that runs outside its tmux
+                                   session (a terminal, a Claude Code background session) moved
+                                   into it (--outside: only that); two or more holding its
+                                   conversation (a Duplicate): all ended, one started; a claude
+                                   that ended with its tmux session up: started again in its
+                                   pane. --expect on|outside|duplicate|ended: refused unless it
+                                   is still in that state (the page's)
   asctl mode ID auto|manual|skip   permission mode when its transcript names none; a start
                                    follows the mode the conversation last ran in, whichever it
                                    is (shift+tab carries over)
@@ -807,7 +813,7 @@ def ensure_server():
     return pid
 
 
-def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, resurrect=False, new=False):
+def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, resurrect=False, new=False, again=None):
     """On, with the entry's lock held. pane, pane_pid: a pane %N of the entry's own tmux session
     whose claude ended, and the PID asctl-wrap left there (the watcher's restart): claude runs
     there again in place of its shell (the session and anyone attached stay), after the same
@@ -815,7 +821,8 @@ def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, r
     resurrect: asctl boot's start (with rc when resurrect is on, as claude_argv says). A claude
     that Claude Code asks whether to trust its folder is left waiting at that prompt, the entry
     marked (awaiting_trust): asctl trust answers it. new: the start of a favorite just made (asctl
-    new): its prompt for new MCP servers is answered, none used (wait_started)."""
+    new): its prompt for new MCP servers is answered, none used (wait_started). again: the
+    command that starts it past the memory gate (asctl on ID --force-memory by default)."""
     e = registry.find(registry.load(), id4)
     if pane is not None:
         server = tmuxctl.server_pid()  # a pane to start in: its server, never a new one
@@ -840,7 +847,7 @@ def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, r
     if not force_memory:
         why = memory.gate(e.get("rss_kb"))
         if why:
-            raise RegistryError(f"{why} (asctl on {e['id4']} --force-memory starts it anyway)")
+            raise RegistryError(f"{why} ({again or 'asctl on ' + e['id4'] + ' --force-memory'} starts it anyway)")
     with registry.changing() as data:
         e = registry.find(data, e["id4"])
         e["want_on"], e["last_on"] = True, registry.now()
@@ -1041,18 +1048,93 @@ def _off(id4, force, loud=True):
     return 0
 
 
-def _restart(id4, outside=False):
-    """Off and on again, on the same conversation (its session id), so claude takes
-    up a new name and rc title. Only when its claude is idle and runs nothing: no command, also
-    none in the background, and no subagent (live.busy_reason). A claude of the entry that runs
-    outside its tmux session is moved into it (_move_in); outside: only that. The entry's lock
-    held."""
+# What a restart does, by the state it finds (restart_kind), in words: what --expect names.
+KINDS = {"on": "on, its claude in its tmux session", "outside": "running outside its tmux session",
+         "duplicate": "two or more claudes hold its conversation", "ended": "claude ended, its tmux session up"}
+
+
+def copies(e, lv):
+    """The live claudes holding the conversation of the entry's claude (live_for), when more
+    than one does (a Duplicate, as the page counts them), else []."""
+    s = live_for(e, lv)
+    same = [x for x in lv if s and x["session_id"] == s["session_id"]]
+    return same if len(same) > 1 else []
+
+
+def restart_kind(e, lv):
+    """What asctl restart would do now (a KINDS key), or None: nothing to restart (off, or its
+    claude at the prompt its start left it at)."""
+    if copies(e, lv):
+        return "duplicate"
+    st, _ = state_of(e, lv)
+    if st == "on":
+        return "on"
+    if st.startswith("on (outside"):
+        return "outside"
+    if st.startswith(("ended by a signal", "tmux up")):
+        return "ended"
+    return None
+
+
+def copy_where(e, s):
+    """Where a claude of the entry runs, in words (its own tmux session, or live.where)."""
+    if s["pane"] and s["pane"]["session"] == e["tmux"]:
+        return f"its tmux session {e['tmux']}"
+    return live.where(s)["text"]
+
+
+def copy_busy(e, s, lv, kids):
+    """Why a claude of the entry is not idle ("" when it is): busy_reason for its tmux session,
+    outside_busy elsewhere; a background job shown in a claude's pane is never restarted."""
+    if s.get("host"):
+        return f"a background job of claude's shown by claude {s['host']['pid']}; end it in Claude Code"
+    if s["pane"] and s["pane"]["session"] == e["tmux"]:
+        return live.busy_reason(e["tmux"], lv, kids, own_sid=s["session_id"])
+    return outside_busy(s, kids)
+
+
+def pane_again(e):
+    """"" when claude may start again in the entry's tmux session, up without its claude: one
+    pane, the one its exit record names, free (pane_free); else why not. With the pane %N and the
+    PID asctl-wrap left there."""
+    ps = tmuxctl.panes(e["tmux"], strict=True)
+    if ps is None:
+        return "tmux did not list its panes", None, None
+    if len(ps) != 1:
+        return f"its tmux session has {len(ps)} panes", None, None
+    ex = last_exit_full(e["id4"])
+    if not ex or ex[3] is None:
+        return "no exit record names its pane (its claude was not started there by asctl)", None, None
+    return pane_free(e, ps[0]["pane_id"], ex[3]), ps[0]["pane_id"], ex[3]
+
+
+def _restart(id4, outside=False, expect=None, force_memory=False):
+    """Restart, on the same conversation (its session id), only when every claude of it is idle
+    and runs nothing: no command, also none in the background, and no subagent. By the state
+    it finds (restart_kind): on, off and on again (claude takes up a new name and rc title);
+    outside its tmux session, or a Duplicate: each copy ended, then one started in its tmux
+    session (_restart_copies); ended with its tmux session up: claude again in its pane
+    (_restart_ended). expect: a KINDS key the state must still be (the page's), else refused.
+    outside: only a claude outside its tmux session. The entry's lock held."""
     e = registry.find(registry.load(), id4)
     lv = live.live()
+    kind = restart_kind(e, lv)
+    if expect is not None and kind != expect:
+        now = KINDS.get(kind) or state_of(e, lv)[0]
+        raise RegistryError(f"it changed since the page showed it: now {now}; nothing was done")
+    if kind == "duplicate":
+        if outside:
+            raise RegistryError("two or more claudes hold its conversation: asctl restart without --outside "
+                                "ends them all and starts one")
+        return _restart_copies(e, lv, copies(e, lv))
+    if kind == "ended":
+        if outside:
+            raise RegistryError(f"no claude of it runs outside {e['tmux']!r}")
+        return _restart_ended(e, force_memory)
     s = live_in(e, lv)
     away = None if s else live_for(e, lv)
     if away and not away.get("host"):
-        return _move_in(e, away)
+        return _restart_copies(e, lv, [away])
     if outside:
         raise RegistryError(f"its claude runs in {e['tmux']!r}, not outside it: nothing to move in" if s
                             else f"no claude of it runs outside {e['tmux']!r}")
@@ -1119,30 +1201,65 @@ def end_outside(e, s, wait_s=15):
     raise ActionFailed(f"claude {now['pid']} in {w['text']} still runs {wait_s} s later; nothing was started")
 
 
-def _move_in(e, s):
-    """Restart of a claude that runs outside the entry's tmux session: once it is idle, end it
-    there (end_outside) and start it again in its tmux session, on the same conversation. The
-    entry's lock held."""
-    w = live.where(s)
-    why = outside_busy(s)
-    if why:
-        raise RegistryError(f"busy: {why} (its claude runs in {w['text']})")
-    if tmuxctl.has_session(e["tmux"]):
-        raise RegistryError(f"its claude runs in {w['text']}, and tmux session {e['tmux']!r} is up "
-                            f"without it: close that session first")
-    how = end_outside(e, s)
-    events.log("off", e, how + ", to start again in its tmux session")
+def _restart_copies(e, lv, cs):
+    """Restart of the claudes cs holding the entry's conversation (one outside its tmux
+    session, or the copies of a Duplicate): once every one is idle, each is ended (one outside
+    by end_outside, one in its tmux session by Off; each checked again just before), then one
+    claude starts in its tmux session on the same conversation (claude takes up the transcript
+    as the copy that wrote last left it). Its tmux session up without its claude: claude starts
+    again in its pane (pane_again), else nothing is done. Nothing is ended unless all of that
+    holds; one that cannot be ended stops it, saying what was. The entry's lock held."""
+    kids = live.children_map()
+    busy = [(s, copy_busy(e, s, lv, kids)) for s in cs]
+    busy = [(s, why) for s, why in busy if why]
+    if busy:
+        if len(cs) == 1:
+            raise RegistryError(f"busy: {busy[0][1]} (its claude runs in {copy_where(e, cs[0])})")
+        raise RegistryError("busy: " + "; ".join(f"claude {s['pid']} in {copy_where(e, s)}: {why}" for s, why in busy)
+                            + "; nothing was done")
+    inside = [s for s in cs if s["pane"] and s["pane"]["session"] == e["tmux"]]
+    pane = pane_pid = None
+    if not inside and tmuxctl.has_session(e["tmux"]):
+        why, pane, pane_pid = pane_again(e)
+        if why:
+            raise RegistryError(f"its claude runs in {copy_where(e, cs[0])}, and tmux session {e['tmux']!r} is up "
+                                f"without it, where claude cannot start again ({why}): close that session first")
+    ended = []
+    try:
+        for s in sorted((s for s in cs if s not in inside), key=lambda s: s["pid"]):  # those outside first
+            ended.append(end_outside(e, s))
+            events.log("off", e, ended[-1] + ", to start again in its tmux session")
+        if inside:
+            _off(e["id4"], False, loud=False)
+            ended.append(f"its claude in {e['tmux']!r} ended")
+    except RegistryError as x:
+        if not ended:
+            raise
+        raise ActionFailed(f"{'; '.join(ended)}; then {x}" + ("" if str(x).endswith("nothing was started") else "; nothing was started"))
     try:
         # it was just running, so its memory is there: no memory gate
-        return _on(e["id4"], True, loud=False)
+        return _on(e["id4"], True, loud=False, pane=pane, pane_pid=pane_pid)
     except RegistryError as x:
-        raise ActionFailed(f"{how}, and starting it in {e['tmux']!r} failed: {x}")
+        raise ActionFailed(f"{'; '.join(ended)}, and starting it in {e['tmux']!r} failed: {x}")
+
+
+def _restart_ended(e, force_memory):
+    """Restart of a favorite whose claude ended while its tmux session stayed up (any exit: a
+    signal, or /exit): claude again in its pane, as the watcher's restart does (pane_again,
+    then On's own checks and memory gate), the session and anyone attached kept. The entry's
+    lock held."""
+    why, pane, pane_pid = pane_again(e)
+    if why:
+        raise RegistryError(f"claude cannot start again in tmux session {e['tmux']!r}: {why}; nothing was done "
+                            f"(Off closes that session, then On starts it)")
+    return _on(e["id4"], force_memory, loud=False, pane=pane, pane_pid=pane_pid,
+               again=f"asctl restart {e['id4']} --force-memory")
 
 
 def cmd_restart(args):
     e = registry.find(registry.load(), args.id)
     with registry.entry_lock(e["id4"], wait=True):
-        r = _restart(e["id4"], args.outside)
+        r = _restart(e["id4"], args.outside, args.expect, args.force_memory)
     if r == 0:
         say("restart", e, f"restarted: {e['tmux']} (same conversation)")
     return r
@@ -1393,6 +1510,8 @@ def main(argv=None):
     a = sub.add_parser("restart")
     a.add_argument("id")
     a.add_argument("--outside", action="store_true", help="only a claude outside its tmux session, moved into it")
+    a.add_argument("--expect", choices=sorted(KINDS), help="refused unless it is still in this state (the page's)")
+    a.add_argument("--force-memory", action="store_true", help="past the memory gate (a claude that ended)")
     a.set_defaults(f=cmd_restart)
     a = sub.add_parser("mode")
     a.add_argument("id")

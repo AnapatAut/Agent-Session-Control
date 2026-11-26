@@ -44,8 +44,8 @@ own (a folder or `/usr/local/bin/asctl` it did not make, a unit file it did not 
 file changed since: keep a change in a drop-in, `<unit>.d/`), when the folder is not a whole
 release (one of its six unit files, or `asc/VERSION`, missing), when the code does not compile
 or start, or when a release it would use again has changed. It says the version it installed
-(`asctl 1.3.0: /usr/local/bin/asctl`) and, when it changed, the one before (`version 1.2.1 ->
-1.3.0`; an older one is installed too, said so: a rollback is one command). Every write is
+(`asctl 1.4.0: /usr/local/bin/asctl`) and, when it changed, the one before (`version 1.3.0 ->
+1.4.0`; an older one is installed too, said so: a rollback is one command). Every write is
 flushed to disk and renamed into place, every delete renames first: an install or uninstall
 stopped at any point (a kill, Ctrl-C) is finished by running it again, with no `--force`. Users'
 managers read changed units at their next `systemctl --user daemon-reload`. Tests:
@@ -149,7 +149,7 @@ starts again as new on the same session id (`--session-id`), as `--resume` would
 A claude that ends at once is said in seconds, with its exit code (on stderr: the page shows it).
 
 ```bash
-asctl --version             # asctl 1.3.0 (release <id>): asc/VERSION and the release it runs
+asctl --version             # asctl 1.4.0 (release <id>): asc/VERSION and the release it runs
                             # from, or (checkout); the dashboard's Settings says the same
 asctl live                  # running claudes: pid, session id, tmux session, folder
 asctl fav 12345 --name das  # favorite one (by pid, session id or pane %N); its tmux session becomes das-0421
@@ -179,8 +179,10 @@ asctl resurrect 0421 on     # bring it back after a reboot (turns rc on; a resur
 asctl note 0421 "talks to the API"
 asctl rename 0421 db        # db-0421; a running claude, when idle, gets /rename db-0421,
                             # which claude also sends to its claude.ai session (the rc title)
-asctl restart 0421          # off and on again (--resume), only when idle and running nothing;
-                            # a claude of it outside its tmux session is moved into it
+asctl restart 0421          # its claude once, in its tmux session (--resume), only when every
+                            # claude of it is idle and runs nothing: off and on again; one
+                            # outside its tmux session moved into it; a Duplicate: all ended,
+                            # one started; one that ended, its tmux session up: again in its pane
 asctl forget 0421           # drop the favorite; a running session is left alone
 asctl events 0421           # what happened to it (on, off, rename, refused, ended, ...): the
                             # last 50 (--limit N; 200 are kept); no ID: all, machine events too
@@ -240,8 +242,25 @@ or the background job) and Off leaves it alone, with one exception: an idle back
 session, which Off ends with Claude Code's own `claude stop JOB` (the conversation is kept).
 `asctl restart` moves any idle one into its tmux session: it ends it there (`claude stop`, or
 SIGTERM as Off sends in a pane), waits until it has ended, and starts it in its tmux session on
-the same conversation. The dashboard offers that as "Restart in tmux" (`restart --outside`: the
-page restarts nothing else).
+the same conversation.
+
+Two or more claudes can hold one conversation (a Duplicate: one resumed in a terminal while
+another runs in tmux). `asctl restart` ends every copy, in its tmux session and outside, then
+starts one in its tmux session; only when each one is idle (else it names each busy one, its pid
+and where it runs, and ends none), each checked again just before it ends. A copy that cannot be
+ended stops it there, saying which ended. Both copies write to the one transcript, and `--resume`
+takes it up as the copy that wrote last left it.
+
+A claude that ended while its tmux session stayed up (by a signal, or `/exit`) is started again
+by `asctl restart` in its pane, as the watcher's restart does: the session one pane, the one its
+exit record names, running only the shell its claude left, not scrolled back and not typed in
+for 2 minutes, and past the memory gate (`--force-memory` past it). Else it says why: Off closes
+that session, then On starts it.
+
+The dashboard offers each as "Restart in tmux", naming the state it showed (`restart --expect
+outside|duplicate|ended`: refused if the state changed meanwhile; the page restarts nothing
+else); its confirm lists the copies that end. For a claude that ended, the power button closes
+its tmux session.
 
 `asctl watch` is one run of the watcher (`asctl-watch.timer`, every 30 s; `asc/watch.py`). It
 keeps 5 minutes of memory samples (available memory, and counters that only grow: PSI `full`,

@@ -610,8 +610,14 @@ out=$(post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"db2"}')
 seen 'claude and its claude.ai title too' <<<"$out" && state | jq -e --arg t "$TM" '.favorites[0].claude_name == $t' >/dev/null \
 	&& ok "rename to the same name sends it to a claude that goes by another (renamed while busy)" || bad "rename to the same name sends it to a claude that goes by another (renamed while busy)" "same-name rename: $out"
 out=$(post '{"action":"restart","id":"'"$id"'","tmux":"'"$TM"'"}')
-[ "$(tail -1 <<<"$out")" = 409 ] && seen 'not outside it: nothing to move in' <<<"$out" && [ "$(state | jq '.favorites[0].pid')" = "$pid0" ] \
-	&& ok "restart from the page only moves a claude outside its tmux session in (one in it: refused, left alone)" || bad "restart from the page only moves a claude outside its tmux session in (one in it: refused, left alone)" "page restart in tmux: $out"
+[ "$(tail -1 <<<"$out")" = 400 ] && seen 'needs expect: outside, duplicate or ended' <<<"$out" && [ "$(state | jq '.favorites[0].pid')" = "$pid0" ] \
+	&& ok "restart from the page names the state it saw (none: refused, left alone)" || bad "restart from the page names the state it saw (none: refused, left alone)" "page restart, no expect: $out"
+out=$(post '{"action":"restart","id":"'"$id"'","tmux":"'"$TM"'","expect":"on"}')
+[ "$(tail -1 <<<"$out")" = 400 ] && [ "$(state | jq '.favorites[0].pid')" = "$pid0" ] \
+	&& ok "restart from the page never restarts a claude idle in its tmux session (expect on: refused)" || bad "restart from the page never restarts a claude idle in its tmux session (expect on: refused)" "page restart, expect on: $out"
+out=$(post '{"action":"restart","id":"'"$id"'","tmux":"'"$TM"'","expect":"outside"}')
+[ "$(tail -1 <<<"$out")" = 409 ] && seen 'it changed since the page showed it: now on, its claude in its tmux session; nothing was done' <<<"$out" && [ "$(state | jq '.favorites[0].pid')" = "$pid0" ] \
+	&& ok "restart from the page of a state since changed (outside, now in its tmux session): refused, left alone" || bad "restart from the page of a state since changed (outside, now in its tmux session): refused, left alone" "page restart, state changed: $out"
 post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'","force":true}' >/dev/null
 # its claude in a Claude Code background session, outside its tmux session
 fsid=$(state | jq -r '.favorites[0].session_id')
@@ -624,7 +630,7 @@ state | jq -e '.favorites[0] | (.state | startswith("on (outside")) and .outside
 	&& ok "state: a claude outside its tmux session says where it runs, and why a move in waits" || bad "state: a claude outside its tmux session says where it runs, and why a move in waits" "state outside: $(state | jq -c '.favorites[0] | {state, outside}')"
 bgfile idle
 state | jq -e '.favorites[0].outside.busy == ""' >/dev/null && ok "state: outside and idle: nothing to wait for" || bad "state: outside and idle: nothing to wait for" "state outside idle: $(state | jq -c '.favorites[0].outside')"
-out=$(post '{"action":"restart","id":"'"$id"'","tmux":"'"$TM"'"}')
+out=$(post '{"action":"restart","id":"'"$id"'","tmux":"'"$TM"'","expect":"outside"}')
 # shellcheck disable=SC2329  # called by poll
 fav_on() { state | jq -e '.favorites[0].state == "on"' >/dev/null; }
 [ "$(tail -1 <<<"$out")" = 200 ] && poll 4 fav_on && ! kill -0 "$bgp" 2>/dev/null && state | jq -e '.favorites[0] | .state == "on" and .outside == null' >/dev/null \
@@ -640,6 +646,43 @@ jq -e '.keep == 200 and (.events | length > 5) and ([.events[] | select(.kind !=
 dc "http://x/api/events?id=$id" | jq -e '.events == []' >/dev/null && ok "events of an id: none from before its forget (an earlier favorite's)" || bad "events of an id: none from before its forget (an earlier favorite's)" "events after forget: $(dc "http://x/api/events?id=$id" | jq -c '[.events[].kind]')"
 dc "http://x/api/events" | jq -e '(.events | length > 5) and .events[0].kind == "forget"' >/dev/null && ok "events: all of them without an id" || bad "events: all of them without an id" "events: all"
 [ "$(dc -o /dev/null -w '%{http_code}' "http://x/api/events?id=12")" = 400 ] && ok "events: a bad id is 400" || bad "events: a bad id is 400" "events: bad id accepted"
+}
+
+case_actions_restart() {
+echo "== actions: Restart in tmux of a Duplicate, and of a claude that ended with its tmux session up"
+dash_up; dev_up
+mkdir -p "$HOME/.claude/projects/-w"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SID" > "$HOME/.claude/projects/-w/$SID.jsonl"
+post '{"action":"fav","ref":"'"$pid"'","name":"rs"}' >/dev/null
+id=$(state | jq -r '.favorites[0].id4'); TM="rs-$id"
+post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'"}' >/dev/null; post '{"action":"on","id":"'"$id"'","tmux":"'"$TM"'"}' >/dev/null
+p0=$(claude_in "$TM") || stop "its claude in its tmux session, started by asctl"
+tm new-session -d -s cpy -c "$W" -- "$ASC_CLAUDE" --resume "$SID"
+p1=$(claude_in cpy) || stop "a copy in cpy"
+state | jq -e --arg t "$TM" --argjson a "$p0" --argjson b "$p1" '.favorites[0] | .state == "duplicate" and .again == null
+	and (.copies | length == 2 and any(.[]; .pid == $a and .where == "its tmux session \($t)" and .busy == "") and any(.[]; .pid == $b and .where == "tmux session cpy" and .busy == ""))' >/dev/null \
+	&& ok "state: a Duplicate lists each copy, where it runs and whether it is busy" || bad "state: a Duplicate lists each copy, where it runs and whether it is busy" "dup state: $(state | jq -c '.favorites[0] | {state, copies, again}')"
+out=$(post '{"action":"restart","id":"'"$id"'","tmux":"'"$TM"'","expect":"duplicate"}')
+pn=$(claude_in "$TM") && [ "$(tail -1 <<<"$out")" = 200 ] && ! kill -0 "$p0" 2>/dev/null && ! kill -0 "$p1" 2>/dev/null \
+	&& state | jq -e '.favorites[0] | .state == "on" and .copies == null and .claudes == 1' >/dev/null \
+	&& ok "Restart in tmux of a Duplicate from the page: both ended, one on in its tmux session" || bad "Restart in tmux of a Duplicate from the page: both ended, one on in its tmux session" "page dup restart: $out / $(state | jq -c '.favorites[0] | {state, copies}')"
+kill -KILL "$pn"
+# shellcheck disable=SC2329  # called by poll
+gone() { state | jq -e '.favorites[0].state | startswith("ended by a signal")' >/dev/null; }
+poll 5 gone || stop "its claude ended by a signal"
+state | jq -e '.favorites[0] | .again == "" and .copies == null' >/dev/null && ok "state: ended, its tmux session up: claude can start again in its pane (again: \"\")" || bad "state: ended, its tmux session up: claude can start again in its pane (again: \"\")" "again: $(state | jq -c '.favorites[0] | {state, again}')"
+tm split-window -t "=$TM:"
+state | jq -e '.favorites[0].again == "its tmux session has 2 panes"' >/dev/null && ok "state: ended, two panes: why claude cannot start again there" || bad "state: ended, two panes: why claude cannot start again there" "again: $(state | jq -c '.favorites[0] | {state, again}')"
+tm kill-pane -t "=$TM:.1"
+out=$(post '{"action":"restart","id":"'"$id"'","tmux":"'"$TM"'","expect":"ended"}')
+pn=$(claude_in "$TM") && [ "$(tail -1 <<<"$out")" = 200 ] && state | jq -e '.favorites[0].state == "on"' >/dev/null \
+	&& ok "Restart in tmux from the page of a claude that ended: on again in its pane" || bad "Restart in tmux from the page of a claude that ended: on again in its pane" "page ended restart: $out / $(state | jq -c '.favorites[0].state')"
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import dash
+for f in (True, None):
+    print(" ".join(dash.action_argv({"action": "restart", "id": sys.argv[2], "tmux": sys.argv[3], "expect": "ended", "force_memory": f})))' "$REPO" "$id" "$TM" \
+	| tr '\n' '|' | seen -xF "restart $TM --expect ended --force-memory|restart $TM --expect ended|" && ok "Restart in tmux past the memory gate: only when the page asks (force_memory)" || bad "Restart in tmux past the memory gate: only when the page asks (force_memory)" "argv not as expected"
+post '{"action":"off","id":"'"$id"'","tmux":"'"$TM"'","force":true}' >/dev/null
+post '{"action":"forget","id":"'"$id"'","tmux":"'"$TM"'"}' >/dev/null
 }
 
 case_actions_new() {
@@ -1101,7 +1144,7 @@ kill $(pgrep -P "$DPID") "$DPID" 2>/dev/null; wait "$DPID" 2>/dev/null; DPID=
 SOCK="$T/run/asctl/dash.sock"
 }
 
-run_cases dash page config socket pwa name state actions_token actions_fav actions_new past client operator stale tmux_hang transcripts token rc notices prefix systemd release
+run_cases dash page config socket pwa name state actions_token actions_fav actions_restart actions_new past client operator stale tmux_hang transcripts token rc notices prefix systemd release
 
 echo "dash: $pass passed, $fail failed"
 [ "$fail" = 0 ]

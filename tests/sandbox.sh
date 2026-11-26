@@ -264,6 +264,22 @@ chk "the watcher: ended, exit 137, memory pressure seen" \
 chk "and started it again, in the same session" \
 	'ux jq -s -e "map(select(.kind == \"restarted\")) | length == 1" $EV >/dev/null && wait_for 15 "p2=\$(cpid); [ -n \"\$p2\" ] && [ \"\$p2\" != \"$p1\" ]"' \
 	'ux jq -s -c ".[-4:]" $EV'
+# Then its claude ended by the user (Ctrl-C: exit 0), its tmux session still up: Restart in tmux
+# (the page's) starts it again in that pane, under real systemd (tmux moving the pane's process
+# into its scope, asctl-wrap waiting for it).
+pane=$(oux tmux -L oom list-panes -t "=oomc-$OID:" -F '#{pane_id}')
+p2=$(cpid); ux kill -INT "$p2"
+chk "its claude ended by the user (exit 0), its tmux session still up" \
+	'wait_for 15 "ux grep -q \"^0 \" /home/sbuser/.local/state/agent-session-control/exit/$OID" && oux tmux -L oom has-session -t "=oomc-$OID"' \
+	'ux cat /home/sbuser/.local/state/agent-session-control/exit/$OID'
+out=$(oux env ASC_BY=page /opt/asc/bin/asctl restart "$OID" --expect ended 2>&1); rc=$?
+chk "Restart in tmux of it: claude again in the same pane, under asctl-wrap, in its 200 MB scope" \
+	'[ "$rc" = 0 ] && p3=$(cpid) && [ -n "$p3" ] && [ "$p3" != "$p2" ] && [ "$(oux tmux -L oom list-panes -t "=oomc-$OID:" -F "#{pane_id}")" = "$pane" ] &&
+	 ux cat "/proc/$(ux ps -o ppid= -p "$p3" | tr -d " ")/cmdline" | tr "\0" " " | grep -q asctl-wrap &&
+	 u=$(basename "$(ux cat "/proc/$p3/cgroup" | cut -d: -f3)") && [ "$(uprop "$u" MemoryMax)" = 209715200 ]' \
+	'echo "rc $rc: $out"; oux /opt/asc/bin/asctl live; echo "pane before $pane, now $(oux tmux -L oom list-panes -t "=oomc-$OID:" -F "#{pane_id}")"
+	 p3=$(cpid); echo "claude $p3, its parent: $(ux cat "/proc/$(ux ps -o ppid= -p "$p3" | tr -d " ")/cmdline" | tr "\0" " ")"
+	 echo "its cgroup: $(ux cat "/proc/$p3/cgroup")"; echo "MemoryMax of it: $(uprop "$(basename "$(ux cat "/proc/$p3/cgroup" | cut -d: -f3)")" MemoryMax)"'
 ux systemctl --user stop asc-oomtmux 2>/dev/null
 
 echo "== 6. the units as installed (a checkout's own): the tmux server unit, boot resurrect"

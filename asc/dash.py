@@ -432,6 +432,12 @@ def _snapshot(tmux_error=""):
             # its claude runs outside its tmux session: where (live.where), and why a restart
             # into tmux would wait ("" once idle)
             "outside": dict(live.where(s), busy=cli.outside_busy(s, kids)) if st.startswith("on (outside") else None,
+            # a Duplicate: each claude holding its conversation, where it runs and why a restart
+            # would wait ("" once idle)
+            "copies": [{"pid": x["pid"], "where": cli.copy_where(e, x), "busy": cli.copy_busy(e, x, lv, kids)}
+                       for x in lv if x["session_id"] == s["session_id"]] if st == "duplicate" else None,
+            # its claude ended, its tmux session up: why claude cannot start again in its pane ("": it can)
+            "again": cli.pane_again(e)[0] if st.startswith(("ended by a signal", "tmux up")) else None,
             "claudes": sum(1 for x in lv if x["pane"] and x["pane"]["session"] == e["tmux"]),
             "mem_kb": sum(live.tree_mem_kb(p["pane_pid"], kids) for p in panes)
                       + (live.tree_mem_kb(s["pid"], kids) if s and s["host"] else 0),  # a job runs outside the pane
@@ -518,8 +524,10 @@ def action_argv(a):
         return ["forget", ref]
     if kind == "trust":  # sent after the page's own warning was confirmed; the folder is asctl's
         return ["trust", ref]
-    if kind == "restart":  # from the page only a claude outside its tmux session, moved into it
-        return ["restart", ref, "--outside"]
+    if kind == "restart":  # Restart in tmux, for the state the page showed (never a claude idle in its tmux session)
+        if a.get("expect") not in ("outside", "duplicate", "ended"):
+            raise RegistryError("restart from the page needs expect: outside, duplicate or ended")
+        return ["restart", ref, "--expect", a["expect"]] + (["--force-memory"] if a.get("force_memory") is True else [])
     if kind == "rename":
         return ["rename", ref, registry.check_name(_text(a.get("name")))]
     if kind == "mode":

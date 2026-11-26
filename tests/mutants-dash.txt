@@ -52,7 +52,7 @@ asc/dash.py %%% op in (None, "", pwd.getpwuid(os.getuid()).pw_name) %%% True %%%
 asc/dash.py %%%         ok = r.returncode == 0 and op in %%%         ok = op in %%% the setting cannot be read: refused (fail closed) %%% operator
 asc/dash.py %%%     if stat.S_IMODE(os.stat(path).st_mode) & 0o022: %%%     if False: %%% a passed socket open to other users is refused %%% systemd
 asc/tmuxctl.py %%% timeout=timeout, stdin=subprocess.DEVNULL) %%% stdin=subprocess.DEVNULL) %%% state still answers while tmux hangs %%% tmux_hang
-asc/dash.py %%%  + (["--force-memory"] if a.get("force_memory") is True else []) %%%  + (["--force-memory"] if a.get("force_memory") else []) %%% force_memory only when it is true %%% rc
+asc/dash.py %%% ["on", ref] + (["--force-memory"] if a.get("force_memory") is True else []) %%% ["on", ref] + (["--force-memory"] if a.get("force_memory") else []) %%% force_memory only when it is true %%% rc
 asc/dash.py %%%         if not isinstance(a.get("on"), bool):⏎            raise RegistryError("auto_restart needs %%%         if False:⏎            raise RegistryError("auto_restart needs %%% auto-restart on must be a boolean %%% notices
 asc/past.py %%%         elif r.get("type") == "ai-title" and %%%         elif False and %%% past: without a title given, claude's own (the last ai-title) %%% past
 asc/past.py %%% (title or ai or "") %%% (ai or title or "") %%% past: the latest title, sent as raw text (the page sets it as text) %%% past
@@ -90,7 +90,7 @@ asc/dash.py %%%             "conv_lines": lens.get(e.get("session_id"), {}).get(
 asc/dash.py %%% rest = max(0, used - mine) %%% rest = used - mine %%% state: less in use than this user's own: the rest is 0, not below %%% state
 asc/dash.py %%% by_whom(mem["total_kb"] - mem["avail_kb"], total, %%% by_whom(mem["total_kb"] - mem["avail_kb"], 0, %%% state: you, other users and the system add up to what is in use (never more than the machine has) %%% state
 asc/dash.py %%%             "outside": dict(live.where(s), busy=cli.outside_busy(s, kids)) if st.startswith("on (outside") else None, %%%             "outside": None, %%% state: a claude outside its tmux session says where it runs, and why a move in waits %%% actions_fav
-asc/dash.py %%%         return ["restart", ref, "--outside"] %%%         return ["restart", ref] %%% restart from the page only moves a claude outside its tmux session in (one in it: refused, left alone) %%% actions_fav
+asc/dash.py %%%         if a.get("expect") not in ("outside", "duplicate", "ended"): %%%         if False: %%% restart from the page names the state it saw (none: refused, left alone) %%% actions_fav
 asc/past.py %%%     ok = isinstance(x, dict) and all(type(x.get(k)) is int and x[k] >= 0 for k in ("ino", "size", "lines", "seen")) %%%     ok = isinstance(x, dict) %%% odd lengths: lines as a string, none shown %%% notices
 asc/cli.py %%%     print(f"asctl: {msg}", file=sys.stderr, flush=True) %%%     print(f"asctl: {msg}", flush=True) %%% on, a claude that ends at once: refused with its exit, not an unknown error %%% rc
 asc/dash.py %%%         path = registry.check_path(a.get("path")) %%%         path = a.get("path") %%% new: the path must be text %%% actions_new
@@ -100,7 +100,7 @@ asc/dash.py %%%         return ["trust", ref] %%%         return ["on", ref] %%%
 asc/web/app.js %%%   if (st === "waiting for trust") return %%%   if (st === "waiting for trusts") return %%% page: waiting for trust: needs attention, names the folder %%% page
 asc/web/app.js %%%   if (!await ask({ title: "Trust this folder?" %%%   if (await ask({ title: "Trust this folder?" %%% page: trust folder: sent only after a yes to a warning that names the folder, with only which favorite %%% page
 asc/web/app.js %%%   return act({ action: "trust", id: e.id4, tmux: e.tmux }); %%%   return act({ action: "trust", id: e.id4, tmux: e.tmux, path: e.cwd }); %%% page: trust folder: sent only after a yes to a warning that names the folder, with only which favorite %%% page
-asc/web/app.js %%% (body.action === "on" || body.action === "new") && !body.force_memory %%% body.action === "on" && !body.force_memory %%% page: new: memory short asks to force it, sent forced only after a yes %%% page
+asc/web/app.js %%% ["on", "new", "restart"].includes(body.action) && !body.force_memory %%% ["on"].includes(body.action) && !body.force_memory %%% page: new: memory short asks to force it, sent forced only after a yes %%% page
 asc/dash.py %%%             return _snapshot(str(x)) %%%             raise %%% state still answers while tmux hangs %%% tmux_hang
 asc/dash.py %%%     lv = [] if tmux_error else seen %%%     lv = seen %%% state while tmux hangs: said, not taken for no server, every favorite unknown %%% tmux_hang
 asc/dash.py %%% st, s = ("unknown", None) if tmux_error else cli.state_of(e, lv, up) %%% st, s = cli.state_of(e, lv, up) %%% state while tmux hangs: said, not taken for no server, every favorite unknown %%% tmux_hang
@@ -315,3 +315,13 @@ asc/web/app.js %%% && q.value !== ""; } %%% ; } %%% page: a new release: the pag
 asc/web/app.js %%%   if (s.setup && s.linger === false)⏎ %%%   if (false)⏎ %%% page: linger off, set up: a note to run asctl setup again, beside a watcher's; linger on or not known, or not set up: none of it %%% page
 asc/web/app.js %%%   if (s.setup && s.linger === false)⏎ %%%   if (s.linger !== true)⏎ %%% page: linger off, set up: a note to run asctl setup again, beside a watcher's; linger on or not known, or not set up: none of it %%% page
 asc/dash.py %%%  "linger": setup.linger_on(), %%%  "linger": False, %%% state: linger off, then on (its file, read on each request) %%% notices
+asc/dash.py %%% ("outside", "duplicate", "ended"): %%% ("on", "outside", "duplicate", "ended"): %%% restart from the page never restarts a claude idle in its tmux session (expect on: refused) %%% actions_fav
+asc/dash.py %%%         return ["restart", ref, "--expect", a["expect"]] + %%%         return ["restart", ref] + %%% restart from the page of a state since changed (outside, now in its tmux session): refused, left alone %%% actions_fav
+asc/dash.py %%% a["expect"]] + (["--force-memory"] if a.get("force_memory") is True else []) %%% a["expect"]] + ["--force-memory"] %%% Restart in tmux past the memory gate: only when the page asks (force_memory) %%% actions_restart
+asc/dash.py %%% for x in lv if x["session_id"] == s["session_id"]] if st == "duplicate" else None, %%% for x in lv if x["session_id"] == s["session_id"]] if False else None, %%% state: a Duplicate lists each copy, where it runs and whether it is busy %%% actions_restart
+asc/dash.py %%%             "again": cli.pane_again(e)[0] if st.startswith(("ended by a signal", "tmux up")) else None, %%%             "again": "" if st.startswith(("ended by a signal", "tmux up")) else None, %%% state: ended, two panes: why claude cannot start again there %%% actions_restart
+asc/web/app.js %%%     if (busy.length) { %%%     if (false) { %%% page: Restart in tmux of a Duplicate: a copy busy: a warning naming it, no button; all idle: the button %%% page
+asc/web/app.js %%%   if (dup && e.copies) { %%%   if (dup) { %%% page: Restart in tmux of a Duplicate: a copy busy: a warning naming it, no button; all idle: the button %%% page
+asc/web/app.js %%%   if (ended && typeof e.again === "string") { %%%   if (ended) { %%% page: Restart in tmux of one that ended: again empty (it can): the button; a reason: a warning and Off; not known: nothing %%% page
+asc/web/app.js %%%     if (e.again) { %%%     if (false) { %%% page: Restart in tmux of one that ended: again empty (it can): the button; a reason: a warning and Off; not known: nothing %%% page
+asc/web/app.js %%% its tmux session is still up. Restart in tmux starts it there again; Off closes it.` };⏎  if (st === "waiting for trust") %%% its tmux session is still up. Turn it on.` };⏎  if (st === "waiting for trust") %%% page: ended, its tmux session up: Restart in tmux named, never Turn on %%% page

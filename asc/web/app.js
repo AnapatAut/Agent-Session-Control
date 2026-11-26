@@ -130,12 +130,12 @@ function look(e) {
     return { group: "on", dot, label, hint };
   }
   if (st === "duplicate") return { group: "attention", dot: "bad", label: "Duplicate",
-    why: "Two claudes hold this session or its name. asctl does nothing about it by itself." };
+    why: "Two or more claudes hold its conversation. Restart in tmux ends them all and starts one; asctl does nothing about it by itself." };
   if (st.startsWith("on (outside")) return { group: "attention", dot: "wait", label: "Running outside its tmux",
     why: e.outside ? `Its claude runs in ${e.outside.text}, not in tmux session ${e.tmux}.`
                    : `Its claude runs, but not in tmux session ${e.tmux}.` };
   if (st.startsWith("ended by a signal")) return { group: "attention", dot: "bad", label: "Ended unexpectedly",
-    why: `Claude was ended by a signal (${code}); its tmux session is still up. Turn it on to start claude again.` };
+    why: `Claude was ended by a signal (${code}); its tmux session is still up. Restart in tmux starts it there again; Off closes it.` };
   if (st === "waiting for trust") return { group: "attention", dot: "wait", label: "Waiting for trust",
     why: `Claude Code asks whether to trust ${tilde(e.cwd)}. Trust folder lets claude start there; Off closes it.` };
   if (st === "waiting at a prompt") return { group: "attention", dot: "wait", label: "Waiting at a prompt",
@@ -143,7 +143,7 @@ function look(e) {
                    : "Its claude has not come up: Claude Code may ask something in its pane")
          + ` (tmux attach -t =${e.tmux}); Off closes it.` };
   if (st.startsWith("tmux up")) return { group: "attention", dot: "wait", label: "Claude ended",
-    why: `Claude ended${code ? " (exit " + code + ")" : ""}; its tmux session is still up.` };
+    why: `Claude ended${code ? " (exit " + code + ")" : ""}; its tmux session is still up. Restart in tmux starts it there again; Off closes it.` };
   const boot = S && S.boot ? S.boot.todo : [];
   if (boot.includes(e.id4) && !isOn(e)) return { group: "attention", dot: "wait", label: "Coming back",
     why: boot.find((id) => S.favorites.some((f) => f.id4 === id && !isOn(f))) === e.id4 ? bootWhy(S.boot.why)
@@ -552,7 +552,7 @@ async function act(body) {
                   ok: "Force off", danger: true })) {
     return act({ ...body, force: true });
   }
-  if (!j.ok && (body.action === "on" || body.action === "new") && !body.force_memory && /^memory:/.test(j.error || "") &&
+  if (!j.ok && ["on", "new", "restart"].includes(body.action) && !body.force_memory && /^memory:/.test(j.error || "") &&
       await ask({ title: "Memory is short", text: `${j.error}\n\nStart ${body.tmux || "it"} anyway? earlyoom may then end other sessions.`,
                   ok: "Start anyway", danger: true })) {
     return act({ ...body, force_memory: true });
@@ -822,22 +822,29 @@ function favSheet(e) {
   // own stop), and only when idle; Restart in tmux moves any idle one in
   const o = e.outside, bg = o && o.how === "background";
   // its claude at a prompt of Claude Code's (trust, or another): its tmux session is up, so the power button turns it off
-  const trust = e.state === "waiting for trust", waiting = trust || e.state === "waiting at a prompt", up = on || waiting;
+  const trust = e.state === "waiting for trust", waiting = trust || e.state === "waiting at a prompt";
+  // its claude ended, its tmux session up: the power button closes that session; two or more
+  // claudes holding its conversation: no power button (Off would end only the one in tmux)
+  const ended = /^(ended by a signal|tmux up)/.test(e.state || ""), dup = e.state === "duplicate";
+  const up = on || waiting || ended;
   const unknown = e.state === "unknown";  // tmux did not answer: neither on nor off is known
   const pwb = btn("", "pw " + (up ? "on" : "off"), async () => {
     if (up) {
       if (!await ask({ title: `Turn ${e.tmux} off?`, ok: "Turn off", danger: true,
         text: trust ? "Its claude, still at the trust prompt, closes. Nothing is trusted."
             : waiting ? "Its claude, still at Claude Code's prompt, closes. Nothing is answered."
+            : ended ? "Its tmux session closes (its claude already ended there)."
             : bg ? "Its background session stops (claude stop). The conversation is kept." : "What runs in its tmux session ends." })) return;
       await act({ action: "off", ...ref });
     } else {
       await act({ action: "on", ...ref });
     }
-  }, wait || unknown || (o && !(bg && !o.busy)));
+  }, wait || unknown || dup || (o && !(bg && !o.busy)));
   pwb.append(powerIcon());
   pwb.setAttribute("aria-label", unknown ? "Unknown: tmux did not answer" : up ? "On: turn it off" : "Off: turn it on");
-  pwb.title = unknown ? "tmux did not answer: whether it runs is not known" : o && !(bg && !o.busy) ? "Runs outside its tmux session: restart it in tmux, or end it there" : up ? "Turn off" : "Turn on";
+  pwb.title = unknown ? "tmux did not answer: whether it runs is not known"
+    : dup ? "Two or more claudes hold its conversation: restart it in tmux, or end them where they run"
+    : o && !(bg && !o.busy) ? "Runs outside its tmux session: restart it in tmux, or end it there" : up ? "Turn off" : "Turn on";
   out.push(kids(el("div", null, "btns"), pwb, rcb));  // the power button tells on or off
   if (l.why) out.push(el("div", l.why, "warn " + (l.dot === "bad" ? "bad" : "")));
   if (trust) out.push(kids(el("div", null, "acts"), btn("Trust folder", "danger", () => trustFolder(e), wait)));
@@ -846,8 +853,9 @@ function favSheet(e) {
     if (!await ask({ title: `Restart ${e.tmux} in tmux?`, ok: "Restart in tmux",
       text: `Its claude in ${o.text} ends, and starts again in tmux session ${e.tmux}, on the same conversation.`
             + (bg ? "" : " Anything typed there and not sent is lost.") })) return;
-    await act({ action: "restart", ...ref });
+    await act({ action: "restart", expect: "outside", ...ref });
   }, wait)));
+  out.push(...restartActs(e, ref, ended, dup, wait));
   if (on && e.busy) out.push(el("div", "Busy: " + e.busy + ". Off asks before forcing it.", "warn"));
 
   out.push(el("span", "SETTINGS", "lab"));
@@ -883,6 +891,40 @@ function favSheet(e) {
       const j = await act({ action: "forget", ...ref });
       if (j.ok) closeSheet();
     }, wait)));
+  return out;
+}
+
+// Restart in tmux for a Duplicate (each copy ends, one starts in its tmux session) and for a
+// claude that ended with its tmux session up (claude again in its pane): only when asctl can,
+// else why not; the page names the state it saw (expect), so a state changed meanwhile is refused.
+function restartActs(e, ref, ended, dup, wait) {
+  const out = [];
+  if (dup && e.copies) {
+    const busy = e.copies.filter((c) => c.busy);
+    if (busy.length) {
+      out.push(el("div", "Restart in tmux once every copy is idle: "
+        + busy.map((c) => `claude ${c.pid} in ${c.where}: ${c.busy}`).join("; ") + ".", "warn"));
+    } else {
+      out.push(kids(el("div", null, "acts"), btn("Restart in tmux", "p", async () => {
+        if (!await ask({ title: `Restart ${e.tmux} in tmux?`, ok: "Restart in tmux", danger: true,
+          text: "These claudes end:\n" + e.copies.map((c) => `• claude ${c.pid} in ${c.where}`).join("\n")
+            + `\n\nThen one starts in tmux session ${e.tmux}, on the same conversation as the copy that wrote last left it.`
+            + " Anything typed and not sent is lost." })) return;
+        await act({ action: "restart", expect: "duplicate", ...ref });
+      }, wait)));
+    }
+  }
+  if (ended && typeof e.again === "string") {
+    if (e.again) {
+      out.push(el("div", `Restart in tmux is not possible: ${e.again}. Off closes its tmux session; then turn it on.`, "warn"));
+    } else {
+      out.push(kids(el("div", null, "acts"), btn("Restart in tmux", "p", async () => {
+        if (!await ask({ title: `Restart ${e.tmux} in tmux?`, ok: "Restart in tmux",
+          text: `Claude starts again in tmux session ${e.tmux}, in the pane it ended in, on the same conversation.` })) return;
+        await act({ action: "restart", expect: "ended", ...ref });
+      }, wait)));
+    }
+  }
   return out;
 }
 
