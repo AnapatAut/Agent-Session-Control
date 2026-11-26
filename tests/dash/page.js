@@ -50,6 +50,13 @@ check("Settings: the version line, asctl and what the server runs; none without 
     return withIt && settingsSheet().length === 2 && seen === null;
   } finally { el = plain; delete S.version; }
 })()`);
+check("linger off, set up: a note to run asctl setup again, beside a watcher's; linger on or not known, or not set up: none of it", `(() => {
+  const t = (o) => setupNotes(Object.assign({ setup: true, watch_at: T, time: T }, o)).map((x) => x[0] + " / " + x[1]);
+  const lg = "Linger is off: after a reboot, favorites come back only once you log in. Run asctl setup again to turn it on. / notice";
+  return JSON.stringify(t({ linger: false })) === JSON.stringify([lg]) && t({ linger: true }).length === 0 && t({ linger: null }).length === 0
+    && t({ linger: false, watch_at: null }).length === 2 && t({ linger: false, watch_at: null })[1] === lg
+    && JSON.stringify(t({ setup: false, linger: false })) === JSON.stringify(["Not set up: favorites won't come back after a reboot. Run asctl setup. / notice"]);
+})()`);
 check("1 day ago, 3 days ago", `ago(Date.now() / 1000 - 86400) === "1 day ago" && ago(Date.now() / 1000 - 3 * 86400) === "3 days ago"`);
 check("the time it was updated: day, month, year and seconds", `stamp(new Date(2026, 10, 4, 11, 27, 42)) === "4 Nov 2026, 11:27:42"`);
 check("outside its tmux session: where it runs", `look({ state: "on (outside its tmux session)", tmux: "x-0001",

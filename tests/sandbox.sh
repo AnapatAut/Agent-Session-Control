@@ -2,7 +2,8 @@
 # asctl in a throwaway container booting real systemd: the host suites on a clean Ubuntu, the
 # dashboard as systemd user units (socket activation, idle exit, stop), and a real out-of-memory
 # kill kept inside a capped unit, the watcher, the tmux server unit, the machine install and
-# setup, a reboot (boot's resurrect). Leaves nothing behind.
+# setup (linger turned on by a plain user, through polkit), a reboot (boot's resurrect, with
+# nobody logged in). Leaves nothing behind.
 #   tests/sandbox.sh            build, run every check, tear down  (about 8 min)
 #   KEEP=1 tests/sandbox.sh     same, but leave the container and image up to look around
 #   tests/sandbox.sh --down     remove what a finished or killed run left (refused while one runs)
@@ -461,7 +462,59 @@ chk "  back to this checkout's release, the dashboard with it" \
 u2 env ASC_MEMINFO="$H2/meminfo" python3 -I -c 'import sys, time; sys.path.insert(0, "/opt/asc"); from asc import memory, registry
 s = memory.sample(); now = int(time.time())
 registry.write_private(registry.state_dir() + "/memory.json", [dict(s, t=now - 30 * i) for i in range(12, -1, -1)])'
-echo "== 8. the reboot (both users)"
+echo "== 7b. a plain user's asctl setup turns linger on (the real loginctl, through polkit)"
+# sbuser3 has no linger and nothing enabled: its user manager runs only once root starts it, as a
+# login does. With polkit masked (a stop alone is undone: D-Bus starts it again), loginctl's real
+# refusal; with a polkit rule that asks for a password, a refusal at once (no prompt, no wait);
+# then with polkit as it comes, setup turns linger on as that user, with no sudo and no password.
+U3ID=2003; R3=/run/user/$U3ID H3=/home/sbuser3
+u3() { docker exec -u sbuser3 -e XDG_RUNTIME_DIR="$R3" -e DBUS_SESSION_BUS_ADDRESS="unix:path=$R3/bus" -w "$H3" "$C" "$@"; }
+D3="ASC_CLAUDE=/opt/asc/tests/asc/bin/claude FAKE_BASH=$H3/fb/claude ASC_MEMINFO=$H3/meminfo"
+# shellcheck disable=SC2086  # the variable is a list of NAME=value words
+d3() { u3 env $D3 "$@"; }
+chk "sbuser3: no linger, no user manager (nobody logged in)" \
+	'! x test -e /var/lib/systemd/linger/sbuser3 && [ "$(x systemctl is-active user@$U3ID.service)" != active ]' 'x ls /var/lib/systemd/linger; x systemctl is-active user@$U3ID.service'
+x systemctl start user@$U3ID.service
+u3 sh -ec 'mkdir -p ~/fb ~/w ~/.config/systemd/user/asctl-tmux.service.d ~/.config/systemd/user/asctl-boot.service.d && cp /bin/bash ~/fb/claude && echo ~/w > ~/fake-trusted
+printf "MemTotal: 32000000 kB\nMemAvailable: 16000000 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n" > ~/meminfo
+u=~/.config/systemd/user
+printf "%s\n" "[Service]" "Environment=FAKE_BASH=%h/fb/claude" > "$u/asctl-tmux.service.d/test.conf"
+printf "%s\n" "[Service]" "Environment=ASC_CLAUDE=/opt/asc/tests/asc/bin/claude ASC_MEMINFO=%h/meminfo ASC_NET=127.0.0.1:9" \
+	"ExecStart=" "ExecStart=/opt/agent-session-control/current/bin/asctl boot --net-wait 2 --wait 300" > "$u/asctl-boot.service.d/test.conf"' >/dev/null 2>&1
+x systemctl mask --now polkit.service >/dev/null 2>&1
+out=$(u3 asctl setup --yes 2>&1); rc=$?
+chk "asctl setup, polkit not there: the rest done, linger still off, loginctl's refusal and the admin's command said, exit 1" \
+	'[ "$rc" = 1 ] && has "linger is still off (Could not enable linger: .*masked" && has "sudo loginctl enable-linger sbuser3$" && [ "$(u3 systemctl --user is-enabled asctl-boot.service)" = enabled ] && ! x test -e /var/lib/systemd/linger/sbuser3' \
+	'echo "rc $rc: $out"'
+x systemctl unmask polkit.service >/dev/null 2>&1; x systemctl start polkit.service
+# As where polkit asks a plain user for an admin's password to turn linger on: setup asks for
+# none and waits for none (loginctl --no-ask-password), so it is refused at once, well inside
+# its 30 s limit.
+x sh -c 'printf "%s\n" "polkit.addRule(function(action, subject) {" "  if (action.id == \"org.freedesktop.login1.set-self-linger\") return polkit.Result.AUTH_ADMIN;" "});" > /etc/polkit-1/rules.d/00-asc-test.rules'
+x systemctl restart polkit.service
+s3=$(date +%s); out=$(u3 asctl setup --yes 2>&1); rc=$?; s3=$(( $(date +%s) - s3 ))
+chk "asctl setup, polkit asks for a password: refused at once with no prompt, linger still off, exit 1" \
+	'[ "$rc" = 1 ] && [ "$s3" -lt 15 ] && has "linger is still off (Could not enable linger: Interactive authentication required" && has "sudo loginctl enable-linger sbuser3$" && ! x test -e /var/lib/systemd/linger/sbuser3' \
+	'echo "rc $rc in $s3 s: $out"'
+x rm -f /etc/polkit-1/rules.d/00-asc-test.rules; x systemctl restart polkit.service
+out=$(u3 asctl setup --yes 2>&1); rc=$?
+chk "asctl setup again, polkit there: linger turned on by sbuser3 itself (no sudo, no password)" \
+	'[ "$rc" = 0 ] && has "^turned linger on$" && [ "$(x loginctl show-user sbuser3 -p Linger --value)" = yes ] && x test -e /var/lib/systemd/linger/sbuser3' \
+	'echo "rc $rc: $out"; x loginctl show-user sbuser3 -p Linger'
+S3S=eeeeeeee-0000-4000-8000-0000000000dd
+c3pid() { d3 /opt/asc/bin/asctl live | awk -v s="$S3S" '$2 == s {print $1}'; }
+d3 tmux new-session -d -s c3 -c "$H3/w" -- /opt/asc/tests/asc/bin/claude --session-id "$S3S"
+wait_for 15 '[ -n "$(c3pid)" ]'
+d3 asctl fav "$(c3pid)" --name lin >/dev/null 2>&1
+LID=$(u3 jq -r '.entries[] | select(.name == "lin") | .id4' "$H3/.local/state/agent-session-control/registry.json")
+d3 asctl off "$LID" >/dev/null 2>&1; d3 asctl on "$LID" >/dev/null 2>&1; d3 asctl resurrect "$LID" on >/dev/null 2>&1
+chk "  its favorite on, resurrect on" \
+	'wait_for 15 "[ -n \"\$(c3pid)\" ]" && [ "$(u3 jq -r ".entries[\"$LID\"].resurrect" "$H3/.local/state/agent-session-control/registry.json")" = true ]' \
+	'd3 asctl list'
+u3 env ASC_MEMINFO="$H3/meminfo" python3 -I -c 'import sys, time; sys.path.insert(0, "/opt/asc"); from asc import memory, registry
+s = memory.sample(); now = int(time.time())
+registry.write_private(registry.state_dir() + "/memory.json", [dict(s, t=now - 30 * i) for i in range(12, -1, -1)])'
+echo "== 8. the reboot (three users)"
 # Steady memory before the reboot (the host kernel's boot id stays: a container restart is a
 # boot of its systemd only), then the reboot: shutdown stops the units, the next boot runs them.
 ux env ASC_MEMINFO=/home/sbuser/meminfo python3 -I -c 'import sys, time; sys.path.insert(0, "/opt/asc"); from asc import memory, registry
@@ -489,6 +542,9 @@ chk "sbuser2 after the reboot: the old tmux.service did not start; the server is
 chk "  its favorite is back, by boot, from the installed release" \
 	'wait_for 60 "d2 tmux has-session -t =mach-$MID 2>/dev/null" && wait_for 15 "[ -n \"\$(c2pid)\" ]" && wrapof "$(c2pid)" | grep -q "$OPT/releases/" && u2 jq -s -e "map(select(.kind == \"on\")) | last | .by == \"boot\"" "$H2/.local/state/agent-session-control/events.jsonl" >/dev/null' \
 	'u2 journalctl --user -u asctl-boot -n 8 --no-pager -o cat'
+chk "sbuser3 after the reboot, nobody logged in: linger started its manager; its favorite is back, by boot" \
+	'wait_for 30 "[ \"\$(x systemctl is-active user@$U3ID.service)\" = active ]" && ! x loginctl list-sessions --no-legend | grep -q sbuser3 && wait_for 60 "d3 tmux has-session -t =lin-$LID 2>/dev/null" && wait_for 15 "[ -n \"\$(c3pid)\" ]" && u3 jq -s -e "map(select(.kind == \"on\")) | last | .by == \"boot\"" "$H3/.local/state/agent-session-control/events.jsonl" >/dev/null' \
+	'x systemctl is-active user@$U3ID.service; x loginctl list-sessions --no-legend; u3 journalctl --user -u asctl-boot -n 8 --no-pager -o cat'
 
 echo "== 9. asctl setup --remove, then install.sh --uninstall"
 out=$(x /opt/asc/install.sh --uninstall 2>&1); rc=$?
@@ -496,6 +552,10 @@ chk "uninstall while sbuser2 has it set up: refused, the user named" '[ "$rc" = 
 out=$(u2 asctl setup --remove --yes 2>&1); rc=$?
 chk "asctl setup --remove: its units off, tmux.service enabled again, the server left as it is" \
 	'[ "$rc" = 0 ] && [ "$(u2 systemctl --user is-enabled asctl-tmux.service 2>&1)" = disabled ] && [ "$(u2 systemctl --user is-enabled tmux.service)" = enabled ] && [ "$(u2prop asctl-tmux.service ActiveState)" = active ] && [ "$(u2prop asctl-watch.timer ActiveState)" = inactive ] && ! u2 test -e $H2/.config/systemd/user/tmux-spawn-.scope.d/asctl.conf' \
+	'echo "rc $rc: $out"'
+out=$(u3 asctl setup --remove --yes 2>&1); rc=$?
+chk "sbuser3's asctl setup --remove: its units off, linger left on and said so" \
+	'[ "$rc" = 0 ] && [ "$(u3 systemctl --user is-enabled asctl-boot.service 2>&1)" = disabled ] && has "linger stays on" && [ "$(x loginctl show-user sbuser3 -p Linger --value)" = yes ]' \
 	'echo "rc $rc: $out"'
 out=$(x /opt/asc/install.sh --uninstall 2>&1); rc=$?
 chk "uninstall while a pane still runs its asctl-wrap: refused" '[ "$rc" = 1 ] && has "processes still run its code"' 'echo "rc $rc: $out"'

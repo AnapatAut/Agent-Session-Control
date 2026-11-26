@@ -20,14 +20,16 @@ changes nothing):
   setup.json first, and --remove enables it again;
 - asctl-tmux.service, asctl-boot.service, asctl-watch.timer and asctl-dash.socket enabled, the
   timer and the socket started;
-- on a first setup (none of those enabled yet, auto-restart never set): auto-restart on.
-It says when linger is off (the units start at boot only with it: loginctl enable-linger, which
-it does not run) and when the dashboard has no config yet. A second run does only what is
-missing.
+- on a first setup (none of those enabled yet, auto-restart never set): auto-restart on;
+- linger on, last (loginctl --no-ask-password enable-linger <user>): without it the units start
+  only once the user logs in, so a reboot brings nothing back until then. polkit lets a user turn
+  it on for themselves on most systems; where it does not (or loginctl does not answer, or is not
+  there), the rest stays done and setup says so, with the admin's command, and exits 1.
+It says when the dashboard has no config yet. A second run does only what is missing.
 --remove disables asctl's units: the watcher and the dashboard stop; the tmux server unit is not
 stopped (that would end every session) and keeps the server until the next boot. It removes the
-drop-in when it is unchanged and enables again what setup disabled. Favorites, the event log and
-the settings stay.
+drop-in when it is unchanged and enables again what setup disabled. Favorites, the event log,
+the settings and linger stay (loginctl disable-linger turns linger off).
 """
 import glob
 import json
@@ -46,6 +48,7 @@ UNITS = ["asctl-tmux.service", "asctl-boot.service", "asctl-watch.timer", "asctl
 STARTED = ["asctl-watch.timer", "asctl-dash.socket"]
 DROPIN = os.path.join("tmux-spawn-.scope.d", "asctl.conf")
 SYSTEMCTL_S = 60
+LOGINCTL_S = 30
 OLD_MARK = "# >>> tmux-claude-restore >>>"
 # set -g @continuum-restore 'on' (set-option, other flags, either quote, a comment after it)
 CONTINUUM = re.compile(r"""^\s*set(?:-option)?\s+(?:-[A-Za-z]+\s+)*@continuum-(restore|boot)\s+(['"]?)on\2\s*(?:#.*)?$""")
@@ -274,9 +277,37 @@ def _dropin_state():
     return ("same" if _read(p) == _template() else "differs"), p
 
 
-def _linger():
-    user = pwd.getpwuid(os.getuid()).pw_name
+def _user():
+    return pwd.getpwuid(os.getuid()).pw_name
+
+
+def linger_on():
+    """Whether linger is on for this user: logind's file for them (readable by every user); None
+    when this uid has no user name (no passwd entry: then it has no user manager either)."""
+    try:
+        user = _user()
+    except KeyError:
+        return None
     return os.path.exists(os.path.join(os.environ.get("ASC_LINGER_DIR", "/var/lib/systemd/linger"), user))
+
+
+def _enable_linger():
+    """Linger on for this user: "" when it is on after, else why not. The user is named: without
+    a name, loginctl outside a login session fails (No such device or address). It never asks
+    for a password; where polkit does not allow it to the user, it is refused."""
+    args = ["--no-ask-password", "enable-linger", "--", _user()]
+    cmd = [os.environ.get("ASC_LOGINCTL", "loginctl"), *args]  # isolation: no mutant may change this line
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=LOGINCTL_S, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return f"loginctl: no answer in {LOGINCTL_S} s"
+    except OSError as x:
+        return f"loginctl: {x}"
+    if r.returncode != 0:
+        return " ".join((r.stderr or r.stdout).split())[:200] or f"loginctl: exit {r.returncode}"
+    if not linger_on():
+        return "loginctl said yes, but linger is still off"
+    return ""
 
 
 def _server_unit():
@@ -311,9 +342,6 @@ def _ask(yes, what):
 def _notes():
     from . import dash
     xs = []
-    if not _linger():
-        xs.append("linger is off: the units start only once you log in, so a reboot brings nothing "
-                  "back until then (sudo loginctl enable-linger, or ask an admin)")
     if not os.path.lexists(dash.config_path()):
         xs.append(f"the dashboard has no config yet: {dash.config_path()} (see the README)")
     return xs
@@ -365,6 +393,8 @@ def setup(yes=False):
     to_enable = [u for u in UNITS if not _enabled(u)]
     to_start = [u for u in STARTED if _prop(u, "ActiveState") != "active"]
     first = len(to_enable) == len(UNITS) and _auto_restart_unset()  # a first setup: auto-restart on
+    linger = not linger_on()
+    user = _user()
     plan = []
     if state == "missing":
         plan.append(f"write {dropin} (a kernel OOM kill of one claude does not end its tmux session)")
@@ -377,6 +407,9 @@ def setup(yes=False):
         plan.append("start " + ", ".join(to_start))
     if first:
         plan.append("turn auto-restart on (a first setup; asctl auto-restart off turns it off)")
+    if linger:
+        plan.append(f"turn linger on (loginctl enable-linger {user}): your units then start at boot, "
+                    f"before you log in")
     notes = _notes()
     if state == "differs":
         notes.append(f"{dropin} is not the one asctl ships: left as it is")
@@ -431,9 +464,20 @@ def setup(yes=False):
         msg = f"setup stopped part way ({'; '.join(done) or 'nothing done'}): {x}; run asctl setup again to finish"
         events.log("failed", None, msg)
         raise cli.ActionFailed(msg)
-    events.log("setup", None, "setup: " + "; ".join(done))
+    why = _enable_linger() if linger else ""  # last: a refusal leaves the rest done
+    if linger and not why:
+        events.log("setting", None, "linger on (asctl setup)")  # its own: the setup event is cut short
+        done.append("turned linger on")
+    if done:
+        events.log("setup", None, "setup: " + "; ".join(done))
     for d in done:
         cli.out(d)
+    if why:
+        events.log("failed", None, f"setup: linger not turned on: {why}")
+        cli.out(f"linger is still off ({why}): your units start only once you log in, so a reboot "
+                f"brings nothing back until then. An admin turns it on with: sudo loginctl enable-linger {user}")
+        cli.out("asctl is set up, but favorites with resurrect on come back only once you log in after a boot")
+        return 1
     cli.out("asctl is set up: favorites with resurrect on come back at the next boot")
     return 0
 
@@ -470,6 +514,8 @@ def remove(yes=False):
         if os.path.lexists(_record_path()) and not _recorded():
             os.unlink(_record_path())
         return 0
+    if linger_on():
+        notes.append(f"linger stays on (other things of yours may use it): loginctl disable-linger {_user()} turns it off")
     cli.out("asctl setup --remove will:")
     for p in plan:
         cli.out(f"  - {p}")

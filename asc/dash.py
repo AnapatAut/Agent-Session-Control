@@ -69,7 +69,7 @@ import threading
 import time
 import urllib.parse
 
-from . import boot, cli, events, icons, live, memory, past, registry, tmuxctl
+from . import boot, cli, events, icons, live, memory, past, registry, setup, tmuxctl
 from .registry import RegistryError
 
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
@@ -454,7 +454,7 @@ def _snapshot(tmux_error=""):
             "server": None if tmux_error else bool(pane_list) or tmuxctl.server_running(),
             "tmux_error": tmux_error,
             "favorites": favs, "active": active, "unknown_files": unknown,
-            "boot": boot_status(), "watch_at": watch_at(), "setup": set_up(), "events_v": events_version(),
+            "boot": boot_status(), "watch_at": watch_at(), "setup": set_up(), "linger": setup.linger_on(), "events_v": events_version(),
             "version": VERSION,
             "settings": {"auto_restart": settings.get("auto_restart") is True,
                          "start_limit": memory.start_limit(settings)},

@@ -347,16 +347,13 @@ function draw() {
   if (s.unknown_files) warn.push(`${s.unknown_files} session file(s) in a format asctl does not know.`);
   $("banner").hidden = !warn.length;
   $("banner").textContent = warn.join(" ");
-  // after a reboot, no setup, a watcher that stopped: each only while it is so
+  // after a reboot, no setup, linger off, a watcher that stopped: each only while it is so
   const notes = [], name = (id) => (s.favorites.find((e) => e.id4 === id) || {}).name || id;
   // asctl boot's list, less any favorite on by now (by hand) or gone
   const back = (s.boot ? s.boot.todo : []).filter((id) => s.favorites.some((e) => e.id4 === id && !isOn(e)));
   if (back.length) notes.push(el("div", `Bringing back ${back.length} favorite${back.length === 1 ? "" : "s"} ` +
                                         `(${back.map(name).join(", ")}), one at a time.`, "notice info"));
-  if (s.setup === false) notes.push(el("div", "Not set up: favorites won't come back after a reboot. Run asctl setup.", "notice"));
-  else if (s.setup && !s.watch_at) notes.push(el("div", "The watcher has not run yet: ended claudes go unnoticed. Check asctl-watch.timer.", "notice"));
-  else if (s.setup && s.time - s.watch_at > WATCH_LATE_S)
-    notes.push(el("div", `Watcher stopped ${Math.round((s.time - s.watch_at) / 60)} min ago: ended claudes go unnoticed. Check asctl-watch.timer.`, "notice"));
+  for (const [t, c] of setupNotes(s)) notes.push(el("div", t, c));
   const nsig = notes.map((x) => x.className + x.textContent).join("|");
   if ($("notes").dataset.sig !== nsig) { $("notes").replaceChildren(...notes); $("notes").dataset.sig = nsig; }
 
@@ -704,6 +701,18 @@ function kv(pairs) {
     d.append(el("dt", k), dd);
   }
   return d;
+}
+
+// No setup, linger off, a watcher that stopped: each a note ([text, class]) only while it is so.
+function setupNotes(s) {
+  const n = [];
+  if (s.setup === false) n.push(["Not set up: favorites won't come back after a reboot. Run asctl setup.", "notice"]);
+  else if (s.setup && !s.watch_at) n.push(["The watcher has not run yet: ended claudes go unnoticed. Check asctl-watch.timer.", "notice"]);
+  else if (s.setup && s.time - s.watch_at > WATCH_LATE_S)
+    n.push([`Watcher stopped ${Math.round((s.time - s.watch_at) / 60)} min ago: ended claudes go unnoticed. Check asctl-watch.timer.`, "notice"]);
+  if (s.setup && s.linger === false)
+    n.push(["Linger is off: after a reboot, favorites come back only once you log in. Run asctl setup again to turn it on.", "notice"]);
+  return n;
 }
 
 // --- a favorite's history in its sheet: in words, with no pids, session ids or whole paths ---

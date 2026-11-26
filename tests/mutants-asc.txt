@@ -344,3 +344,20 @@ asc/cli.py %%%     return rel if re.fullmatch(r"[0-9a-f]{12}", rel) and %%%     
 asc/cli.py %%%  and os.path.basename(os.path.dirname(here)) == "releases" else None %%%  else None %%% --version: a folder named like a release outside releases/ is a checkout %%% version
 asc/cli.py %%% return (v if VERSION_RE.fullmatch(v) else "unknown") %%% return (v if v else "unknown") %%% --version: a VERSION not N.N.N said as unknown %%% version
 asc/cli.py %%% version=f"asctl {version()}") %%% version="asctl") %%% --version from a checkout: the version, (checkout) %%% version
+asc/setup.py %%%     if linger:⏎        plan.append(f"turn linger on %%%     if False:⏎        plan.append(f"turn linger on %%% setup's plan: linger on (it is off); loginctl not run before a yes, nor by a refusal %%% asctl_setup
+asc/setup.py %%%     why = _enable_linger() if linger else "" %%%     why = "" %%% setup --yes turns linger on, last: loginctl --no-ask-password enable-linger -- <user>, the file there, said and logged %%% asctl_setup
+asc/setup.py %%% "enable-linger", "--", _user()] %%% "enable-linger"] %%% setup --yes turns linger on, last: loginctl --no-ask-password enable-linger -- <user>, the file there, said and logged %%% asctl_setup
+asc/setup.py %%%     args = ["--no-ask-password", "enable-linger" %%%     args = ["enable-linger" %%% setup --yes turns linger on, last: loginctl --no-ask-password enable-linger -- <user>, the file there, said and logged %%% asctl_setup
+asc/setup.py %%%         events.log("setting", None, "linger on (asctl setup)") %%%         pass %%% setup --yes turns linger on, last: loginctl --no-ask-password enable-linger -- <user>, the file there, said and logged %%% asctl_setup
+asc/setup.py %%%     linger = not linger_on() %%%     linger = True %%% setup again: nothing to do, nothing called (and no linger note with linger on) %%% asctl_setup
+asc/setup.py %%%         msg = f"setup stopped part way ( %%%         _enable_linger(); msg = f"setup stopped part way ( %%% linger is last: not tried when a step before it fails %%% asctl_setup
+asc/setup.py %%%     if linger_on():⏎        notes.append(f"linger stays on %%%     if False:⏎        notes.append(f"linger stays on %%% setup --remove: linger left on, said so %%% asctl_setup
+asc/setup.py %%%     if linger_on():⏎        notes.append(f"linger stays on %%%     if True:⏎        notes.append(f"linger stays on %%% setup --remove with linger off: nothing said of it %%% asctl_setup
+asc/setup.py %%%         return " ".join((r.stderr or r.stdout).split())[:200] or f"loginctl: exit {r.returncode}" %%%         return "" %%% setup, linger refused (polkit): the rest done, the admin's command said, logged failed, exit 1 %%% asctl_setup
+asc/setup.py %%%         events.log("failed", None, f"setup: linger not turned on: {why}") %%%         pass %%% setup, linger refused (polkit): the rest done, the admin's command said, logged failed, exit 1 %%% asctl_setup
+asc/setup.py %%% after a boot")⏎        return 1 %%% after a boot")⏎        return 0 %%% setup, linger refused (polkit): the rest done, the admin's command said, logged failed, exit 1 %%% asctl_setup
+asc/setup.py %%%         return f"loginctl: {x}" %%%         raise %%% setup, no loginctl: said why, exit 1; only linger was missing, so no setup event %%% asctl_setup
+asc/setup.py %%%     if done:⏎        events.log("setup" %%%     if True:⏎        events.log("setup" %%% setup, no loginctl: said why, exit 1; only linger was missing, so no setup event %%% asctl_setup
+asc/setup.py %%%         return "loginctl said yes, but linger is still off" %%%         return "" %%% setup, loginctl says yes but no linger file: not taken as on %%% asctl_setup
+asc/setup.py %%%         return f"loginctl: no answer in {LOGINCTL_S} s" %%%         return "" %%% loginctl not answering: given up after its time, said so %%% asctl_setup
+asc/setup.py %%%     if not os.path.lexists(dash.config_path()): %%%     if False: %%% notes: no dashboard config (none about linger: setup turns it on) %%% asctl_setup

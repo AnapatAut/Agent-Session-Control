@@ -1,0 +1,15 @@
+#!/bin/bash
+# Fake loginctl for the tests ($ASC_LOGINCTL): only "--no-ask-password enable-linger -- <user>",
+# as asctl setup runs it. It makes the linger file $ASC_LINGER_DIR/<user>, as logind does. With no
+# user named it fails as loginctl does outside a login session; $HOME/fake-loginctl-refuse: refused
+# as polkit refuses it; $HOME/fake-loginctl-hang: no answer; $HOME/fake-loginctl-yes-only: says
+# yes but makes no file. Every call is logged to $HOME/loginctl.log. Anything else fails: the tests
+# never reach a real logind.
+echo "$*" >> "$HOME/loginctl.log"
+[ "${1:-} ${2:-}" = "--no-ask-password enable-linger" ] || { echo "fake loginctl: not faked: $*" >&2; exit 1; }
+[ $# = 4 ] && [ "$3" = -- ] && [ -n "$4" ] || { echo "Could not enable linger: No such device or address" >&2; exit 1; }
+[ -n "${ASC_LINGER_DIR:-}" ] || { echo "fake loginctl: no ASC_LINGER_DIR" >&2; exit 1; }
+[ -e "$HOME/fake-loginctl-hang" ] && exec sleep 60
+[ -e "$HOME/fake-loginctl-refuse" ] && { echo "Could not enable linger: Interactive authentication required." >&2; exit 1; }
+[ -e "$HOME/fake-loginctl-yes-only" ] && exit 0
+: > "$ASC_LINGER_DIR/$4"

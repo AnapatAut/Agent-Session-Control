@@ -1,12 +1,13 @@
-# Throwaway machine for tests/sandbox.sh: Ubuntu 24.04 booting real systemd, with two users
-# (sbuser; sbuser2 for the machine install), linger on, so each has a systemd user manager,
-# and the repo's tracked files in /opt/asc. The base stage has no repo files: a run that puts
+# Throwaway machine for tests/sandbox.sh: Ubuntu 24.04 booting real systemd, with three users:
+# sbuser and sbuser2 (the machine install) with linger on, so each has a systemd user manager,
+# and sbuser3 made plainly (no linger: asctl setup turns it on, through polkit as on a real
+# machine); and the repo's tracked files in /opt/asc. The base stage has no repo files: a run that puts
 # its own copy into each container builds it alone (--target base).
 # Never used in production. Packages are baked in: the test network has no route out.
 # Pinned by digest (a re-pointed tag cannot swap it). Bump: docker buildx imagetools inspect ubuntu:24.04
 FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852 AS base
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      systemd systemd-sysv dbus dbus-user-session tmux jq python3 curl procps iproute2 ca-certificates nodejs \
+      systemd systemd-sysv dbus dbus-user-session polkitd tmux jq python3 curl procps iproute2 ca-certificates nodejs \
     && rm -rf /var/lib/apt/lists/* \
     && systemctl mask systemd-sysctl.service systemd-udevd.service systemd-udevd-control.socket \
        systemd-udevd-kernel.socket systemd-modules-load.service systemd-remount-fs.service \
@@ -17,6 +18,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
        systemd-timesyncd.service systemd-resolved.service systemd-networkd.service \
     && useradd -m -s /bin/bash -u 2001 sbuser \
     && useradd -m -s /bin/bash -u 2002 sbuser2 \
+    && useradd -m -s /bin/bash -u 2003 sbuser3 \
     && mkdir -p /var/lib/systemd/linger && touch /var/lib/systemd/linger/sbuser /var/lib/systemd/linger/sbuser2
 
 FROM base

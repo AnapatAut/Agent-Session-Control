@@ -36,6 +36,8 @@ vm() { printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 a
 export ASC_PRESSURE="$T/pressure" ASC_VMSTAT="$T/vmstat"
 # On starts asctl-tmux.service when no tmux server runs: a fake systemctl (never the real one).
 export ASC_SYSTEMCTL="$REPO/tests/asc/bin/systemctl"
+# Setup turns linger on with a fake loginctl (never the real one), in a linger folder of the run's.
+export ASC_LOGINCTL="$REPO/tests/asc/bin/loginctl" ASC_LINGER_DIR="$T/linger"
 vm 0 0 0 0
 tm() { tmux -L "$ASC_TMUX_SOCKET" -f /dev/null "$@"; }
 . "$REPO/tests/reap.sh"
@@ -1860,6 +1862,9 @@ out=$(su2 </dev/null); rc=$?
 	&& seen "run asctl setup --yes to do it" <<<"$out" && en tmux.service && ! en asctl-tmux.service && ! [ -e "$SUD/tmux-spawn-.scope.d/asctl.conf" ] \
 	&& seen -x "  - turn auto-restart on (a first setup; asctl auto-restart off turns it off)" <<<"$out" && ! jq -e '.settings' "$R2" >/dev/null 2>&1 \
 	&& ok "setup, no terminal and no --yes: shows the plan (a first setup: auto-restart on too), changes nothing" || bad "setup, no terminal and no --yes: shows the plan (a first setup: auto-restart on too), changes nothing" "setup, no --yes: rc $rc $out"
+U=$(id -un)
+seen -xF "  - turn linger on (loginctl enable-linger $U): your units then start at boot, before you log in" <<<"$out" && ! [ -e "$H2/loginctl.log" ] && ! [ -e "$T/linger/$U" ] \
+	&& ok "setup's plan: linger on (it is off); loginctl not run before a yes, nor by a refusal" || bad "setup's plan: linger on (it is off); loginctl not run before a yes, nor by a refusal" "plan: $out / $(cat "$H2/loginctl.log" 2>&1)"
 out=$(su2 --yes); rc=$?
 dropin_ok() { cmp -s "$SUD/tmux-spawn-.scope.d/asctl.conf" "$REPO/systemd/tmux-spawn-.scope.d/asctl.conf" && [ "$(stat -c %a "$SUD/tmux-spawn-.scope.d/asctl.conf")" = 644 ]; }
 [ "$rc" = 0 ] && ! en tmux.service && ! en envtmux.service && ! en shtmux.service && ! en $IM && en web.service && en asctl-old.service && en notmux.service && dropin_ok \
@@ -1868,14 +1873,18 @@ dropin_ok() { cmp -s "$SUD/tmux-spawn-.scope.d/asctl.conf" "$REPO/systemd/tmux-s
 	&& ok "setup --yes: the drop-in, the units that run tmux disabled (through env, sh -c, a template's instance; others left), asctl's units on, timer and socket started" || bad "setup --yes: the drop-in, the units that run tmux disabled (through env, sh -c, a template's instance; others left), asctl's units on, timer and socket started" "setup --yes: rc $rc $out"
 [ "$(jq -c .disabled "$SJ")" = "$ALL" ] && [ "$(stat -c %a "$SJ")" = 600 ] \
 	&& ok "what it disabled is recorded (setup.json, 0600)" || bad "what it disabled is recorded (setup.json, 0600)" "  setup.json: $(cat "$SJ" 2>&1)"
-seen "note: linger is off" <<<"$out" && seen "note: the dashboard has no config yet: $H2/.config/agent-session-control/dash.json" <<<"$out" \
-	&& ok "notes: linger off, no dashboard config" || bad "notes: linger off, no dashboard config" "  notes: $out"
+[ "$(cat "$H2/loginctl.log")" = "--no-ask-password enable-linger -- $U" ] && [ -e "$T/linger/$U" ] && seen -x "turned linger on" <<<"$out" \
+	&& seen -x "asctl is set up: favorites with resurrect on come back at the next boot" <<<"$out" \
+	&& jq -s -e '[.[] | select(.kind == "setting")] | last.text == "linger on (asctl setup)"' "$H2/.local/state/agent-session-control/events.jsonl" >/dev/null \
+	&& ok "setup --yes turns linger on, last: loginctl --no-ask-password enable-linger -- <user>, the file there, said and logged" || bad "setup --yes turns linger on, last: loginctl --no-ask-password enable-linger -- <user>, the file there, said and logged" "linger: $out / $(cat "$H2/loginctl.log" 2>&1) / $(tail -2 "$H2/.local/state/agent-session-control/events.jsonl")"
+seen "note: the dashboard has no config yet: $H2/.config/agent-session-control/dash.json" <<<"$out" && ! seen "note: linger" <<<"$out" \
+	&& ok "notes: no dashboard config (none about linger: setup turns it on)" || bad "notes: no dashboard config (none about linger: setup turns it on)" "  notes: $out"
 jq -s -e 'last | .kind == "setup" and .by == "cli" and (.text | test("disabled tmux.service"))' "$H2/.local/state/agent-session-control/events.jsonl" >/dev/null \
 	&& ok "logged (kind setup)" || bad "logged (kind setup)" "  setup event: $(tail -1 "$H2/.local/state/agent-session-control/events.jsonl")"
 [ "$(jq -c .settings "$R2")" = '{"auto_restart":true}' ] && seen -x "turned auto-restart on" <<<"$out" \
-	&& jq -s -e '[.[] | select(.kind == "setting")] | length == 1 and last.text == "auto-restart on (a first setup)"' "$H2/.local/state/agent-session-control/events.jsonl" >/dev/null \
+	&& jq -s -e '[.[] | select(.kind == "setting" and (.text | startswith("auto-restart")))] | length == 1 and last.text == "auto-restart on (a first setup)"' "$H2/.local/state/agent-session-control/events.jsonl" >/dev/null \
 	&& ok "a first setup turns auto-restart on, said and logged (a setting)" || bad "a first setup turns auto-restart on, said and logged (a setting)" "settings: $(jq -c .settings "$R2" 2>&1) / $out"
-n=$(calls 'enable|disable|start'); : > "$T/linger/$(id -un)"
+n=$(calls 'enable|disable|start')
 out=$(su2 --yes); rc=$?
 [ "$rc" = 0 ] && seen "asctl is set up already: nothing to do" <<<"$out" && [ "$(calls 'enable|disable|start')" = "$n" ] && ! seen "linger" <<<"$out" && ! seen "auto-restart" <<<"$out" \
 	&& ok "setup again: nothing to do, nothing called (and no linger note with linger on)" || bad "setup again: nothing to do, nothing called (and no linger note with linger on)" "setup again: rc $rc $out"
@@ -1887,17 +1896,21 @@ out=$(su2 --remove --yes); rc=$?
 [ "$rc" = 0 ] && ! en asctl-tmux.service && ! en asctl-boot.service && ! en asctl-watch.timer && ! en asctl-dash.socket && ! [ -e "$F2/active/asctl-watch.timer" ] \
 	&& en tmux.service && en envtmux.service && en $IM && [ -e "$SUD/tmux-spawn-.scope.d/asctl.conf" ] && ! [ -e "$SJ" ] && seen "is not the one asctl ships: left as it is" <<<"$out" \
 	&& ok "setup --remove: asctl's units off, tmux.service enabled again, a changed drop-in left" || bad "setup --remove: asctl's units off, tmux.service enabled again, a changed drop-in left" "setup --remove: rc $rc $out"
+seen -xF "  note: linger stays on (other things of yours may use it): loginctl disable-linger $U turns it off" <<<"$out" && [ -e "$T/linger/$U" ] && [ "$(wc -l < "$H2/loginctl.log")" = 1 ] \
+	&& ok "setup --remove: linger left on, said so" || bad "setup --remove: linger left on, said so" "remove, linger: $out / $(cat "$H2/loginctl.log" 2>&1)"
 ! seen "^--user stop.*asctl-tmux.service" "$H2/systemctl.log" && ok "the tmux server unit never stopped" || bad "the tmux server unit never stopped" "  asctl-tmux.service was stopped"
 out=$(su2 --remove --yes); rc=$?
 [ "$rc" = 0 ] && seen "asctl is not set up: nothing to do" <<<"$out" && ok "setup --remove again: nothing to do" || bad "setup --remove again: nothing to do" "remove again: rc $rc $out"
-rm "$SUD/tmux-spawn-.scope.d/asctl.conf"; : > "$F2/fail-enable-asctl-tmux.service"
+rm "$SUD/tmux-spawn-.scope.d/asctl.conf" "$T/linger/$U"; : > "$F2/fail-enable-asctl-tmux.service"
 out=$(su2 --yes); rc=$?
 [ "$rc" = 1 ] && seen "setup stopped part way (wrote .*; disabled $IM): systemctl --user enable" <<<"$out" && ! en tmux.service && [ "$(jq -c .disabled "$SJ")" = "$ALL" ] \
 	&& jq -s -e 'last | .kind == "failed"' "$H2/.local/state/agent-session-control/events.jsonl" >/dev/null \
 	&& ok "setup failing part way: says what it did, logged failed, the disabled unit recorded" || bad "setup failing part way: says what it did, logged failed, the disabled unit recorded" "setup part way: rc $rc $out"
+[ "$(wc -l < "$H2/loginctl.log")" = 1 ] && ! [ -e "$T/linger/$U" ] && ! seen "linger" <<<"${out#*setup stopped part way}" \
+	&& ok "linger is last: not tried when a step before it fails" || bad "linger is last: not tried when a step before it fails" "part way, linger: $out / $(cat "$H2/loginctl.log")"
 rm "$F2/fail-enable-asctl-tmux.service"
 out=$(su2 --yes); rc=$?
-[ "$rc" = 0 ] && en asctl-tmux.service && ! seen "disable tmux.service" <<<"$out" && ok "setup again finishes it" || bad "setup again finishes it" "  setup again: rc $rc $out"
+[ "$rc" = 0 ] && en asctl-tmux.service && ! seen "disable tmux.service" <<<"$out" && [ -e "$T/linger/$U" ] && ok "setup again finishes it" || bad "setup again finishes it" "  setup again: rc $rc $out"
 out=$(su2 --remove --yes); rc=$?
 [ "$rc" = 0 ] && en tmux.service && ! [ -e "$SUD/tmux-spawn-.scope.d/asctl.conf" ] && ! [ -e "$SJ" ] \
 	&& ok "then --remove: tmux.service enabled again, the unchanged drop-in removed" || bad "then --remove: tmux.service enabled again, the unchanged drop-in removed" "  remove after: rc $rc $out"
@@ -1944,6 +1957,30 @@ out=$(su2 --yes); rc=$?
 [ "$rc" = 0 ] && en asctl-tmux.service && en asctl-dash.socket && ! seen "disable" <<<"$out" && ! [ -e "$SJ" ] \
 	&& ok "setup with no user service enabled (listed as none, exit 1): set up, nothing to disable" || bad "setup with no user service enabled (listed as none, exit 1): set up, nothing to disable" "none enabled: rc $rc $out"
 su2 --remove --yes >/dev/null; mv "$T/en-kept"/* "$F2/enabled/"; rm -f "$R2"
+# Linger refused (polkit), no loginctl, a yes with no file, no answer: the rest stays done, said, logged, exit 1
+rm -f "$T/linger/$U"; : > "$H2/fake-loginctl-refuse"
+out=$(su2 --yes); rc=$?; rm "$H2/fake-loginctl-refuse"
+[ "$rc" = 1 ] && en asctl-tmux.service && [ -e "$F2/active/asctl-dash.socket" ] && ! [ -e "$T/linger/$U" ] \
+	&& seen -xF "linger is still off (Could not enable linger: Interactive authentication required.): your units start only once you log in, so a reboot brings nothing back until then. An admin turns it on with: sudo loginctl enable-linger $U" <<<"$out" \
+	&& seen -x "asctl is set up, but favorites with resurrect on come back only once you log in after a boot" <<<"$out" && ! seen "asctl is set up: " <<<"$out" \
+	&& jq -s -e '.[-2].kind == "setup" and (.[-2].text | test("enabled asctl-tmux")) and .[-1].kind == "failed" and .[-1].text == "setup: linger not turned on: Could not enable linger: Interactive authentication required."' "$H2/.local/state/agent-session-control/events.jsonl" >/dev/null \
+	&& ok "setup, linger refused (polkit): the rest done, the admin's command said, logged failed, exit 1" || bad "setup, linger refused (polkit): the rest done, the admin's command said, logged failed, exit 1" "refused: rc $rc $out / $(tail -2 "$H2/.local/state/agent-session-control/events.jsonl")"
+ns=$(jq -s '[.[] | select(.kind == "setup")] | length' "$H2/.local/state/agent-session-control/events.jsonl")
+out=$(ASC_LOGINCTL="$T/no-loginctl" su2 --yes); rc=$?
+[ "$rc" = 1 ] && seen -F "linger is still off (loginctl: [Errno 2] No such file or directory: '$T/no-loginctl'): " <<<"$out" && seen -xF "  - turn linger on (loginctl enable-linger $U): your units then start at boot, before you log in" <<<"$out" \
+	&& [ "$(jq -s '[.[] | select(.kind == "setup")] | length' "$H2/.local/state/agent-session-control/events.jsonl")" = "$ns" ] && jq -s -e 'last | .kind == "failed"' "$H2/.local/state/agent-session-control/events.jsonl" >/dev/null \
+	&& ok "setup, no loginctl: said why, exit 1; only linger was missing, so no setup event" || bad "setup, no loginctl: said why, exit 1; only linger was missing, so no setup event" "no loginctl: rc $rc $out / $(tail -2 "$H2/.local/state/agent-session-control/events.jsonl")"
+: > "$H2/fake-loginctl-yes-only"; out=$(su2 --yes); rc=$?; rm "$H2/fake-loginctl-yes-only"
+[ "$rc" = 1 ] && seen -F "linger is still off (loginctl said yes, but linger is still off): " <<<"$out" && ! seen -x "turned linger on" <<<"$out" \
+	&& ok "setup, loginctl says yes but no linger file: not taken as on" || bad "setup, loginctl says yes but no linger file: not taken as on" "yes only: rc $rc $out"
+hang() { HOME="$H2" python3 -I -c 'import sys, time; sys.path.insert(0, sys.argv[1]); from asc import setup
+setup.LOGINCTL_S = 1; t = time.monotonic(); w = setup._enable_linger(); print(w, "|", round(time.monotonic() - t))' "$REPO"; }
+: > "$H2/fake-loginctl-hang"; h=$(hang); rm "$H2/fake-loginctl-hang"
+[ "$h" = "loginctl: no answer in 1 s | 1" ] && ! [ -e "$T/linger/$U" ] \
+	&& ok "loginctl not answering: given up after its time, said so" || bad "loginctl not answering: given up after its time, said so" "hang: $h"
+out=$(su2 --remove --yes); rc=$?
+[ "$rc" = 0 ] && ! seen "linger" <<<"$out" && ok "setup --remove with linger off: nothing said of it" || bad "setup --remove with linger off: nothing said of it" "remove, linger off: rc $rc $out"
+rm -f "$R2"
 ud() { HOME="$H2" XDG_CONFIG_HOME="$1" python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import setup; print(setup.unit_dir())' "$REPO"; }
 [ "$(ud "$T/shellcfg")" = "$H2/.config/systemd/user" ] && echo "XDG_CONFIG_HOME=$H2/mgrcfg" > "$F2/environment" && [ "$(ud "$T/shellcfg")" = "$H2/mgrcfg/systemd/user" ] \
 	&& ok "the unit folder follows the manager's XDG_CONFIG_HOME, not the shell's" || bad "the unit folder follows the manager's XDG_CONFIG_HOME, not the shell's" "unit_dir: $(ud "$T/shellcfg")"

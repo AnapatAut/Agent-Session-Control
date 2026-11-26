@@ -312,3 +312,6 @@ asc/web/app.js %%%     reloading = false; %%%     ; %%% page: sessionStorage blo
 asc/web/app.js %%%  || ask.cancel || searching()) return false; %%%  || ask.cancel) return false; %%% page: a sheet open, a question asked, an action running, a search typed: no load (the next update tries again) %%% page
 asc/web/app.js %%% return !!q && typeof q.value === "string" && q.value !== ""; } %%% return false; } %%% page: a sheet open, a question asked, an action running, a search typed: no load (the next update tries again) %%% page
 asc/web/app.js %%% && q.value !== ""; } %%% ; } %%% page: a new release: the page loads again, once it answers %%% page
+asc/web/app.js %%%   if (s.setup && s.linger === false)⏎ %%%   if (false)⏎ %%% page: linger off, set up: a note to run asctl setup again, beside a watcher's; linger on or not known, or not set up: none of it %%% page
+asc/web/app.js %%%   if (s.setup && s.linger === false)⏎ %%%   if (s.linger !== true)⏎ %%% page: linger off, set up: a note to run asctl setup again, beside a watcher's; linger on or not known, or not set up: none of it %%% page
+asc/dash.py %%%  "linger": setup.linger_on(), %%%  "linger": False, %%% state: linger off, then on (its file, read on each request) %%% notices

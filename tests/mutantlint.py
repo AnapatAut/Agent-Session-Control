@@ -15,7 +15,7 @@ in its file (never "the first one"), a line given twice in a list, a change that
 that breaks the syntax fails every check, so it would be a catch that tests nothing), and a check
 or case that is not the suite's. Refused too, as a mutant must never take a suite off its fakes
 onto the real machine: a change to a line marked "# isolation:" (where asctl picks the test's tmux
-socket, systemctl or claude), and a new text naming systemctl, claude, `env -i` or an env= not
+socket, systemctl, loginctl or claude), and a new text naming systemctl, loginctl, claude, `env -i` or an env= not
 built from os.environ more often than the old one (tmux needs no such rule: tests/mutate.sh gives
 the suites a tmux folder of its own); and a
 file that is not text with one newline at its end and no CR (a mutant writes the file back: it
@@ -60,7 +60,7 @@ ISOLATION = '# isolation:'
 # a new text that names one of these more often than the old one: refused (the real command, or a
 # child's environment not built from this one: the suites' fakes, socket and home lost; an env=
 # dropped is fine, the child then has this whole environment)
-MORE = (('systemctl', r'\bsystemctl\b'), ('claude', r'\bclaude\b'), ('env -i', r'\benv\s+-i\b'),
+MORE = (('systemctl', r'\bsystemctl\b'), ('loginctl', r'\bloginctl\b'), ('claude', r'\bclaude\b'), ('env -i', r'\benv\s+-i\b'),
         ('env= not from os.environ', r'\benv\s*=\s*(?!dict\(\s*os\.environ\b|\{\s*\*\*\s*os\.environ\b|os\.environ\b)'))
 
 
@@ -180,14 +180,14 @@ def change(f, old, new, read, roots):
 
 def imports(f):
     """'' if module f (asc/<name>.py) of this repo imports, else why not. In a bare environment
-    with a home and tmux folder of its own, systemctl and claude a command that fails, the run id
+    with a home and tmux folder of its own, systemctl, loginctl and claude a command that fails, the run id
     passed on (tests/mutate.sh's cleanup sees what it starts), in a process group of its own that
     is ended after it, whatever it started too."""
     if not (f.startswith('asc/') and f.endswith('.py')):
         return ''
     with tempfile.TemporaryDirectory() as h:
         env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'HOME': h, 'LANG': 'C.UTF-8', 'TMUX_TMPDIR': h,
-               'ASC_TMUX_SOCKET': 'asc-import', 'ASC_SYSTEMCTL': '/bin/false', 'ASC_CLAUDE': '/bin/false'}
+               'ASC_TMUX_SOCKET': 'asc-import', 'ASC_SYSTEMCTL': '/bin/false', 'ASC_LOGINCTL': '/bin/false', 'ASC_CLAUDE': '/bin/false'}
         if 'ASC_MUT_RUN' in os.environ:
             env['ASC_MUT_RUN'] = os.environ['ASC_MUT_RUN']
         # stderr to a file, not a pipe: a child the module leaves running would hold a pipe open
@@ -333,6 +333,7 @@ REFUSED = [
     ('i.py %%% x = 1⏎y %%% x = 1⏎y', 'the new text is the old one'),
     ('i.py %%% ⏎x = 1 %%% ⏎x = 2', 'a line marked "# isolation:"'),
     ('i.py %%% x = 1 %%% x = ["systemctl"]', 'names systemctl more often'),
+    ('i.py %%% x = 1 %%% x = ["loginctl"]', 'names loginctl more often'),
     ('i.py %%% x = 1 %%% x = "claude"', 'names claude more often'),
     ("i.py %%% x = 1 %%% x = 'claude'", 'names claude more often'),
     ('b.sh %%% echo hi %%% exec claude', 'names claude more often'),

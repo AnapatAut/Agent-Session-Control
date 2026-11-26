@@ -44,8 +44,8 @@ own (a folder or `/usr/local/bin/asctl` it did not make, a unit file it did not 
 file changed since: keep a change in a drop-in, `<unit>.d/`), when the folder is not a whole
 release (one of its six unit files, or `asc/VERSION`, missing), when the code does not compile
 or start, or when a release it would use again has changed. It says the version it installed
-(`asctl 1.2.1: /usr/local/bin/asctl`) and, when it changed, the one before (`version 1.2.0 ->
-1.2.1`; an older one is installed too, said so: a rollback is one command). Every write is
+(`asctl 1.3.0: /usr/local/bin/asctl`) and, when it changed, the one before (`version 1.2.1 ->
+1.3.0`; an older one is installed too, said so: a rollback is one command). Every write is
 flushed to disk and renamed into place, every delete renames first: an install or uninstall
 stopped at any point (a kill, Ctrl-C) is finished by running it again, with no `--force`. Users'
 managers read changed units at their next `systemctl --user daemon-reload`. Tests:
@@ -68,7 +68,7 @@ root, not through `sudo -u` or `su`: it needs that user's systemd manager):
 
 ```bash
 asctl setup                    # shows what it will do and asks; --yes does not ask
-asctl setup --remove           # off again: favorites, the event log and the settings stay
+asctl setup --remove           # off again: favorites, the event log, the settings and linger stay
 ```
 
 Setup refuses, changing nothing, while asctl's units are not installed, while an older
@@ -91,12 +91,17 @@ there: they touch no session. Then it:
   running server stays that unit's until the next boot. `setup --remove` enables it again;
 - enables `asctl-tmux.service`, `asctl-boot.service`, `asctl-watch.timer` and
   `asctl-dash.socket`, and starts the timer and the socket;
-- on a first setup, turns auto-restart on (`asctl auto-restart off` turns it off).
+- on a first setup, turns auto-restart on (`asctl auto-restart off` turns it off);
+- last, turns linger on for you (`loginctl enable-linger NAME`, with no sudo: polkit allows it to
+  a user for themselves on most systems). Without linger the units start only once you log in,
+  so after a reboot nothing comes back until then. Where it is refused (or loginctl does not
+  answer), the rest stays done, setup says so with the admin's command (`sudo loginctl
+  enable-linger NAME`) and exits 1, and the dashboard shows a notice while linger is off.
+  `setup --remove` leaves it on (`loginctl disable-linger NAME` turns it off).
 
-It says when linger is off: without it the units start only once you log in, so after a reboot
-nothing comes back until then (`sudo loginctl enable-linger NAME`). The server gets the user
-manager's environment, not a login shell's: something your old tmux unit set in `Environment=`
-(such as `DISPLAY`) goes in a drop-in, `~/.config/systemd/user/asctl-tmux.service.d/`.
+The server gets the user manager's environment, not a login shell's: something your old tmux
+unit set in `Environment=` (such as `DISPLAY`) goes in a drop-in,
+`~/.config/systemd/user/asctl-tmux.service.d/`.
 
 **The dashboard** needs `~/.config/agent-session-control/dash.json` (it and its folder yours
 and writable only by you; read when the dashboard starts, so after a change run
@@ -120,6 +125,14 @@ status` does not list yet: serve replaces an entry already there without asking.
 sudo tailscale serve --bg --https=<port> unix:/run/user/<uid>/asctl/dash.sock   # uid: id -u NAME
 ```
 
+**Then check**, as that user:
+
+- `asctl setup` again says `asctl is set up already: nothing to do`;
+- `loginctl show-user NAME -p Linger` says `Linger=yes` (else nothing comes back after a reboot
+  until you log in);
+- the dashboard opens at `https://<MagicDNS name>:<port>` with no notice at the top;
+- each favorite to bring back after a reboot is on, with `resurrect` in `asctl list`.
+
 **A checkout of your own**, without the machine install: `tools/install-units.sh` writes the
 units and the scope drop-in into `~/.config/systemd/user/` (or `$XDG_CONFIG_HOME`'s, or a folder
 you name) with that checkout's `bin/asctl` in them. A unit there that is not the same is shown
@@ -136,7 +149,7 @@ starts again as new on the same session id (`--session-id`), as `--resume` would
 A claude that ends at once is said in seconds, with its exit code (on stderr: the page shows it).
 
 ```bash
-asctl --version             # asctl 1.2.1 (release <id>): asc/VERSION and the release it runs
+asctl --version             # asctl 1.3.0 (release <id>): asc/VERSION and the release it runs
                             # from, or (checkout); the dashboard's Settings says the same
 asctl live                  # running claudes: pid, session id, tmux session, folder
 asctl fav 12345 --name das  # favorite one (by pid, session id or pane %N); its tmux session becomes das-0421

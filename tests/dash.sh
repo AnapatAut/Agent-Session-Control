@@ -20,6 +20,7 @@ export FAKE_BASH="$T/fakebash/claude"
 mem() { printf 'MemTotal: %s kB\nMemAvailable: %s kB\nSwapTotal: %s kB\nSwapFree: %s kB\n' "$1" "$2" "${3:-0}" "${4:-0}" > "$T/meminfo"; }
 export ASC_MEMINFO="$T/meminfo"
 export ASC_SYSTEMCTL="$REPO/tests/asc/bin/systemctl"  # never the real one (On with no server)
+export ASC_LINGER_DIR="$T/linger"  # linger as the state says it: a folder of the run's, not the machine's
 mem 32000000 16000000
 export PATH="$REPO/tests/dash/bin:$PATH"  # a fake tailscale (the operator setting) and ip (fixed addresses)
 tm() { tmux -L "$ASC_TMUX_SOCKET" -f /dev/null "$@"; }
@@ -897,6 +898,8 @@ stop_dash; start_dash && state | jq -e '.setup == false' >/dev/null && ok "boot 
 : > "$HOME/fake-units/enabled/asctl-watch.timer"
 state | jq -e '.setup == false' >/dev/null && ok "setup is asked once a minute, not on every request" || bad "setup is asked once a minute, not on every request" "setup not cached"
 stop_dash; start_dash && state | jq -e '.setup == true' >/dev/null && ok "state: set up (boot and the watcher enabled)" || bad "state: set up (boot and the watcher enabled)" "set up: $(state | jq -c .setup)"
+mkdir -p "$T/linger"; state | jq -e '.linger == false' >/dev/null && : > "$T/linger/$(id -un)" && state | jq -e '.linger == true' >/dev/null \
+	&& ok "state: linger off, then on (its file, read on each request)" || bad "state: linger off, then on (its file, read on each request)" "linger: $(state | jq -c .linger)"
 stop_dash; ASC_SYSTEMCTL=/bin/false start_dash && state | jq -e '.setup == null' >/dev/null && ok "no answer from the user manager: setup unknown (no notice)" || bad "no answer from the user manager: setup unknown (no notice)" "no manager: $(state | jq -c .setup)"
 stop_dash; start_dash && ok "dash up again, the user manager answering" || bad "dash up again, the user manager answering" "no dash: $(cat "$T/dash.err")"
 rm -rf "$HOME/fake-units"

@@ -12,8 +12,9 @@ Built:
   its folder, with the same conversation resumed. A busy session is not turned off unless
   forced. Rename works while it runs; a restart only while it is idle.
 - **Restore per session.** After a reboot, only favorites that were on and have resurrect on come
-  back, one at a time (`asctl-boot.service`). tmux-resurrect and tmux-continuum are not needed
-  (setup refuses while continuum's restore or boot is on).
+  back, one at a time (`asctl-boot.service`), with no login needed (`asctl setup` turns linger
+  on). tmux-resurrect and tmux-continuum are not needed (setup refuses while continuum's
+  restore or boot is on).
 - **Memory-aware starts.** A session starts only under a memory limit of your own (60 to 85%
   used) with room for its size (a restart excepted); boot and the watcher also wait for memory
   to be steady. A session that a kernel out-of-memory kill ended can come back by itself (a first
