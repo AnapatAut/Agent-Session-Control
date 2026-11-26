@@ -126,22 +126,22 @@ asc/cli.py %%%     if pid is not None: %%%     if False: %%% on with a server up
 asc/cli.py %%%     if pid is None:⏎        raise RegistryError("no tmux server is running %%%     if False:⏎        raise RegistryError("no tmux server is running %%% on, no server and no unit: refused, no server started by asctl itself %%% boot
 asc/cli.py %%%     end = time.time() + timeout %%%     return {"pid": 0, "session_id": e["session_id"]} %%% on returns only once its claude is up %%% main
 asc/cli.py %%%         server = ensure_server() %%%         server = tmuxctl.server_pid() %%% on, no server and no unit: refused, no server started by asctl itself %%% boot
-asc/cli.py %%%         argv = claude_argv(e, resurrect) %%%         argv = claude_argv(e) %%% with rc (resurrect), rc being off %%% boot
+asc/cli.py %%%         argv = claude_argv(e, resurrect) %%%         argv = claude_argv(e) %%% with rc (resurrect), rc being off %%% boot_after
 asc/cli.py %%%     if running is not None: %%%     if False: %%% tmux-server with a server up: left as it is %%% boot
-asc/boot.py %%%     if not e or e.get("resurrect") is not True or e.get("want_on") is not True: %%%     if not e: %%% resurrect off while boot waits: left %%% boot
-asc/boot.py %%%     if tmuxctl.has_session(e["tmux"]): %%%     if False: %%% boot again: a session up already is left as it is %%% boot
+asc/boot.py %%%     if not e or e.get("resurrect") is not True or e.get("want_on") is not True: %%%     if not e: %%% resurrect off while boot waits: left %%% boot_after
+asc/boot.py %%%     if tmuxctl.has_session(e["tmux"]): %%%     if False: %%% boot again: a session up already is left as it is %%% boot_after
 asc/boot.py %%%         if not locked:  # an action holds it: the next look %%%         if False: %%% boot: an entry an action holds waits, then is left (refused) %%% boot
 asc/boot.py %%%         why = memory.steady(samples, span=STEADY_S) or memory.gate(e.get("rss_kb")) or _start(e, started) %%%         why = _start(e, started) %%% boot, memory fine but not watched 30 s: waits %%% boot
 asc/boot.py %%% memory.steady(samples, span=STEADY_S) %%% memory.steady(samples) %%% boot, memory fine but not watched 30 s: waits %%% boot
 asc/boot.py %%% STEADY_S = 30  # %%% STEADY_S = 120  # %%% boot, memory fine but not watched 30 s: waits %%% boot
 asc/boot.py %%% TICK_S = 10    # %%% TICK_S = 30    # %%% boot, waiting: a memory sample every 10 s %%% boot
-asc/boot.py %%%                 _pause() %%%                 time.sleep(PAUSE_S) %%% boot: a 30 s steady check before each start, a sample every 10 s in the 30 s pause between %%% boot
-asc/boot.py %%%         memory.add_sample(memory.sample())⏎ %%%         pass⏎ %%% boot: a 30 s steady check before each start, a sample every 10 s in the 30 s pause between %%% boot
-asc/boot.py %%% PAUSE_S = 30   # %%% PAUSE_S = 20   # %%% boot: a 30 s steady check before each start, a sample every 10 s in the 30 s pause between %%% boot
+asc/boot.py %%%                 _pause() %%%                 time.sleep(PAUSE_S) %%% boot: a 30 s steady check before each start, a sample every 10 s in the 30 s pause between %%% boot_after
+asc/boot.py %%%         memory.add_sample(memory.sample())⏎ %%%         pass⏎ %%% boot: a 30 s steady check before each start, a sample every 10 s in the 30 s pause between %%% boot_after
+asc/boot.py %%% PAUSE_S = 30   # %%% PAUSE_S = 20   # %%% boot: a 30 s steady check before each start, a sample every 10 s in the 30 s pause between %%% boot_after
 asc/memory.py %%% STEADY_S = 120      # %%% STEADY_S = 300      # %%% steady and evidence: gaps, a dip, another boot, each kind of pressure, samples too far apart %%% watcher_memory
 asc/memory.py %%%     return f"{s // 60} min" if s >= 60 and s % 60 == 0 else f"{s} s" %%%     return f"{s // 60} min" %%% steady and evidence: gaps, a dip, another boot, each kind of pressure, samples too far apart %%% watcher_memory
-asc/boot.py %%%             raise RegistryError("another asctl boot is running") %%%             return 0 %%% one boot at a time %%% boot
-asc/boot.py %%%             socket.create_connection((host, int(port)), timeout=NET_TRY_S).close() %%%             raise OSError %%% boot: an entry an action holds waits, then is left (refused) %%% boot
+asc/boot.py %%%             raise RegistryError("another asctl boot is running") %%%             return 0 %%% one boot at a time %%% boot_after
+asc/boot.py %%%             socket.create_connection((host, int(port)), timeout=NET_TRY_S).close() %%%             raise OSError %%% boot, claude.ai answering at once: no network wait logged %%% boot
 asc/boot.py %%%         cli.ensure_server() %%%         pass %%% boot, no server: asctl-tmux.service started (exit-empty off) %%% boot
 asc/boot.py %%%         if said.get(e["id4"]) != reason: %%%         if False: %%% boot: an entry an action holds waits, then is left (refused) %%% boot
 bin/asctl-wrap %%% for ((i = 0; i < 30; i++)); do %%% for ((i = 0; i < 0; i++)); do %%% claude is in its pane's scope, not the server's cgroup %%% main
@@ -213,14 +213,14 @@ asc/past.py %%%                 budget -= len(b) %%%                 pass %%% le
 asc/past.py %%%         f = live.open_regular(p) if p else None %%%         f = open(p, "rb") if p else None %%% lengths: counted on from where the last count stopped; a replaced, shrunk or symlinked transcript handled %%% events
 asc/watch.py %%%         st["at"] = int(time.time()) %%%         pass %%% watch: when its run began, for the dashboard %%% watcher_memory
 asc/watch.py %%%         past.update_lengths( %%%         (lambda *a: None)( %%% watch: a favorite's conversation length counted (lengths.json, 0600) %%% watcher_memory
-asc/boot.py %%%         signal.signal(signal.SIGTERM, lambda *_: sys.exit(143)) %%%         pass %%% boot stopped (SIGTERM): exit 143, boot.json done %%% boot
-asc/boot.py %%%             todo = [i for i in todo if es.get(i, {}).get("resurrect") is True and es[i].get("want_on") is True] %%%             pass %%% boot.json leaves out a favorite turned off, resurrect off or forgotten since %%% boot
+asc/boot.py %%%         signal.signal(signal.SIGTERM, lambda *_: sys.exit(143)) %%%         pass %%% boot stopped (SIGTERM): exit 143, boot.json done %%% boot_after
+asc/boot.py %%%             todo = [i for i in todo if es.get(i, {}).get("resurrect") is True and es[i].get("want_on") is True] %%%             pass %%% boot.json leaves out a favorite turned off, resurrect off or forgotten since %%% boot_after
 asc/events.py %%%             drop |= rank[id4] + 1 >= KEEP_PER + KEEP_SLACK %%%             drop = True %%% kept: a favorite's last 200 however old; others 7 days; before a forget is an earlier favorite's %%% events
 asc/events.py %%%         while per > 1 and total() > MAX_BYTES // 2: %%%         while False: %%% kept: a favorite's last 200 however old; others 7 days; before a forget is an earlier favorite's %%% events
 asc/past.py %%%     return max(sorted(paths), key=mtime) if paths else None %%%     return sorted(paths)[0] if paths else None %%% lengths: counted on from where the last count stopped; a replaced, shrunk or symlinked transcript handled %%% events
 asc/past.py %%%             if isinstance(k, str) and _entry(v) and v["size"] == v["seen"]} %%%             if isinstance(k, str) and _entry(v)} %%% lengths: counted on from where the last count stopped; a replaced, shrunk or symlinked transcript handled %%% events
-asc/boot.py %%%             _status([], "", done=True) %%%             pass %%% boot.json once boot ends: done %%% boot
-asc/boot.py %%%         _status(todo, why) %%%         pass %%% boot.json while boot runs (its lock held): what it still brings back, and why it waits (0600) %%% boot
+asc/boot.py %%%             _status([], "", done=True) %%%             pass %%% boot.json once boot ends: done %%% boot_after
+asc/boot.py %%%         _status(todo, why) %%%         pass %%% boot.json while boot runs (its lock held): what it still brings back, and why it waits (0600) %%% boot_after
 asc/cli.py %%%  and any(p["pane_pid"] == ex[3] for p in tmuxctl.panes(e["tmux"])): %%%  and True: %%% an exit record of another pane (one the session before wrote late) is not this start's %%% on_gates
 asc/cli.py %%%     if not os.path.isabs(p): %%%     if False: %%% new refused: a relative path %%% new_session
 asc/cli.py %%%     if real == home: %%%     if False: %%% new refused: the home folder itself %%% new_session
@@ -292,11 +292,11 @@ asc/cli.py %%%         if mcp_prompt(tmuxctl.capture_pane(pane), e["cwd"]) != na
 asc/cli.py %%%  or st.st_size > MCP_MAX: %%% : %%% mcp_servers: .mcp.json read; a FIFO never waited on, one over 1 MB or too deep not read %%% mcp_prompt
 asc/cli.py %%% ("waiting for trust" if trust_prompt(tmuxctl.capture(e["tmux"]), e["cwd"]) else "waiting at a prompt") %%% ("waiting for trust") %%% new: an MCP prompt for a server .mcp.json does not declare: left, named, nothing pressed %%% mcp_prompt
 asc/cli.py %%% "prompt": x.title, "new": new} %%% "new": new} %%% new: an MCP prompt for a server .mcp.json does not declare: left, named, nothing pressed %%% mcp_prompt
-asc/cli.py %%% , "new": new} %%% } %%% trust after a new favorite's start, then Claude Code's MCP prompt: Esc, its claude up, the mark gone %%% mcp_prompt
-asc/cli.py %%%         return _left_waiting(e, mode, rc, x, loud, new) %%%         return _left_waiting(e, mode, rc, x, loud, False) %%% trust after a new favorite's start, then Claude Code's MCP prompt: Esc, its claude up, the mark gone %%% mcp_prompt
-asc/cli.py %%%     new = mark.get("new") is True %%%     new = True %%% trust after On (not a new favorite's start), then the MCP prompt: left, named, nothing pressed %%% mcp_prompt
-asc/cli.py %%%  = mark.get("new") is True %%%  = False %%% trust after a new favorite's start, then Claude Code's MCP prompt: Esc, its claude up, the mark gone %%% mcp_prompt
-asc/cli.py %%%         return _left_waiting(e, mode, rc, x, True, new) %%%         raise %%% trust, then another prompt: trusted, left at it, named (not "waiting for trust") %%% mcp_prompt
+asc/cli.py %%% , "new": new} %%% } %%% trust after a new favorite's start, then Claude Code's MCP prompt: Esc, its claude up, the mark gone %%% mcp_trust
+asc/cli.py %%%         return _left_waiting(e, mode, rc, x, loud, new) %%%         return _left_waiting(e, mode, rc, x, loud, False) %%% trust after a new favorite's start, then Claude Code's MCP prompt: Esc, its claude up, the mark gone %%% mcp_trust
+asc/cli.py %%%     new = mark.get("new") is True %%%     new = True %%% trust after On (not a new favorite's start), then the MCP prompt: left, named, nothing pressed %%% mcp_trust
+asc/cli.py %%%  = mark.get("new") is True %%%  = False %%% trust after a new favorite's start, then Claude Code's MCP prompt: Esc, its claude up, the mark gone %%% mcp_trust
+asc/cli.py %%%         return _left_waiting(e, mode, rc, x, True, new) %%%         raise %%% trust, then another prompt: trusted, left at it, named (not "waiting for trust") %%% mcp_trust
 asc/watch.py %%%         if p == "trust": %%%         if True: %%% watch: another prompt answered in its pane: the mark dropped, logged %%% mcp_prompt
 asc/cli.py %%%             raise ActionFailed(f"claude {s['pid']} still runs after SIGTERM and with %%%             None and ActionFailed(f"claude {s['pid']} still runs after SIGTERM and with %%% off: a claude that neither SIGTERM nor the closed session ends: a failure, said, never logged as off %%% off_survivor
 asc/cli.py %%% ("ended" if termed else "ended once its tmux session closed (not on SIGTERM)") %%% ("ended") %%% off: a claude past its SIGTERM that the closed session ends: off, said how it ended %%% off_survivor

@@ -7,7 +7,8 @@
 #   MUTANTS_FULL=1 tests/mutate.sh    every mutant on its whole suite (slow; for comparing)
 # First the baseline: every case alone, which must be all ok, no skip, each case done, and show
 # exactly the checks of the source, each in its own case (else exit 2: no verdict on a bad
-# baseline). Then each mutant: its case alone, stopped at its check (TEST_STOP_AT). A FAIL of
+# baseline). Then each mutant (started longest case first, by the baseline's times; reported in
+# the lists' order): its case alone, stopped at its check (TEST_STOP_AT). A FAIL of
 # that check, twice: CAUGHT. Else the whole suite, "(full)": a FAIL of it twice: CAUGHT (full);
 # the check ok, every case done, the baseline's checks: SURVIVED (UNCLEAR if its case run had it
 # FAIL once, or its case run was cut short: a setup stop, its check not reached); anything else
@@ -294,7 +295,7 @@ runs() { jobs -rp | grep -cvxF "$SAMPLER"; }
 
 echo "mutate: run $RID, $JOBS at a time$([ "$FULL" = 1 ] && echo ", every mutant on its whole suite"); $earlyoom"
 SUITES=(asc dash install)
-declare -A CASES LIMIT FLIMIT
+declare -A CASES LIMIT FLIMIT CSEC
 NS=() MS=() ML=() MC=() MK=() MN=()
 for s in "${SUITES[@]}"; do
 	(cd "$B" && python3 -I tests/checklint.py --names "tests/$s.sh" tests/dash/page.js) > "$W/names.$s" || die "$s: the checks of its source cannot be read"
@@ -332,7 +333,7 @@ for s in "${SUITES[@]}"; do
 		read -r rc t0 t1 < "$W/out/base.$s/$c.rc" || die "baseline $s $c: no result"
 		why=$(trusted "$t0" "$t1") || die "baseline $s $c: not trusted: $why"
 		[ "$rc" = 0 ] || die "baseline $s $c: exit $rc$(why=$(untimed "$rc" 900) && echo " ($why)")"$'\n'"$(grep -A3 '^  FAIL\|^setup:' "$W/out/base.$s/$c.out" | head -20)"$'\n'"$(io=$(iostall "$t0" "$t1"); [ -z "$io" ] || echo "        I/O: tasks stalled on I/O for $io ms around it (PSI full; told, not judged)")"$'\n'"== the baseline's output of $s $c (its last 200 lines)"$'\n'"$(tail -n 200 "$W/out/base.$s/$c.out")"
-		sec=$(((t1 - t0 + 999) / 1000)); tot=$((tot + sec))
+		sec=$(((t1 - t0 + 999) / 1000)); tot=$((tot + sec)) CSEC[$s.$c]=$sec
 		LIMIT[$s.$c]=$((sec * 4 > MIN ? sec * 4 : MIN))
 	done
 	FLIMIT[$s]=$((tot * 3 > MIN * 5 ? tot * 3 : MIN * 5))
@@ -391,19 +392,24 @@ mutant() {
 
 echo "mutate: baseline took $(took "$START")"
 
-# Each mutant, JOBS at a time; none started once memory is short or the sampler is gone.
+# Each mutant, JOBS at a time; none started once memory is short or the sampler is gone. Started
+# longest first: by its case's time in the baseline (a mutant's run lasts at most that), so no
+# long one is left to run alone at the end; the same order every time (then by its place in the
+# lists). Reported in the lists' order all the same.
 echo "== mutants"
 N=${#MS[@]} since=$(now) stopped=''
-for ((i = 0; i < N; i++)); do
+mapfile -t ORDER < <(for ((i = 0; i < N; i++)); do printf '%s\t%s\n' "${CSEC[${MS[$i]}.${MC[$i]}]:-0}" "$i"; done | sort -t$'\t' -k1,1nr -k2,2n | cut -f2)
+[ "${#ORDER[@]}" = "$N" ] || die "the mutants' start order lost some ($N, ${#ORDER[@]})"
+for ((j = 0; j < N; j++)); do
 	stopped=$(halted "$since") && break
-	mutant "$i" 9>&- &
+	mutant "${ORDER[$j]}" 9>&- &
 	while [ "$(runs)" -ge "$JOBS" ]; do wait -n; done
 done
 while [ "$(runs)" -gt 0 ]; do wait -n; done
 echo "mutate: mutants took $(took "$since")"
 if [ -n "$stopped" ]; then
 	echo "mutate: no more mutants started: $stopped" >&2
-	for ((; i < N; i++)); do printf 'UNCLEAR\tnot run: %s\n' "$stopped" > "$W/res/$i"; done
+	for ((; j < N; j++)); do printf 'UNCLEAR\tnot run: %s\n' "$stopped" > "$W/res/${ORDER[$j]}"; done
 fi
 
 # Each run's trust: one wait for the sampler's sample from a second after the last run ended.

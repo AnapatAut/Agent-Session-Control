@@ -819,10 +819,11 @@ mkdir -p "$HOME/.claude/projects/-hang"
 printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SID" > "$HOME/.claude/projects/-hang/$SID.jsonl"
 srv=$(tm display-message -p '#{pid}')
 kill -STOP "$srv"
-t0=$(date +%s); r=$(dc -m 90 -o "$T/hung" -w '%{http_code}' http://x/api/state); t1=$(date +%s)
-pj=$(dc -m 90 http://x/api/past)
+# asctl gives up on tmux after its own 5 s: 30 s is the test's ceiling, not asctl's
+t0=$(date +%s); r=$(dc -m 30 -o "$T/hung" -w '%{http_code}' http://x/api/state); t1=$(date +%s)
+pj=$(dc -m 30 http://x/api/past)
 kill -CONT "$srv"
-[ "$r" = 200 ] && [ $((t1 - t0)) -lt 80 ] && ok "state still answers while tmux hangs" || bad "state still answers while tmux hangs" "state with a hung tmux: $r after $((t1 - t0)) s"
+[ "$r" = 200 ] && [ $((t1 - t0)) -lt 25 ] && ok "state still answers while tmux hangs" || bad "state still answers while tmux hangs" "state with a hung tmux: $r after $((t1 - t0)) s"
 # not "no server", and no state guessed: what tmux would say is not known
 jq -e '.tmux_error == "tmux did not answer: no answer in 5 s" and .server == null and .active == []
 	and (.favorites | length > 0 and all(.state == "unknown" and .pid == null))' "$T/hung" >/dev/null \
@@ -1042,9 +1043,10 @@ fi
 # checkout's asc/ and bin/) and current pointing at one, served from systemd's socket the way
 # asctl-dash.socket does it (tests/dash/sockact.py: it starts the server again at the next
 # request once it exits).
-case_release() {
-echo "== a new release: the server follows it (from systemd's socket only)"
-fresh; dash_conf /u; tmux_up
+# The releases as install.sh lays them out, current at release A, served from systemd's socket by
+# tests/dash/sockact.py, and the helpers both release cases use (ver, starts, point). The
+# server's pid in DPID.
+release_up() {
 R="$T/opt" A=aaaaaaaaaaaa B=bbbbbbbbbbbb
 mkdir -p "$R/releases/$A" "$R/releases/$B" "$R/releases/dddddddddddd" "$R/releases/stage-x/bin" "$T/elsewhere/releases/cccccccccccc/bin"
 cp -r "$REPO/asc" "$REPO/bin" "$R/releases/$A/"; cp -r "$REPO/asc" "$REPO/bin" "$R/releases/$B/"
@@ -1059,6 +1061,12 @@ python3 -I "$REPO/tests/dash/sockact.py" "$SOCK" "$T/sa.log" "$R/current/bin/asc
 poll 3 [ -S "$SOCK" ] || stop "the test's socket activation listening"
 ver() { dc -m 5 "http://x/u/api/state" | jq -r '.version // empty' 2>/dev/null; }
 starts() { grep -c '^start' "$T/sa.log"; }
+}
+
+case_release() {
+echo "== a new release: the server follows it (from systemd's socket only)"
+fresh; dash_conf /u; tmux_up
+release_up
 [ "$(ver)" = "$V (release $A)" ] && ok "release: on systemd's socket it runs the release current points at" || bad "release: on systemd's socket it runs the release current points at" "version $(ver): $(tail -3 "$T/sa.err")"
 page_get
 seen "name=\"asctl-version\" content=\"$V (release $A)\"" "$T/page" && ok "release: the page carries the version of the server that sent it" || bad "release: the page carries the version of the server that sent it" "$(grep -o 'name="asctl-version"[^>]*' "$T/page")"
@@ -1073,6 +1081,17 @@ point releases/dddddddddddd
 stays && ok "release: current at a release folder without bin/asctl: it stays" || bad "release: current at a release folder without bin/asctl: it stays" "starts $(starts), version $(ver): $(tail -2 "$T/sa.err")"
 rm "$R/current"
 stays && ok "release: no current link: it stays" || bad "release: no current link: it stays" "starts $(starts), version $(ver): $(tail -2 "$T/sa.err")"
+# shellcheck disable=SC2046  # pids
+kill $(pgrep -P "$DPID") "$DPID" 2>/dev/null; wait "$DPID" 2>/dev/null; DPID=
+SOCK="$T/run/asctl/dash.sock"
+}
+
+# The release case after its "it stays" checks (split off case release, whose waits of 2.5 s
+# each they would otherwise run after): a held action, a slow page load, then the switch.
+case_release_after() {
+echo "== a new release: an action and a page load in flight, then the switch"
+fresh; dash_conf /u; tmux_up
+release_up
 point "releases/$A"
 TOK=$(token)
 # What release A's server runs for an action from now on (bin/asctl of its own release): a stub
@@ -1144,7 +1163,7 @@ kill $(pgrep -P "$DPID") "$DPID" 2>/dev/null; wait "$DPID" 2>/dev/null; DPID=
 SOCK="$T/run/asctl/dash.sock"
 }
 
-run_cases dash page config socket pwa name state actions_token actions_fav actions_restart actions_new past client operator stale tmux_hang transcripts token rc notices prefix systemd release
+run_cases dash page config socket pwa name state actions_token actions_fav actions_restart actions_new past client operator stale tmux_hang transcripts token rc notices prefix systemd release release_after
 
 echo "dash: $pass passed, $fail failed"
 [ "$fail" = 0 ]

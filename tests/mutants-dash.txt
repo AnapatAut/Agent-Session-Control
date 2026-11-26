@@ -275,22 +275,22 @@ asc/dash.py %%%             "version": VERSION, %%%             "version": "", %
 asc/web/app.js %%%   if (S && typeof S.version === "string" && S.version) out.push %%%   if (false) out.push %%% page: Settings: the version line, asctl and what the server runs; none without one %%% page
 asc/web/app.js %%% out.push(el("p", "asctl " + S.version, "ver")); %%% out.push(el("p", S.version, "ver")); %%% page: Settings: the version line, asctl and what the server runs; none without one %%% page
 asc/dash.py %%% .replace("@VERSION@", html.escape(VERSION)) %%% .replace("@VERSION@", "") %%% release: the page carries the version of the server that sent it %%% release
-asc/dash.py %%%             self.taken += 1 %%%             pass %%% release: the next request starts it again, from the new release %%% release
-asc/dash.py %%%  and self.taken == 0, timeout) %%% , timeout) %%% release: a page load it took before it exits is answered, by it %%% release
-asc/dash.py %%%             self._done()  # its thread ends %%%             pass %%% release: the next request starts it again, from the new release %%% release
+asc/dash.py %%%             self.taken += 1 %%%             pass %%% release: the next request starts it again, from the new release %%% release_after
+asc/dash.py %%%  and self.taken == 0, timeout) %%% , timeout) %%% release: a page load it took before it exits is answered, by it %%% release_after
+asc/dash.py %%%             self._done()  # its thread ends %%%             pass %%% release: the next request starts it again, from the new release %%% release_after
 asc/dash.py %%%     if (new == here or os.path.dirname %%%     if (os.path.dirname %%% release: current unchanged: the same server %%% release
 asc/dash.py %%%  or os.path.dirname(new) != releases or not %%%  or not %%% release: current at a release in another releases/ folder: it stays %%% release
 asc/dash.py %%%  or not cli.release(new) %%%  or False %%% release: current at a folder in releases/ not named as a release: it stays %%% release
 asc/dash.py %%%             or not os.path.isfile(os.path.join(new, "bin", "asctl"))): %%%             or False): %%% release: current at a release folder without bin/asctl: it stays %%% release
-asc/dash.py %%%     follow = sock is not None and cli.release(cli.HERE) is not None %%%     follow = cli.release(cli.HERE) is not None %%% release: without systemd's socket it keeps its release (nothing would start it again) %%% release
-asc/dash.py %%%     follow = sock is not None and cli.release(cli.HERE) is not None %%%     follow = sock is not None %%% release: a checkout never follows one, even on systemd's socket %%% release
-asc/dash.py %%%     if idle or follow: %%%     if idle: %%% release: then the server exits, naming the release %%% release
-asc/dash.py %%%                 if not srv.running: %%%                 if True: %%% release: while an action runs, the old server still answers %%% release
+asc/dash.py %%%     follow = sock is not None and cli.release(cli.HERE) is not None %%%     follow = cli.release(cli.HERE) is not None %%% release: without systemd's socket it keeps its release (nothing would start it again) %%% release_after
+asc/dash.py %%%     follow = sock is not None and cli.release(cli.HERE) is not None %%%     follow = sock is not None %%% release: a checkout never follows one, even on systemd's socket %%% release_after
+asc/dash.py %%%     if idle or follow: %%%     if idle: %%% release: then the server exits, naming the release %%% release_after
+asc/dash.py %%%                 if not srv.running: %%%                 if True: %%% release: while an action runs, the old server still answers %%% release_after
 asc/dash.py %%%                     if idle and time.monotonic() - srv.last >= idle: %%%                     if time.monotonic() - srv.last >= idle: %%% release: on systemd's socket it runs the release current points at %%% release
 asc/dash.py %%%                     if idle and time.monotonic() - srv.last >= idle: %%%                     if False: %%% refused requests do not keep dash alive %%% prefix
-asc/dash.py %%%                     new = release_moved(cli.HERE) if follow else None %%%                     new = release_moved(cli.HERE) %%% release: without systemd's socket it keeps its release (nothing would start it again) %%% release
-asc/dash.py %%%                     if new: %%%                     if False: %%% release: then the server exits, naming the release %%% release
-asc/dash.py %%% release {new} installed: exiting, the next %%% release installed, the next %%% release: then the server exits, naming the release %%% release
+asc/dash.py %%%                     new = release_moved(cli.HERE) if follow else None %%%                     new = release_moved(cli.HERE) %%% release: without systemd's socket it keeps its release (nothing would start it again) %%% release_after
+asc/dash.py %%%                     if new: %%%                     if False: %%% release: then the server exits, naming the release %%% release_after
+asc/dash.py %%% release {new} installed: exiting, the next %%% release installed, the next %%% release: then the server exits, naming the release %%% release_after
 asc/web/index.html %%% <meta name="asctl-version" content="@VERSION@"> %%% <meta name="asctl-version" content=""> %%% release: the page carries the version of the server that sent it %%% release
 asc/web/app.js %%% function pageVersion(doc) { const m = doc.querySelector('meta[name="asctl-version"]'); %%% function pageVersion(doc) { const m = doc.querySelector('meta[name="asctl-token"]'); %%% page: the page's own version: its meta's, none without one %%% page
 asc/web/app.js %%% return m && typeof m.content === "string" ? m.content : ""; } %%% return m ? m.content : ""; } %%% page: the page's own version: its meta's, none without one %%% page

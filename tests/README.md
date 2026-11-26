@@ -67,8 +67,9 @@ more often than the old one. A mutant whose module then fails at import (importe
 bare environment) is BROKEN.
 `tests/mutate.sh` copies the tracked files to `/tmp/asc-mut.<run id>` and first runs every case
 alone as the baseline: all `ok`, no `skip`, each case done, exactly the source's checks (else
-exit 2, no verdicts). Then each mutant, `MUTANT_JOBS` (default 3) at a time, in a copy of its
-own: its case alone, stopped at its check (`TEST_STOP_AT`); that check failing twice is CAUGHT.
+exit 2, no verdicts). Then each mutant, `MUTANT_JOBS` (default 3) at a time, started longest
+case first (by the baseline's times, so no long one runs alone at the end; reported in the
+lists' order), in a copy of its own: its case alone, stopped at its check (`TEST_STOP_AT`); that check failing twice is CAUGHT.
 Else the whole suite (`(full)`): failing twice, CAUGHT; the check `ok`, every case done and the
 baseline's checks, SURVIVED; anything else (a FAIL elsewhere only, flaky, its case failing it
 once, its case run cut short before its check) UNCLEAR. A run over its time limit, or with

@@ -169,6 +169,16 @@ result "a mutant its check fails in its case, twice: CAUGHT, exit 0, its two run
 toy caughtfull; run caughtfull MUTANTS_FULL=1
 result "MUTANTS_FULL=1: every mutant on its whole suite" 0 "caught by: a is 1 (one, full)" "caught by: b is 2 here (only, full)"
 
+# Longest case first: the dash case made the slowest in the baseline, so its mutant starts first
+# (one at a time), though the lists put asc's first; asc's mutant is caught only if it did.
+toy order
+sed -i 's|^\t\[ "$(b)" = 2 \] \&\& ok "b is 2 here"|\tslow\n\t[ "$(b)" = 2 ] \&\& ok "b is 2 here"|' "$T/order/tests/dash.sh"
+sed -i 's|^slow() { :; }$|slow() { [ "${ASC_ONLY-}" != only ] \|\| sleep 2; }|' "$T/order/asc/prod.sh"
+printf '%s\n' 'asc/prod.sh %%% a() { echo 1; } %%% a() { [ -e "$ASC_MUT_PROC/first" ] && echo 9 || echo 1; } %%% a is 1 %%% one' > "$T/order/tests/mutants-asc.txt"
+printf '%s\n' 'asc/prod.sh %%% b() { echo 2; } %%% b() { touch "$ASC_MUT_PROC/first"; echo 8; } %%% b is 2 here %%% only' > "$T/order/tests/mutants-dash.txt"
+run order MUTANT_JOBS=1
+result "mutants start longest case first (by the baseline), reported in the lists' order" 0 "caught by: a is 1 (one)" "caught by: b is 2 here (only)" \
+	"3 mutants: 3 caught (0 only by the whole suite)"
 toy full
 printf '%s\n' 'asc/prod.sh %%% mark() { :; } %%% mark() { touch "$1/marker"; } %%% no marker %%% two' > "$T/full/tests/mutants-asc.txt"
 run full

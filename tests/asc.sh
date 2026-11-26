@@ -1780,7 +1780,6 @@ with registry.changing() as d:
     others = sorted(i for i in d["entries"] if i != sys.argv[2])
     for n, i in enumerate(others):
         d["entries"][i].update(resurrect=n == 0, want_on=n != 0)' "$REPO" "$idw"
-others=$(jq -r --arg w "$idw" '[.entries[] | select(.id4 != $w) | .tmux] | join(" ")' "$REG")
 tmux_up() { tm display -p x >/dev/null 2>&1; }
 tm kill-server; poll_gone 5 tmux_up || stop "the test tmux server ended"
 touch "$HOME/fake-systemctl-fail"
@@ -1792,11 +1791,14 @@ python3 -c 'import socket, time
 a, b = socket.socket(), socket.socket(); a.bind(("127.0.0.1", 0)); a.listen(8); b.bind(("127.0.0.1", 0))
 print(a.getsockname()[1], b.getsockname()[1], flush=True); time.sleep(300)' > "$T/ports" & lp=$!
 poll 5 [ -s "$T/ports" ] || stop "the test's two ports open"
-read -r up_port shut_port < "$T/ports"
+read -r up_port _ < "$T/ports"
 boot() { ASC_BY=boot asctl boot "$@"; }
 # Its lock held by an action: boot waits (here 0 s), then leaves it.
 : > "$SC"; flock "$SD/locks/$idw" sleep 3 & fl=$!; sleep 0.3; seed
+nw0=$(jq -s '[.[] | select((.text // "") | test("did not answer"))] | length' "$SD/events.jsonl" 2>/dev/null || echo 0)
 ASC_NET=127.0.0.1:$up_port boot --wait 0 >/dev/null 2>&1; rc=$?
+[ "$(jq -s '[.[] | select((.text // "") | test("did not answer"))] | length' "$SD/events.jsonl")" = "$nw0" ] \
+	&& ok "boot, claude.ai answering at once: no network wait logged" || bad "boot, claude.ai answering at once: no network wait logged" "net wait: $(last waiting)"
 grep -qx -- '--user start asctl-tmux.service' "$SC" && [ "$(tm show -gv exit-empty)" = off ] \
 	&& ok "boot, no server: asctl-tmux.service started (exit-empty off)" || bad "boot, no server: asctl-tmux.service started (exit-empty off)" "server at boot: $(cat "$SC")"
 [ "$rc" = 1 ] && last waiting | seen 'not started yet: .*being started or stopped' && last refused | seen 'boot: not started in 0 s' \
@@ -1813,6 +1815,42 @@ ASC_NET=127.0.0.1:$up_port boot --wait 12 >/dev/null 2>&1; rc=$?
 	&& ok "boot, memory fine but not watched 30 s: waits" || bad "boot, memory fine but not watched 30 s: waits" "boot, steady: rc $rc $(last waiting)"
 jq -e 'length == 3 and .[1].t - .[0].t >= 9 and .[1].t - .[0].t <= 11' "$SD/memory.json" >/dev/null \
 	&& ok "boot, waiting: a memory sample every 10 s" || bad "boot, waiting: a memory sample every 10 s" "boot samples: $(jq -c 'map(.t)' "$SD/memory.json")"
+kill "$lp" 2>/dev/null; wait "$lp" 2>/dev/null; rm -f "$T/ports"
+for x in $(jq -r '.entries[].id4' "$REG"); do asctl off "$x" --force >/dev/null 2>&1; asctl forget "$x" >/dev/null; done
+}
+
+# Boot after its real waits (split from case boot, which runs them: the 12 s "not watched 30 s"
+# wait and its samples). Setup: as boot leaves it (no favorites); conversations of its own, a
+# favorite (idw) named wat3, off but wanted on, resurrect on, rc off at its next start, its size
+# known; one other with resurrect on that was off, one on with resurrect off; the two ports, as
+# boot has them; steady memory seeded.
+# shellcheck disable=SC2329  # helpers run only through poll
+case_boot_after() {
+server_up
+B4=bbbbbbbb-0000-4000-8000-000000000004 B5=bbbbbbbb-0000-4000-8000-000000000005 B6=bbbbbbbb-0000-4000-8000-000000000006
+mkdir -p "$HOME/.claude/projects/-boot"
+for x in "$B4" "$B5" "$B6"; do printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$x" > "$HOME/.claude/projects/-boot/$x.jsonl"; done
+asctl fav "$B4" --name wat3 >/dev/null || stop "boot's favorite, for boot after its waits"
+asctl fav "$B5" --name bootx >/dev/null || stop "a favorite boot leaves alone, after its waits"
+asctl fav "$B6" --name booty >/dev/null || stop "another favorite boot leaves alone, after its waits"
+idw=$(jq -r --arg s "$B4" '.entries[] | select(.session_id == $s) | .id4' "$REG")
+asctl resurrect "$idw" on >/dev/null; asctl rc "$idw" off --next-start >/dev/null
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import registry
+with registry.changing() as d:
+    d["entries"][sys.argv[2]].update(rss_kb=400000, want_on=True)
+    others = sorted(i for i in d["entries"] if i != sys.argv[2])
+    for n, i in enumerate(others):
+        d["entries"][i].update(resurrect=n == 0, want_on=n != 0)' "$REPO" "$idw" || stop "boot's favorites as before a reboot"
+others=$(jq -r --arg w "$idw" '[.entries[] | select(.id4 != $w) | .tmux] | join(" ")' "$REG")
+rm -f "$T/ports"  # boot's, its listener gone: never read as this one's
+python3 -c 'import socket, time
+a, b = socket.socket(), socket.socket(); a.bind(("127.0.0.1", 0)); a.listen(8); b.bind(("127.0.0.1", 0))
+print(a.getsockname()[1], b.getsockname()[1], flush=True); time.sleep(300)' > "$T/ports" & lp=$!
+poll 5 [ -s "$T/ports" ] || stop "the test's two ports open, for boot after its waits"
+read -r up_port shut_port < "$T/ports"
+boot() { ASC_BY=boot asctl boot "$@"; }
+mem 32000000 16000000; seed
+echo "== boot, after its waits"
 # Two to bring back, on a clock of its own here (all else stubbed): a 30 s steady check before each,
 # and in the 30 s pause after the first start a memory sample every 10 s.
 bl=$(python3 -I -c 'import sys, types; sys.path.insert(0, sys.argv[1]); from asc import boot
@@ -2104,9 +2142,8 @@ rm "$F2/environment"
 # "server exited unexpectedly"): a socket that hangs up on each client says just that. It is never
 # taken for "no server": nothing starts one, nothing acts, and what is not known is said.
 # shellcheck disable=SC2329  # helpers run only through poll
-case_mcp_prompt() {
-server_up
-echo "== Claude Code's prompts for new MCP servers: Esc (none used) at a new favorite's start only; any other prompt left, named"
+# The helpers of the MCP prompt cases (mcp_prompt, mcp_trust).
+mcp_helpers() {
 mid() { jq -r --arg c "$1" '[.entries[] | select(.cwd == $c) | .id4] | last // empty' "$REG"; }
 mkeys() { grep -c ' mcp: ' "$HOME/claude-args.log"; }
 mcpdir() {  # $1: a folder in $HOME, made, its .mcp.json declaring the servers $2...
@@ -2124,6 +2161,12 @@ left() {  # $1: the folder's name; $2: what Claude Code asks: left at it, nothin
 		&& last prompt | seen -F "Claude Code asks: '$2'" && asctl list | seen -E "^$id  $1-$id +waiting at a prompt "; }
 gone() { asctl off "$id" --force >/dev/null; asctl forget "$id" >/dev/null; }
 one="New MCP server found in this project: supa"
+}
+
+case_mcp_prompt() {
+server_up
+echo "== Claude Code's prompts for new MCP servers: Esc (none used) at a new favorite's start only; any other prompt left, named"
+mcp_helpers
 mcpdir mcpa supa; mcpdir mcpmany supa beta
 # first, what is read as Claude Code's MCP prompts, and .mcp.json, from screens and files (before any start a change here could stop)
 mp() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import cli
@@ -2205,6 +2248,16 @@ wait "$np"; rm -f "$HOME/fake-mcp-late"; out=$(cat "$T/copy.out"); id=$(mid "$HO
 seen -F "(not answered: its session is not that one pane, the pane is in copy mode, or the prompt changed)" <<<"$out" && left mcpcopy "$one" \
 	&& ok "new: an MCP prompt in a pane in copy mode: left, nothing pressed, said" || bad "new: an MCP prompt in a pane in copy mode: left, nothing pressed, said" "$out / $(mkeys) / $(asctl list)"
 gone
+rm -f "$HOME/fake-mcp" "$HOME/fake-mcp-done"
+asctl off "$ida" --force >/dev/null; asctl forget "$ida" >/dev/null
+}
+
+# Claude Code's trust prompt, then its MCP prompt (split off case mcp_prompt: these ran after its
+# 20 s of other MCP prompts). Setup: the MCP helpers, Claude Code answering "supa" for .mcp.json.
+case_mcp_trust() {
+server_up
+mcp_helpers
+echo supa > "$HOME/fake-mcp"
 echo "== a folder not trusted yet, with an MCP server: trust, then the MCP prompt"
 mcpdir mcpb supa; out=$(asctl new "$HOME/mcpb" --name mcpb); idb=$(mid "$HOME/mcpb")
 asctl list | seen -E "^$idb  mcpb-$idb +waiting for trust " || stop "a new favorite waiting for trust" "$out / $(asctl list)"
@@ -2230,7 +2283,7 @@ k0=$(mkeys); out=$(asctl trust "$idc"); rc=$?; rm -f "$HOME/fake-mcp-many"
 out=$(errof trust "$idc")
 seen "does not show in 'mcpc-$idc'" <<<"$out" && ok "trust refused at another prompt: nothing answered" || bad "trust refused at another prompt: nothing answered" "trust again: $out"
 rm -f "$HOME/fake-mcp" "$HOME/fake-mcp-done"
-for x in "$ida" "$idb" "$idc"; do asctl off "$x" --force >/dev/null; asctl forget "$x" >/dev/null; done
+for x in "$idb" "$idc"; do asctl off "$x" --force >/dev/null; asctl forget "$x" >/dev/null; done
 }
 
 case_off_survivor() {
@@ -2384,7 +2437,7 @@ kill -CONT "$srv"
 asctl forget "$idq" >/dev/null
 }
 
-run_cases asc no_tmux_server version main shared_stale guards on_gates new_session rc_now rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg restart_copies restart_ended watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot asctl_setup trust_watch mcp_prompt off_survivor shell_start tmux_silent
+run_cases asc no_tmux_server version main shared_stale guards on_gates new_session rc_now rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg restart_copies restart_ended watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot boot_after asctl_setup trust_watch mcp_prompt mcp_trust off_survivor shell_start tmux_silent
 
 echo "asc: $pass passed, $fail failed"
 [ "$fail" = 0 ]
