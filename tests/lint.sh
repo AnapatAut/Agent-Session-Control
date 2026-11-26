@@ -34,6 +34,8 @@ python3 -I tests/checklint.py --self-test && python3 -I tests/checklint.py tests
 	&& echo "checks and waits: ok (one fixed name per check, run once; every wait's status used; no token on a command line)" || rc=1
 python3 -I tests/mutantlint.py --self-test && python3 -I tests/mutantlint.py tests/mutants-asc.txt tests/mutants-dash.txt tests/mutants-install.txt tests/privacy.sh \
 	&& echo "mutants: ok (five fields, each old text found once in its file, no line twice, each change parses, its check in its case)" || rc=1
+python3 -I tests/evallint.py --self-test >/dev/null && python3 -I tests/evallint.py tests/sandbox.sh \
+	&& echo "sandbox strings: ok (every chk condition and diagnostics, every wait_for condition: bash reads them)" || rc=1
 python3 -I tests/mutjudge.py --self-test && echo "mutjudge: ok (how a run is read)" || rc=1
 if out=$(bash tests/mutate-test.sh 2>&1); then
 	echo "mutate: ok (every verdict, refusal and interrupt of the mutant runner, on toy repos)"
