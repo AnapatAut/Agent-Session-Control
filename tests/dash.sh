@@ -820,10 +820,14 @@ printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SID" > "$HOME/.cla
 srv=$(tm display-message -p '#{pid}')
 kill -STOP "$srv"
 # asctl gives up on tmux after its own 5 s: 30 s is the test's ceiling, not asctl's
+# Each request in a window of its own, the server resumed before each check (a run stopped at a
+# check never leaves it stopped).
 t0=$(date +%s); r=$(dc -m 30 -o "$T/hung" -w '%{http_code}' http://x/api/state); t1=$(date +%s)
-pj=$(dc -m 30 http://x/api/past)
 kill -CONT "$srv"
 [ "$r" = 200 ] && [ $((t1 - t0)) -lt 25 ] && ok "state still answers while tmux hangs" || bad "state still answers while tmux hangs" "state with a hung tmux: $r after $((t1 - t0)) s"
+kill -STOP "$srv"
+pj=$(dc -m 30 http://x/api/past)
+kill -CONT "$srv"
 # not "no server", and no state guessed: what tmux would say is not known
 jq -e '.tmux_error == "tmux did not answer: no answer in 5 s" and .server == null and .active == []
 	and (.favorites | length > 0 and all(.state == "unknown" and .pid == null))' "$T/hung" >/dev/null \

@@ -440,9 +440,10 @@ asctl off "$id7" --force >/dev/null
 
 echo "== a claude that ends at once"
 touch "$HOME/fake-exit-at-once"
-t0=$(date +%s); out=$(errof on "$id2"); t1=$(date +%s)
+# "in seconds": 10 s is this test's ceiling (asctl's own wait for a claude is 40 s)
+t0=$(date +%s); out=$({ timeout 10 "$REPO/bin/asctl" on "$id2" >/dev/null; } 2>&1); t1=$(date +%s)
 rm -f "$HOME/fake-exit-at-once"
-seen "^asctl: chat-$id2: tmux session started, but claude exited 3 [0-9]* s after it started" <<<"$out" && [ $((t1 - t0)) -lt 20 ] \
+seen "^asctl: chat-$id2: tmux session started, but claude exited 3 [0-9]* s after it started" <<<"$out" && [ $((t1 - t0)) -lt 10 ] \
 	&& ok "on, a claude that ends at once: said in seconds on stderr, with its exit" || bad "on, a claude that ends at once: said in seconds on stderr, with its exit" "after $((t1 - t0)) s: $out"
 xf="$HOME/.local/state/agent-session-control/exit/$id2"
 sx() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import cli, registry; print(cli.started_exit(registry.find(registry.load(), sys.argv[2])))' "$REPO" "$id2"; }
@@ -1796,7 +1797,8 @@ boot() { ASC_BY=boot asctl boot "$@"; }
 # Its lock held by an action: boot waits (here 0 s), then leaves it.
 : > "$SC"; flock "$SD/locks/$idw" sleep 3 & fl=$!; sleep 0.3; seed
 nw0=$(jq -s '[.[] | select((.text // "") | test("did not answer"))] | length' "$SD/events.jsonl" 2>/dev/null || echo 0)
-ASC_NET=127.0.0.1:$up_port boot --wait 0 >/dev/null 2>&1; rc=$?
+# the port answers: no network wait at all (2 s is this test's ceiling, not boot's 120 s default)
+ASC_NET=127.0.0.1:$up_port boot --wait 0 --net-wait 2 >/dev/null 2>&1; rc=$?
 [ "$(jq -s '[.[] | select((.text // "") | test("did not answer"))] | length' "$SD/events.jsonl")" = "$nw0" ] \
 	&& ok "boot, claude.ai answering at once: no network wait logged" || bad "boot, claude.ai answering at once: no network wait logged" "net wait: $(last waiting)"
 grep -qx -- '--user start asctl-tmux.service' "$SC" && [ "$(tm show -gv exit-empty)" = off ] \
