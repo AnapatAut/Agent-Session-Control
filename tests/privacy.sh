@@ -35,6 +35,8 @@ leaks=(
 	"email|mail alice${E}example.com"
 	"MagicDNS name|ssh box.tail1234${N}.net"
 	"tailnet address|ping 100.${O}101.2.3"
+	"tailnet IPv6 address|ping fd7a:115c:${O}a1e0::ab12:3456"
+	"tailnet IPv6, upper case, in brackets|ssh [FD7A:115C:${O}A1E0:0:0:0:0:1]:22"
 	"GitHub token|gh""p_abcdefghijklmnopqrstuvwxyz0123456789"
 	"private key|-----BEGIN OPENSSH ""PRIVATE KEY-----"
 	"local name, other case|host Zorblax is up"
@@ -47,6 +49,8 @@ allowed=(
 	"git remote|git${E}github.com:AnapatAut/x.git"
 	"one-digit test UUID|77777777-7777-4777-8777-777777777777"
 	"address outside the tailnet range|100.63.1.1"
+	"an IPv6 documentation address|2001:db8::1"
+	"an IPv6 next to the tailnet's /48|fd7a:115c:a1e1::1"
 	"local name inside a longer word|zorblaxy"
 	"local name after a letter|xzorblax"
 )
@@ -231,7 +235,7 @@ newrepo; printf '(unclosed\n' >> "$T/r/tools/privacy-rules"; printf 'x\n' > "$T/
 chk --staged; [ $? = 2 ] && ok "a broken rule stops the check (exit 2), never passes" || bad "a broken rule lets the check pass"
 
 # PRIVACY_MUTANTS=1: break the checker or a hook one way at a time, in a copy; each must make
-# this test fail (its run stops at its first FAIL). About 2½ min (42 mutants). As in
+# this test fail (its run stops at its first FAIL). About 2½ min (43 mutants). As in
 # tests/mutate.sh: the old text must be found exactly once in its file, a ⏎ stands for a newline,
 # and a line given twice fails.
 if [ "${PRIVACY_MUTANTS:-}" = 1 ]; then
@@ -256,6 +260,7 @@ if [ "${PRIVACY_MUTANTS:-}" = 1 ]; then
 		rm -rf "$d"
 	done <<'MUTANTS'
 tools/privacy-rules %%% (?<![A-Za-z0-9._%+-])(?![0-9] %%% (?!)(?<![A-Za-z0-9._%+-])(?![0-9]
+tools/privacy-rules %%% (?<![0-9A-Fa-f:])[Ff][Dd]7[Aa] %%% (?!)(?<![0-9A-Fa-f:])[Ff][Dd]7[Aa]
 tools/privacy-check.sh %%% grep -q . "$tmp/local" && find_hits %%% false && find_hits
 tools/privacy-check.sh %%% s/\\E//g; /^$/d; %%% s/\\E//g;
 tools/privacy-check.sh %%% /^gpgsig(-sha256)? / %%% /^gpgsig/

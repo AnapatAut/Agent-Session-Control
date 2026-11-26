@@ -22,9 +22,11 @@ Claude-Session[:]
 # Any email, except GitHub noreply ones, git@github.com and Anthropic's noreply.
 (?<![A-Za-z0-9._%+-])(?![0-9]+\+[A-Za-z0-9-]+@users\.noreply\.github\.com\b|git@github\.com\b|noreply@anthropic\.com\b)[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b
 
-# Tailscale: MagicDNS names, tailnet addresses (100.64/10, the CGNAT range), auth keys.
+# Tailscale: MagicDNS names, tailnet addresses (100.64/10, the CGNAT range; and IPv6, Tailscale's
+# own /48 of unique local addresses, in any case, compressed or not), auth keys.
 \.ts\.net\b
 \b100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}\b
+(?<![0-9A-Fa-f:])[Ff][Dd]7[Aa]:115[Cc]:[Aa]1[Ee]0:
 \btskey-[A-Za-z0-9-]{10,}
 
 # Credentials.

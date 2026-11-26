@@ -130,11 +130,11 @@ except `install.sh`, which runs as root by design. Its sections:
 ## What `privacy.sh` covers
 
 In throwaway git repos (no network, no global git config): these kinds of leak (a home folder outside the test users, a macOS home, a claude.ai session link or
-id, a real UUID, an email, a MagicDNS name, a tailnet address, a GitHub token, a private key)
+id, a real UUID, an email, a MagicDNS name, a tailnet address (IPv4, and IPv6 in any case or form), a GitHub token, a private key)
 and a name from the local file in another case are caught by `--tree` (the rules for other
 tokens, such as Tailscale and Anthropic keys, are not tested one by one); the allowed cases pass
 (a test user's home, `/home/$u`, GitHub and Anthropic noreply emails, `git@github.com`, the
-one-digit test UUID, an address outside the tailnet range, a local name inside a longer
+one-digit test UUID, an address outside the tailnet range (IPv4, and IPv6 next to its /48 or a documentation one), a local name inside a longer
 word); a file name is checked; the rules file and checker pass their own check. `--staged`
 catches a leak, a binary file and an author email; `--msg` catches a session trailer and
 checks git's comment lines too (only the diff below a scissors line is left out). The hooks: a commit with a leak or a trailer is refused, a
@@ -156,7 +156,7 @@ message body and a leak behind a stale tracking ref are refused; the installer k
 else's hook and refuses while `core.hooksPath` points elsewhere; a remote with 60000 refs still
 works; a git that fails part way (a missing object) stops the check with exit 2; a local file of only comments refuses nothing; a hand-made
 `gpgsig-x` header is checked. `PRIVACY_MUTANTS=1 tests/privacy.sh` (about two and a half
-minutes) also breaks the checker, its rules, the hooks and their installer 42 ways,
+minutes) also breaks the checker, its rules, the hooks and their installer 43 ways,
 one at a time in a copy; each must make the test fail.
 
 ## What they change on the host
