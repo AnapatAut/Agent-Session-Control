@@ -725,6 +725,25 @@ out=$(asctl rc "$idr" on --next-start); seen 'from its next start$' <<<"$out" &&
 touch "$HOME/fake-hint"; tm send-keys -t "$pane" x BSpace; sleep 0.5
 screen | seen 'Try "fix lint"' && out=$(asctl rc "$idr" on) && seen 'live now' <<<"$out" && [ -n "$(bridge)" ] && ok "a dim placeholder counts as an empty prompt" || bad "a dim placeholder counts as an empty prompt" "placeholder: $out"
 rm -f "$HOME/fake-hint"
+[ "$(grep 'line: ' "$HOME/claude-args.log" | grep -vc 'line: /rename ')" = 3 ] && ok "nothing else ever reached its prompt (rc now: three rc lines, besides /rename)" || bad "nothing else ever reached its prompt (rc now: three rc lines, besides /rename)" "lines: $(grep 'line: ' "$HOME/claude-args.log")"
+asctl off "$idr" --force >/dev/null; asctl forget "$idr" >/dev/null
+}
+
+# rc off through a command menu drawn in other ways (split off case rc_now, whose checks before
+# these take 12 s). Setup: a favorite of its own conversation (rcnow2), rc on (live from its
+# start, as rc_now leaves it here), its claude idle; the claude log from here on.
+case_rc_menu_off() {
+server_up
+: > "$HOME/claude-args.log"
+SR=22222222-3333-4444-8555-000000000034
+mkdir -p "$HOME/.claude/projects/-x"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SR" > "$HOME/.claude/projects/-x/$SR.jsonl"
+asctl fav "$SR" --name rcnow2 >/dev/null || stop "a favorite for rc off through a menu"
+idr=$(jq -r --arg s "$SR" '.entries[] | select(.session_id == $s) | .id4' "$REG")
+asctl rc "$idr" on --next-start >/dev/null && asctl on "$idr" >/dev/null && claude_in "rcnow2-$idr" >/dev/null || stop "a claude with rc live for rc off through a menu"
+echo "== rc off through a command menu drawn in other ways (asc/rclive.py)"
+pane=$(tm list-panes -t "=rcnow2-$idr:" -F '#{pane_id}')
+bridge() { jq -r 'select(.name == "rcnow2-'"$idr"'") | .bridgeSessionId // ""' "$HOME"/.claude/sessions/*.json; }
 empty() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import rclive; sys.exit(rclive.prompt_text(rclive.screen(sys.argv[2])) != "")' "$REPO" "$pane"; }
 touch "$HOME/fake-menu-first"
 out=$(asctl rc "$idr" off); seen "not changed now: its command menu did not offer /remote-control for Enter (it offered: ❯ /remote-controller   a plugin's command); nothing was sent" <<<"$out" && [ -n "$(bridge)" ] && empty \
@@ -750,7 +769,8 @@ out=$(asctl rc "$idr" off); seen "not changed now: its command menu did not offe
 touch "$HOME/fake-menu-one"
 out=$(asctl rc "$idr" off); seen 'off now' <<<"$out" && [ -z "$(bridge)" ] && ok "off: one entry, none marked: the one Enter takes" || bad "off: one entry, none marked: the one Enter takes" "one unmarked: $out"
 rm -f "$HOME/fake-menu-unmarked" "$HOME/fake-menu-one" "$HOME/fake-menu-above" "$HOME/fake-plugins"
-[ "$(grep 'line: ' "$HOME/claude-args.log" | grep -vc 'line: /rename ')" = 8 ] && ok "nothing else ever reached its prompt (eight rc lines, besides /rename)" || bad "nothing else ever reached its prompt (eight rc lines, besides /rename)" "lines entered: $(grep 'line: ' "$HOME/claude-args.log")"
+[ "$(grep 'line: ' "$HOME/claude-args.log" | grep -vc 'line: /rename ')" = 5 ] && ok "nothing else ever reached its prompt (rc off through a menu: five rc lines, besides /rename)" || bad "nothing else ever reached its prompt (rc off through a menu: five rc lines, besides /rename)" "lines: $(grep 'line: ' "$HOME/claude-args.log")"
+asctl off "$idr" --force >/dev/null; asctl forget "$idr" >/dev/null
 }
 
 case_rc_menu() {
@@ -1326,6 +1346,16 @@ asctl off "$idc" >/dev/null; copy cp2; p2=$cp; copy cp3; p3=$cp
 o=$(asctl restart "$idc" 2>&1); r=$?
 pn=$(claude_in "rcp-$idc") && [ $r = 0 ] && ! kill -0 "$p2" 2>/dev/null && ! kill -0 "$p3" 2>/dev/null && [ "$(holders)" = 1 ] \
 	&& ok "a Duplicate of two copies outside, none in its tmux session: both ended, one started there" || bad "a Duplicate of two copies outside, none in its tmux session: both ended, one started there" "two outside: rc $r $o / holders $(holders)"
+# (before the copy that does not end: that one waits 15 s)
+# one copy outside while its tmux session is up without its claude: claude again in that pane
+pane=$(tm list-panes -t "=rcp-$idc:" -F '#{pane_id}'); kill -KILL "$pn"
+# shellcheck disable=SC2329  # called by poll
+gone_pn() { ! kill -0 "$pn" 2>/dev/null; }
+poll 5 gone_pn || stop "its claude ended"
+copy cp5; p5=$cp
+o=$(asctl restart "$idc" 2>&1); r=$?
+pn=$(claude_in "rcp-$idc") && [ $r = 0 ] && ! kill -0 "$p5" 2>/dev/null && [ "$(tm list-panes -t "=rcp-$idc:" -F '#{pane_id}')" = "$pane" ] \
+	&& ok "a claude outside, its tmux session up without it: ended, claude again in that session's pane" || bad "a claude outside, its tmux session up without it: ended, claude again in that session's pane" "outside + ended: rc $r $o"
 # a copy that does not end on SIGTERM: what ended before it is said; the one in its tmux session is left
 copy cp4; p4=$cp
 printf '%s\n' 'trap "" TERM' 'sleep 300 & wait; wait' > "$T/hold.sh"
@@ -1336,15 +1366,6 @@ seen "^asctl: claude $p4 in tmux session cp4 ended; then claude $ph in a process
 	&& ! kill -0 "$p4" 2>/dev/null && [ "$(claude_now "rcp-$idc")" = "$pn" ] && last failed | seen "restart: claude $p4 in tmux session cp4 ended; then" \
 	&& ok "a copy that does not end: stopped there, what ended said and logged as failed, its claude in tmux left running" || bad "a copy that does not end: stopped there, what ended said and logged as failed, its claude in tmux left running" "hold: $o / $(last failed)"
 kill -KILL "$ph" 2>/dev/null; wait "$ph" 2>/dev/null; rm -f "$HOME/.claude/sessions/$ph.json"
-# one copy outside while its tmux session is up without its claude: claude again in that pane
-pane=$(tm list-panes -t "=rcp-$idc:" -F '#{pane_id}'); kill -KILL "$pn"
-# shellcheck disable=SC2329  # called by poll
-gone_pn() { ! kill -0 "$pn" 2>/dev/null; }
-poll 5 gone_pn || stop "its claude ended"
-copy cp5; p5=$cp
-o=$(asctl restart "$idc" 2>&1); r=$?
-pn=$(claude_in "rcp-$idc") && [ $r = 0 ] && ! kill -0 "$p5" 2>/dev/null && [ "$(tm list-panes -t "=rcp-$idc:" -F '#{pane_id}')" = "$pane" ] \
-	&& ok "a claude outside, its tmux session up without it: ended, claude again in that session's pane" || bad "a claude outside, its tmux session up without it: ended, claude again in that session's pane" "outside + ended: rc $r $o"
 asctl off "$idc" >/dev/null; asctl forget "$idc" >/dev/null
 }
 
@@ -2439,7 +2460,7 @@ kill -CONT "$srv"
 asctl forget "$idq" >/dev/null
 }
 
-run_cases asc no_tmux_server version main shared_stale guards on_gates new_session rc_now rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg restart_copies restart_ended watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot boot_after asctl_setup trust_watch mcp_prompt mcp_trust off_survivor shell_start tmux_silent
+run_cases asc no_tmux_server version main shared_stale guards on_gates new_session rc_now rc_menu_off rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg restart_copies restart_ended watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot boot_after asctl_setup trust_watch mcp_prompt mcp_trust off_survivor shell_start tmux_silent
 
 echo "asc: $pass passed, $fail failed"
 [ "$fail" = 0 ]

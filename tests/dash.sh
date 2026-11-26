@@ -453,6 +453,8 @@ why=
 for v in '""' '" lead"' '"trail "' '"two  spaces"' '"x<b>"' '"tab\tx"' '"ok\u00e9"' '123' 'null' '["x"]'; do
 	name_conf "$v"
 	refuses && seen 'name must be 1 to 24 ASCII letters' "$T/err" || why="$why $v: $(tail -1 "$T/err")"
+	# a mutant run stops at a check: the first name taken already fails it (else all are told)
+	[ -z "$why" ] || [ -z "${TEST_STOP_AT-}" ] || break
 done
 [ -z "$why" ] && ok "a bad name stops the dashboard, saying why: empty, a space at an end, two spaces, another character, not text" \
 	|| bad "a bad name stops the dashboard, saying why: empty, a space at an end, two spaces, another character, not text" "taken or another error:$why"

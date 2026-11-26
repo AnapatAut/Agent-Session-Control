@@ -41,14 +41,14 @@ asc/cli.py %%%         elif s["rc"] == on: %%%         elif False: %%% rc on whi
 asc/rclive.py %%%     if prompt_text(scr) != cmd: %%%     if False: %%% the prompt not showing the command as typed: Enter not pressed, text not ours left alone %%% rc_menu
 asc/rclive.py %%% if entries(scr, before) else None %%% if False else None %%% on: a menu above the box: Enter not pressed %%% rc_menu
 asc/rclive.py %%% if entries(scr, before) else None %%% if changed(scr, before) else None %%% rc on: /remote-control with its title typed, confirmed from the session file %%% rc_now
-asc/rclive.py %%%     if wait_for(lambda: offers_cmd(screen(pane), before), timeout): %%%     if True: %%% off: another command marked first in the menu: Enter not pressed, the prompt cleared, what it offered named %%% rc_now
+asc/rclive.py %%%     if wait_for(lambda: offers_cmd(screen(pane), before), timeout): %%%     if True: %%% off: another command marked first in the menu: Enter not pressed, the prompt cleared, what it offered named %%% rc_menu_off
 asc/rclive.py %%% ENTRY = re.compile(r"\s+(?:(❯)\s*)? %%% ENTRY = re.compile(r"\s*(?:(❯)\s*)? %%% menu detection: a prompt in the transcript (not indented) is not a menu entry %%% rc_now
 asc/rclive.py %%% return marked[0] if len(marked) == 1 else %%% return marked[0] if marked else %%% menu detection: two entries marked (one a quote in claude's answer): asctl cannot tell %%% rc_now
-asc/rclive.py %%% else e[0] if not marked and len(e) == 1 else () %%% else e[0] %%% off: several entries, none marked: Enter not pressed %%% rc_now
+asc/rclive.py %%% else e[0] if not marked and len(e) == 1 else () %%% else e[0] %%% off: several entries, none marked: Enter not pressed %%% rc_menu_off
 asc/rclive.py %%%             if j != i and (j >= len(b) %%%             if (j >= len(b) %%% menu detection: claude's own input line, even indented, is not a menu entry %%% rc_now
-asc/rclive.py %%%         if p[i].startswith("❯") and RULE.fullmatch(p[i - 1]) %%%         if RULE.fullmatch(p[i - 1]) %%% off: the menu above the box, plugin lines around it: the entry Enter takes found %%% rc_now
+asc/rclive.py %%%         if p[i].startswith("❯") and RULE.fullmatch(p[i - 1]) %%%         if RULE.fullmatch(p[i - 1]) %%% off: the menu above the box, plugin lines around it: the entry Enter takes found %%% rc_menu_off
 asc/rclive.py %%% |\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)") %%% ") %%% menu detection: a link (OSC 8) is read as its text %%% rc_now
-asc/rclive.py %%%     return bool(t) and t[1] == CMD %%%     return bool(t) %%% off: another command marked first in the menu: Enter not pressed, the prompt cleared, what it offered named %%% rc_now
+asc/rclive.py %%%     return bool(t) and t[1] == CMD %%%     return bool(t) %%% off: another command marked first in the menu: Enter not pressed, the prompt cleared, what it offered named %%% rc_menu_off
 asc/rclive.py %%%     if not wait_for(lambda: seen() > n and (session(s["pid"]) or {}).get("name") == name, confirm): %%%     if False: %%% rename: typed but not taken by claude: said so %%% new_name
 asc/rclive.py %%%             n += f.read(tail).count(text) %%%             n = 1 %%% rename of an idle claude: /rename typed, the same claude takes the name %%% new_name
 asc/cli.py %%%             why = rclive.rename(s, new) %%%             why = None %%% rename: not when a menu above the box would take Enter %%% rc_menu
@@ -187,7 +187,7 @@ asc/cli.py %%%     if outside:⏎        raise RegistryError(f"its claude runs i
 asc/cli.py %%%         raise ActionFailed(f"claude stop {now['job']}: {(r.stderr or r.stdout).strip()[:200] or 'failed'}") %%%         pass %%% off: claude stop failing is said, and the session still runs %%% outside_bg
 asc/cli.py %%%             x["rename_title"] = True if title else None %%%             x["rename_title"] = None %%% a start that cannot send its name to claude.ai (claude busy): owed to it, though claude has the name %%% outside
 asc/watch.py %%%     if pend != e["tmux"] or (s["name"] == pend and not e.get("rename_title")): %%%     if pend != e["tmux"] or s["name"] == pend: %%% the watcher sends it once claude is idle (/rename, though claude has the name), and it is no longer owed %%% outside
-asc/rclive.py %%%     if wait_for(lambda: offers_cmd(screen(pane), before), timeout): %%%     if offers_cmd(steady(pane), before): %%% off: a menu drawn a moment after the typed text is waited for %%% rc_now
+asc/rclive.py %%%     if wait_for(lambda: offers_cmd(screen(pane), before), timeout): %%%     if offers_cmd(steady(pane), before): %%% off: a menu drawn a moment after the typed text is waited for %%% rc_menu_off
 asc/rclive.py %%%         settled(pane, typed=cmd, timeout=10)  # a slow claude still drawing it: until all of it shows or stops %%%         pass %%% rc on, a slow claude: waited until its prompt stopped changing, then live %%% rc_slow
 asc/rclive.py %%%     while (time.monotonic() - since < quiet or part(t)) and %%%     while (time.monotonic() - since < quiet) and %%% rc on, a slow claude: waited until its prompt stopped changing, then live %%% rc_slow
 asc/rclive.py %%% t is not None and t != typed and %%% t is not None and %%% settled: all of what was typed, or other text, is taken once it stops changing %%% rc_slow
