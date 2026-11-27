@@ -159,6 +159,39 @@ def last_exit_full(id4):
         return None
 
 
+def ended_in_pane(e):
+    """The exit record (as last_exit_full) when a person ended the entry's claude in its pane
+    (/exit, Ctrl-C: exit 0) in this boot, after its last On, while it is wanted on; else None.
+    asctl never ends one with 0 (Off and a restart signal it: 143), nor does a shutdown today;
+    a 0 from another boot is still never taken for one, so resurrect cannot stop if a Claude
+    Code to come ended with 0 on SIGTERM. On removes the record before it starts claude."""
+    on = e.get("last_on")
+    if e.get("want_on") is not True or type(on) is not int:
+        return None
+    ex = last_exit_full(e["id4"])
+    if not ex or ex[0] != 0 or not ex[2] or ex[2] != memory.boot_id() or ex[1] <= on:
+        return None
+    return ex
+
+
+def off_if_ended_in_pane(e):
+    """Off for an entry whose claude a person ended in its pane (ended_in_pane), its lock held:
+    want_on cleared and last_off set to when it ended (its tmux session is left as it is), only
+    if want_on and last_on are still what e has; logged. e is updated. True when it was done."""
+    ex = ended_in_pane(e)
+    if not ex:
+        return False
+    with registry.changing() as data:
+        x = data["entries"].get(e["id4"])
+        if not x or x.get("want_on") is not True or x.get("last_on") != e.get("last_on"):
+            return False
+        x["want_on"], x["last_off"] = False, ex[1]
+    e.update(want_on=False, last_off=ex[1])
+    events.log("off", e, "its claude was ended in its pane (exit 0: /exit or Ctrl-C), not by asctl: "
+                         "no longer wanted on")
+    return True
+
+
 def started_exit(e):
     """The exit record of the claude this start ran: written by the asctl-wrap of a pane of the
     entry's session (the pane PID it records, which it keeps), else None. A wrap of the session

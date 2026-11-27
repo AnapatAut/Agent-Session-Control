@@ -142,6 +142,8 @@ function look(e) {
     why: (e.prompt ? `Claude Code asks: “${e.prompt}”. Answer it in its pane`
                    : "Its claude has not come up: Claude Code may ask something in its pane")
          + ` (tmux attach -t =${e.tmux}); Off closes it.` };
+  if (st.startsWith("tmux up") && code === "0") return { group: "off", dot: "", label: "Ended by you",
+    why: "Ended by you (exit 0); its tmux session is still up. Restart in tmux starts it again; Off closes the session." };
   if (st.startsWith("tmux up")) return { group: "attention", dot: "wait", label: "Claude ended",
     why: `Claude ended${code ? " (exit " + code + ")" : ""}; its tmux session is still up. Restart in tmux starts it there again; Off closes it.` };
   const boot = S && S.boot ? S.boot.todo : [];
@@ -720,7 +722,7 @@ const EV_KIND = { on: "Turned on", off: "Turned off", restart: "Restarted", rest
   ended: "Claude ended", refused: "Refused", failed: "Failed", followed: "Followed", rename: "Renamed", resurrect: "Resurrect",
   rc: "Remote control", fav: "Favorited", mode: "Permissions", waiting: "Waiting", duplicate: "Two claudes", setting: "Setting",
   new: "Created", trusted: "Folder trusted", untrusted: "Waiting for trust", mcp: "MCP server not used",
-  prompt: "Waiting at a prompt", cwd: "Folder changed" };
+  prompt: "Waiting at a prompt", cwd: "Folder changed", closed: "Tmux session closed (not by asctl)" };
 const EV_BY = { cli: "asctl", page: "page", watch: "watcher", boot: "boot" };
 const UUID_G = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 function evLabel(x) {
@@ -730,6 +732,7 @@ function evLabel(x) {
     return EV_KIND[x.kind] + (m ? " " + m[1] : "");
   }
   if (x.kind === "followed") return /moved to /.test(t) ? "Folder moved" : "New conversation";
+  if (x.kind === "off" && /^its claude was ended in its pane\b/.test(t)) return "Ended by you";
   if (x.kind === "rename") {
     const m = t.match(/^renamed(?: to|:) ([a-z0-9-]+?)(?:-\d{4})?(?:[;,. ]|$)/);
     return "Renamed" + (m ? " to " + m[1] : "");

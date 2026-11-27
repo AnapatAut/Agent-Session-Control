@@ -281,8 +281,14 @@ pressure seen around that end, memory steady under the start limit for 2 minutes
 its size, not started again in the last 10 minutes (30 once it was started again twice within an
 hour: it keeps being killed), its session one pane running only the shell its claude left (the
 exit record names it), not scrolled back and not typed in for 2 minutes, one restart per run.
-The watcher never changes whether a favorite is wanted on (only On, Off and Forget do); an
-entry an action is changing is left to the next run.
+A claude a person ended in its pane (`/exit` or Ctrl-C: exit 0) counts as an Off: the watcher
+clears "wanted on" and logs it ("Ended by you" on the page), so a reboot does not bring it back,
+and leaves its tmux session as it is. Only an exit record of this boot counts, written after the
+favorite's last On (asctl never ends a claude with 0: Off and a restart signal it). Apart from
+that, only On, Off and Forget change whether a favorite is wanted on; a claude started again by
+hand in its pane is not wanted on until On or Restart in tmux. A favorite's tmux session that
+closes, not by asctl (its shell ended, or someone closed it), is logged once. An entry an action
+is changing is left to the next run.
 
 `asctl boot` (`asctl-boot.service`, once per boot) starts again the favorites with resurrect on
 that were on, the one turned on last first, one at a time: each needs memory under the start

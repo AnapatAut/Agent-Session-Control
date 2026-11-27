@@ -16,7 +16,7 @@ Built:
   holding its conversation, or one that ended with its tmux session still up.
 - **Restore per session.** After a reboot, only favorites that were on and have resurrect on come
   back, one at a time (`asctl-boot.service`), with no login needed (`asctl setup` turns linger
-  on). tmux-resurrect and tmux-continuum are not needed (setup refuses while continuum's
+  on). One you ended yourself (`/exit` in its pane) counts as off. tmux-resurrect and tmux-continuum are not needed (setup refuses while continuum's
   restore or boot is on).
 - **Memory-aware starts.** A session starts only under a memory limit of your own (60 to 85%
   used) with room for its size (a restart excepted); boot and the watcher also wait for memory

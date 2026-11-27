@@ -1638,8 +1638,18 @@ case_watcher_reasons() {
 ended_setup eeeeeeee-0000-4000-8000-0000000000f2 eeeeeeee-0000-4000-8000-0000000000f3
 ended_as_before "$(date +%s)"
 echo "== watcher: why an ended claude is not started again; a restart in place"
-watch; kill -INT "$pw"; sleep 1.2; bump; watch
-ended | seen 'exit 0, .*not started again: it did not end by a signal' && ok "exit 0 (the user ended it): never started again" || bad "exit 0 (the user ended it): never started again" "exit 0: $(ended)"
+# its On a few seconds back (an end in the same second as the On is not taken for one by a person)
+python3 -I -c 'import sys, time; sys.path.insert(0, sys.argv[1]); from asc import registry
+with registry.changing() as d: d["entries"][sys.argv[2]]["last_on"] = int(time.time()) - 5' "$REPO" "$idw"
+watch; e0=$(evn ended); kill -INT "$pw"; sleep 1.2; bump; watch
+[ "$(jqe ".entries[\"$idw\"].want_on")" = false ] && last off | jq -r '.by + " " + .text' | seen -xF "watch its claude was ended in its pane (exit 0: /exit or Ctrl-C), not by asctl: no longer wanted on" \
+	&& [ "$(evn ended)" = "$e0" ] && ! claude_now "wat2-$idw" >/dev/null 2>&1 \
+	&& ok "exit 0 (the user ended it): taken for an Off, never started again" || bad "exit 0 (the user ended it): taken for an Off, never started again" "exit 0: $(last off) / $(ended) / want_on $(jqe ".entries[\"$idw\"].want_on")"
+# wanted on again, as On leaves it, for the checks below (each writes its own exit record)
+python3 -I -c 'import sys, time; sys.path.insert(0, sys.argv[1]); from asc import registry
+with registry.changing() as d: d["entries"][sys.argv[2]].update(want_on=True, last_on=int(time.time()) - 5)' "$REPO" "$idw"
+printf '1 %s %s\n' "$(date +%s)" "$(cat /proc/sys/kernel/random/boot_id)" > "$SD/exit/$idw"; bump; watch
+ended | seen 'exit 1, .*not started again: it did not end by a signal' && ok "exit 1 (an error, not a signal): never started again" || bad "exit 1 (an error, not a signal): never started again" "exit 1: $(ended)"
 printf '143 %s some-other-boot\n' "$(date +%s)" > "$SD/exit/$idw"; watch
 ended | seen 'not started again: it ended before this boot' && ok "an exit of another boot: not started again" || bad "an exit of another boot: not started again" "other boot: $(ended)"
 : > "$HOME/no-boot"; printf '143 %s\n' "$(( $(date +%s) + 1 ))" > "$SD/exit/$idw"; ASC_BOOT_ID="$HOME/no-boot" watch
@@ -2523,7 +2533,81 @@ for x in $(jq -r '.entries[] | select(.session_id | startswith("cccccccc-")) | .
 rm -f "$HOME"/.claude/projects/*/cccccccc-dddd-4eee-8fff-00000000000?.jsonl; rm -rf "$H"
 }
 
-run_cases asc no_tmux_server version main shared_stale guards on_gates new_session rc_now rc_menu_off rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg restart_copies restart_ended watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot boot_after asctl_setup trust_watch mcp_prompt mcp_trust off_survivor shell_start tmux_silent start_folder
+case_exit_off() {
+echo "== an end in its pane (exit 0) taken for an Off; a tmux session closed not by asctl"
+server_up
+H="$HOME/xo"; mkdir -p "$H"
+X1=cccccccc-dddd-4eee-8fff-000000000011
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$H" "$X1" > "$(tnew "$X1" "$H")"
+asctl fav "$X1" --name xo >/dev/null || stop "a favorite for exit_off"
+ix=$(jq -r --arg s "$X1" '.entries[] | select(.session_id == $s) | .id4' "$REG")
+B=$(cat /proc/sys/kernel/random/boot_id); now=$(date +%s)
+# wanted on since <last_on>, as On leaves it
+won() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import registry
+with registry.changing() as d: d["entries"][sys.argv[2]].update(want_on=True, last_on=int(sys.argv[3]))' "$REPO" "$ix" "$1"; }
+# its last Off at <when>, well before the looks below (a tie with a look is never logged)
+loff() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import registry
+with registry.changing() as d: d["entries"][sys.argv[2]].update(last_off=int(sys.argv[3]))' "$REPO" "$ix" "$1"; }
+mkdir -p "$SD/exit"; rec() { printf '%s\n' "$*" > "$SD/exit/$ix" || stop "an exit record"; }
+wanted() { jqe ".entries[\"$ix\"].want_on"; }
+offs() { jq -s --arg i "$ix" '[.[] | select(.kind == "off" and .id4 == $i and .by == "watch")] | length' "$SD/events.jsonl"; }
+closed() { jq -s --arg i "$ix" '[.[] | select(.kind == "closed" and .id4 == $i and .by == "watch")] | length' "$SD/events.jsonl"; }
+xup() { tm new-session -d -s "xo-$ix" -- sleep 300 || stop "its tmux session"; }
+xup; won $((now - 100))
+rec 0 "$now" other-boot 1; watch
+[ "$(wanted)" = true ] && [ "$(offs)" = 0 ] && ok "exit 0 of another boot: not taken for an Off" || bad "exit 0 of another boot: not taken for an Off" "other boot: want_on $(wanted), $(last off)"
+: > "$HOME/xo-noboot"; rec 0 "$now"; ASC_BOOT_ID="$HOME/xo-noboot" watch
+[ "$(wanted)" = true ] && [ "$(offs)" = 0 ] && ok "exit 0 with no boot id: not taken for an Off" || bad "exit 0 with no boot id: not taken for an Off" "no boot id: want_on $(wanted), $(last off)"
+rec 0 $((now - 100)) "$B" 1; watch
+[ "$(wanted)" = true ] && [ "$(offs)" = 0 ] && ok "exit 0 at the second of its last On: not taken for an Off" || bad "exit 0 at the second of its last On: not taken for an Off" "at last_on: want_on $(wanted), $(last off)"
+rec 143 "$now" "$B" 1; watch
+[ "$(wanted)" = true ] && [ "$(offs)" = 0 ] && ok "exit 143 (a signal) in this boot: not taken for an Off" || bad "exit 143 (a signal) in this boot: not taken for an Off" "143: want_on $(wanted), $(last off)"
+rec 0 $((now - 50)) "$B" 1; watch
+[ "$(wanted)" = false ] && [ "$(jqe ".entries[\"$ix\"].last_off")" = $((now - 50)) ] && [ "$(offs)" = 1 ] \
+	&& last off | jq -r .text | seen -xF "its claude was ended in its pane (exit 0: /exit or Ctrl-C), not by asctl: no longer wanted on" \
+	&& asctl list | seen -E "^$ix  xo-$ix +tmux up, claude ended \(0\)" \
+	&& ok "exit 0 in this boot after its last On: an Off (when it ended), logged; its tmux session left up" || bad "exit 0 in this boot after its last On: an Off (when it ended), logged; its tmux session left up" "want_on $(wanted), last_off $(jqe ".entries[\"$ix\"].last_off"), $(last off) / $(asctl list)"
+watch; [ "$(offs)" = 1 ] && ok "taken for an Off once" || bad "taken for an Off once" "offs: $(offs)"
+tm kill-session -t "=xo-$ix"; watch
+[ "$(closed)" = 1 ] && jq -s -r --arg i "$ix" '[.[] | select(.kind == "closed" and .id4 == $i)] | last | .text' "$SD/events.jsonl" | seen -F "its tmux session xo-$ix closed, not by asctl" \
+	&& ok "its tmux session closed by someone else: logged" || bad "its tmux session closed by someone else: logged" "closed: $(last closed)"
+watch; [ "$(closed)" = 1 ] && ok "a closed session: logged once" || bad "a closed session: logged once" "closed: $(closed)"
+xup; watch; asctl off "$ix" --force >/dev/null; watch
+[ "$(closed)" = 1 ] && ! tm has-session -t "=xo-$ix" 2>/dev/null && ok "closed by Off: not logged as closed" || bad "closed by Off: not logged as closed" "closed: $(closed) / $(last off)"
+loff $((now - 200)); xup; watch; tm kill-session -t "=xo-$ix"; printf 'another\n' > "$HOME/other-boot"; ASC_BOOT_ID="$HOME/other-boot" watch; watch
+[ "$(closed)" = 1 ] && ok "a session seen up in another boot: not logged as closed" || bad "a session seen up in another boot: not logged as closed" "closed: $(closed)"
+# the tmux server gone (the shell of its last session ended): both still seen
+xup; won $((now - 100)); loff $((now - 200)); rm -f "$SD/exit/$ix"; watch; rec 0 $((now - 50)) "$B" 1; tm kill-server; watch
+[ "$(wanted)" = false ] && [ "$(offs)" = 2 ] && [ "$(closed)" = 2 ] && ok "no tmux server: an exit 0 taken for an Off, its session logged as closed" || bad "no tmux server: an exit 0 taken for an Off, its session logged as closed" "no server: want_on $(wanted), offs $(offs), closed $(closed)"
+ASC_BY=boot python3 -I - "$REPO" "$ix" <<'PY' && ok "boot: one a person ended in its pane in this boot is turned off, not started" || bad "boot: one a person ended in its pane in this boot is turned off, not started" "see above"
+import sys, time
+sys.path.insert(0, sys.argv[1]); from asc import boot, cli, events, memory, registry
+id4, now = sys.argv[2], int(time.time())
+with registry.changing() as d: d["entries"][id4].update(want_on=True, last_on=now - 100)
+open(cli.exit_file(id4), "w").write(f"0 {now} {memory.boot_id()} 1\n")
+started = []
+assert boot._start(registry.find(registry.load(), id4), started) is None and started == [], started
+x = registry.find(registry.load(), id4)
+assert x["want_on"] is False and x["last_off"] == now, x
+r = [r for r in events.read(limit=10000) if r["kind"] == "off" and r.get("id4") == id4][0]  # newest first
+assert r["by"] == "boot" and r["text"].startswith("its claude was ended in its pane"), r
+PY
+python3 -I - "$REPO" "$ix" <<'PY' && ok "an Off for an end in its pane only if want_on and last_on are still what was read" || bad "an Off for an end in its pane only if want_on and last_on are still what was read" "see above"
+import sys, time
+sys.path.insert(0, sys.argv[1]); from asc import cli, memory, registry
+id4, now = sys.argv[2], int(time.time())
+with registry.changing() as d: d["entries"][id4].update(want_on=True, last_on=now - 100)
+open(cli.exit_file(id4), "w").write(f"0 {now} {memory.boot_id()} 1\n")
+e = registry.find(registry.load(), id4)
+with registry.changing() as d: d["entries"][id4]["last_on"] = now - 99  # an On between the read and the change
+assert cli.off_if_ended_in_pane(e) is False and registry.find(registry.load(), id4)["want_on"] is True
+e = registry.find(registry.load(), id4)
+assert cli.off_if_ended_in_pane(e) is True and e["want_on"] is False and registry.find(registry.load(), id4)["want_on"] is False
+PY
+asctl forget "$ix" >/dev/null; rm -f "$SD/exit/$ix" "$HOME/other-boot" "$HOME/xo-noboot" "$(tfile "$X1")"; rm -rf "$H"
+}
+
+run_cases asc no_tmux_server version main shared_stale guards on_gates new_session rc_now rc_menu_off rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg restart_copies restart_ended watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot boot_after asctl_setup trust_watch mcp_prompt mcp_trust off_survivor shell_start tmux_silent start_folder exit_off
 
 echo "asc: $pass passed, $fail failed"
 [ "$fail" = 0 ]

@@ -95,7 +95,7 @@ asc/watch.py %%%     if not same: %%%     if True: %%% an end is logged once %%%
 asc/watch.py %%%  if same and prev.get("has") is not None %%%  if same and "has" in prev %%% no sample after the end yet: asked again next run, then started %%% watcher_ended
 asc/watch.py %%%     reason = re.sub(r"[0-9][0-9.]*", "N", why)  # the same reason with other numbers is not news %%%     reason = why %%% waiting: the same reason with other numbers is said once %%% watcher_others
 asc/watch.py %%%     if not isinstance(settings, dict) or settings.get("auto_restart") is not True: %%%     if False: %%% ended by SIGTERM: logged, auto-restart off by default %%% watcher_ended
-asc/watch.py %%%     if code not in (137, 143): %%%     if False: %%% exit 0 (the user ended it): never started again %%% watcher_reasons
+asc/watch.py %%%     if code not in (137, 143): %%%     if False: %%% exit 1 (an error, not a signal): never started again %%% watcher_reasons
 asc/watch.py %%%     if has is not True: %%%     if has is None: %%% no memory pressure seen: not started, said once %%% watcher_ended
 asc/watch.py %%%     if abs(now - last) < RESTART_EVERY: %%%     if False: %%% not again within 10 min %%% watcher_ended
 asc/watch.py %%%     if len(panes) != 1: %%%     if False: %%% a session of 2 panes: not started again %%% watcher_reasons
@@ -404,3 +404,19 @@ asc/cli.py %%%         if not st.startswith("off"): %%%         if False: %%% cw
 asc/cli.py %%%     folder = new_folder(args.folder) %%%     folder = args.folder %%% cwd: checked as for new (outside the home refused, nothing changed) %%% start_folder
 asc/cli.py %%%             was, e["cwd"] = e["cwd"], folder %%%             was = e["cwd"] %%% cwd: changed while off, and logged %%% start_folder
 asc/cli.py %%%  (asctl cwd {e['id4']} FOLDER gives it another) %%%  %%% on: its folder gone: refused, the command to give another named %%% start_folder
+asc/cli.py %%%     if not ex or ex[0] != 0 or not ex[2] %%%     if not ex or not ex[2] %%% exit 143 (a signal) in this boot: not taken for an Off %%% exit_off
+asc/cli.py %%%  or ex[2] != memory.boot_id() or ex[1] <= on: %%%  or ex[1] <= on: %%% exit 0 of another boot: not taken for an Off %%% exit_off
+asc/cli.py %%%     if not ex or ex[0] != 0 or not ex[2] or %%%     if not ex or ex[0] != 0 or %%% exit 0 with no boot id: not taken for an Off %%% exit_off
+asc/cli.py %%%  or ex[1] <= on: %%%  or ex[1] < on: %%% exit 0 at the second of its last On: not taken for an Off %%% exit_off
+asc/cli.py %%%         if not x or x.get("want_on") is not True or x.get("last_on") != e.get("last_on"): %%%         if not x or x.get("want_on") is not True: %%% an Off for an end in its pane only if want_on and last_on are still what was read %%% exit_off
+asc/cli.py %%%         x["want_on"], x["last_off"] = False, ex[1] %%%         x["want_on"] = False %%% exit 0 in this boot after its last On: an Off (when it ended), logged; its tmux session left up %%% exit_off
+asc/cli.py %%%                          "no longer wanted on") %%%                          "") %%% exit 0 in this boot after its last On: an Off (when it ended), logged; its tmux session left up %%% exit_off
+asc/watch.py %%%     cli.off_if_ended_in_pane(e) %%%     pass %%% exit 0 (the user ended it): taken for an Off, never started again %%% watcher_reasons
+asc/watch.py %%%                 _settle(st, e, up) %%%                 _settle(st, e, up) if server else None %%% no tmux server: an exit 0 taken for an Off, its session logged as closed %%% exit_off
+asc/watch.py %%%         if off < seen: %%%         if True: %%% closed by Off: not logged as closed %%% exit_off
+asc/watch.py %%%         del st["up"][e["id4"]]  # said once %%%         pass  # said once %%% a closed session: logged once %%% exit_off
+asc/watch.py %%%         st["up"][e["id4"]] = int(time.time()) %%%         st["up"][e["id4"]] = 0 %%% its tmux session closed by someone else: logged %%% exit_off
+asc/watch.py %%%     if st["up_boot"] != boot: %%%     if False: %%% a session seen up in another boot: not logged as closed %%% exit_off
+asc/watch.py %%%             "up": {k: v for k, v in d("up").items() if type(v) is int}, %%%             "up": {}, %%% its tmux session closed by someone else: logged %%% exit_off
+asc/boot.py %%%             if cli.off_if_ended_in_pane(registry.find(registry.load(), e["id4"])): %%%             if False: %%% boot: one a person ended in its pane in this boot is turned off, not started %%% exit_off
+asc/events.py %%% "cwd", "closed"} %%% "cwd"} %%% its tmux session closed by someone else: logged %%% exit_off

@@ -1,9 +1,10 @@
 """asctl boot (asctl-boot.service, once per boot): the favorites with resurrect on that were on
 start again, one at a time.
 
-want_on changes only by the user's On, Off and Forget, so after a reboot it still says which were
-on. Each start needs the memory gates: memory steady under the start limit for 30 s (asctl boot
-takes a sample every 10 s itself, also in its pause after each start, so the first start comes
+want_on changes only by the user's On, Off and Forget (and a person's end of its claude in its
+pane, which the watcher takes for an Off: cli.off_if_ended_in_pane), so after a reboot it still
+says which were on. Each start needs the memory gates: memory steady under the start limit for
+30 s (asctl boot takes a sample every 10 s itself, also in its pause after each start, so the first start comes
 about 30 s after claude.ai answers at the earliest) and room for that claude's size. Before the
 first start it waits up to 2 min for claude.ai to answer (a resurrect start has remote control),
 then starts anyway: a remote control that does not come up shows on the dashboard. A favorite whose tmux session is up
@@ -151,6 +152,9 @@ def _start(e, started):
     try:
         with registry.entry_lock(e["id4"]):
             locked = True
+            # a person ended it in its pane in this boot (a boot run by hand, before the watcher saw it)
+            if cli.off_if_ended_in_pane(registry.find(registry.load(), e["id4"])):
+                return None
             if cli._on(e["id4"], False, loud=False, resurrect=True) == 0:
                 started.append(e["tmux"])
     except cli.ActionFailed as x:

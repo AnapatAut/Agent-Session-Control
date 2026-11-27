@@ -4,7 +4,12 @@ Each run, one at a time (watch.lock; a run that finds another still going does n
  1. a memory sample (asc/memory.py), kept for the steady check and as evidence; a warning (an
     event and a tmux message) when available memory falls under WARN_PCT, and when it is back;
  2. two live claudes holding one session id: logged once (nothing is done about it);
- 3. for each favorite whose claude runs in its own tmux session (and no other claude does):
+ 3. for each favorite, first (_settle; also with no tmux server, when every session is closed):
+    - its tmux session, up at a run before and gone now with no Off since: logged once, as
+      closed not by asctl (its shell ended, someone closed it, or the tmux server ended);
+    - its claude ended in its pane by a person (exit 0: /exit, Ctrl-C) in this boot, after its
+      last On: Off, its tmux session left as it is (cli.off_if_ended_in_pane);
+ 4. for each favorite whose claude runs in its own tmux session (and no other claude does):
     - its memory (PSS of its pane tree) kept as rss_kb, the size the memory gate expects;
     - followed: a new session id (a branch, a rewind, /resume inside claude) into lineage, a
       new folder (/cd);
@@ -14,7 +19,7 @@ Each run, one at a time (watch.lock; a run that finds another still going does n
     - an exit record older than that claude dropped (it ended before this claude was started);
     - the mark of a start that left it at a prompt of Claude Code's (awaiting_trust: the trust
       prompt, or another) dropped: the prompt was answered in its pane;
- 4. a favorite whose claude waits at that prompt: left as it is (not an end; only asctl trust, or
+ 5. a favorite whose claude waits at that prompt: left as it is (not an end; only asctl trust, or
     a person in its pane, answers it);
     a favorite that is wanted on whose claude ended while its tmux session stayed: logged once
     with its exit code and the memory evidence. Started again (in its own pane, which keeps the
@@ -26,12 +31,12 @@ Each run, one at a time (watch.lock; a run that finds another still going does n
     session is that one pane, still the shell asctl-wrap left (the PID in the exit record),
     running nothing, not scrolled back and with no one typing in the last 2 min (cli.pane_free,
     checked again just before), and no other restart in this run.
- 5. the length of each favorite's conversation counted on (asc/past.py, lengths.json).
+ 6. the length of each favorite's conversation counted on (asc/past.py, lengths.json).
 watch.json keeps what a run tells the next, and "at", when the last run began (the dashboard
 warns when that is old: the timer stopped). Every entry is handled under its own lock, taken
 without waiting: one that an asctl action holds is left to the next run. An error with one entry
-is logged and the others go on. A favorite's want_on is never changed here (plan row 16: only
-On, Off and Forget change it).
+is logged and the others go on. A favorite's want_on is changed here only by a person's end of
+its claude in its pane (3; plan row 16: else only On, Off and Forget change it).
 """
 import fcntl
 import os
@@ -61,6 +66,8 @@ def _state(d):
             "ended": {k: x for k, x in d("ended").items() if ok(x)},
             "rename_tries": {k: v for k, v in d("rename_tries").items() if type(v) is int},
             "failed": {k: v for k, v in d("failed").items() if isinstance(v, str)},
+            "up": {k: v for k, v in d("up").items() if type(v) is int},
+            "up_boot": s.get("up_boot") if isinstance(s.get("up_boot"), str) else "",
             "tmux": s.get("tmux") if isinstance(s.get("tmux"), str) else ""}
 
 
@@ -88,7 +95,7 @@ def _run(st):
     samples = memory.add_sample(memory.sample())
     _memory_warning(st, samples[-1])
     data = registry.load()
-    for k in ("ended", "rename_tries", "failed"):  # forgotten favorites
+    for k in ("ended", "rename_tries", "failed", "up"):  # forgotten favorites
         st[k] = {i: v for i, v in st[k].items() if i in data["entries"]}
     try:
         _favorites(st, data, samples)
@@ -101,21 +108,28 @@ def _run(st):
 
 
 def _favorites(st, data, samples):
-    """One look at every favorite. tmux not answering stops it (NoAnswer), for all of them."""
-    if not tmuxctl.server_running():
-        return
-    lv = live.live()
-    _duplicates(st, lv, data)
-    up = set(tmuxctl.sessions())
-    kids = live.children_map()
+    """One look at every favorite. tmux not answering stops it (NoAnswer), for all of them. With
+    no tmux server, only _settle (every tmux session is closed)."""
+    boot = memory.boot_id()
+    if st["up_boot"] != boot:  # the sessions seen up in another boot closed with it: not news
+        st["up"], st["up_boot"] = {}, boot
+    server = tmuxctl.server_running()
+    lv = live.live() if server else []
+    if server:
+        _duplicates(st, lv, data)
+    up = set(tmuxctl.sessions()) if server else set()
+    kids = live.children_map() if server else {}
     run = {"restarted": False}  # one restart per run: set the moment one is attempted
     for e in sorted(data["entries"].values(), key=lambda e: e["id4"]):
         before = run["restarted"]
         try:
             with registry.entry_lock(e["id4"]):
                 e = registry.find(registry.load(), e["id4"])  # as it is now, under its lock
-                s = cli.live_in(e, lv)
-                if s:
+                _settle(st, e, up)
+                s = cli.live_in(e, lv) if server else None
+                if not server:
+                    pass
+                elif s:
                     _running(st, e, s, lv, kids)
                 elif e["tmux"] in up and cli.awaiting(e):
                     st["ended"].pop(e["id4"], None)  # its claude waits at a prompt of Claude Code's: not ended
@@ -135,6 +149,25 @@ def _favorites(st, data, samples):
             st["failed"][e["id4"]] = msg
         if run["restarted"] and not before:  # a restart takes a while: what was read is old
             lv, up, kids = live.live(), set(tmuxctl.sessions()), live.children_map()
+
+
+def _settle(st, e, up):
+    """The first look at a favorite (its lock held). Its tmux session seen up by a run before
+    and gone now: logged once as closed not by asctl, unless an Off came at or after that look
+    (its last_off; Off holds this lock until the session is closed, so a look under it never
+    sees one half done). Then its claude ended in its pane by a person: Off. Then its session,
+    if up now, is kept for the next run with the time of this look (the list of sessions was
+    read before the lock: asked again). A tie (the same second) is never logged."""
+    seen = st["up"].get(e["id4"])
+    if seen is not None and e["tmux"] not in up:
+        del st["up"][e["id4"]]  # said once
+        off = e.get("last_off") if type(e.get("last_off")) is int else 0
+        if off < seen:
+            events.log("closed", e, f"its tmux session {e['tmux']} closed, not by asctl "
+                                    f"(its shell ended, someone closed it, or the tmux server ended)")
+    cli.off_if_ended_in_pane(e)
+    if e["tmux"] in up and tmuxctl.has_session(e["tmux"]):
+        st["up"][e["id4"]] = int(time.time())
 
 
 def _lengths(d):

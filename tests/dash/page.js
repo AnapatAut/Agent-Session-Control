@@ -77,6 +77,11 @@ check("boot reasons in words; an odd one passed on", `bootWhy("network: waiting 
 
 const ev = (kind, text, extra) => JSON.stringify(Object.assign({ t: 1000, kind, by: "page", text }, extra || {}));
 const label = (kind, text) => `evLabel(${ev(kind, text)})`, detail = (kind, text) => `evDetail(${ev(kind, text)})`;
+check("an end in its pane taken for an Off, and a tmux session closed not by asctl: in words",
+  `${label("off", "its claude was ended in its pane (exit 0: /exit or Ctrl-C), not by asctl: no longer wanted on")} === "Ended by you"
+    && ${label("off", "claude 4242 ended")} === "Turned off" && ${label("off", "x-0001: its claude was ended in its pane")} === "Turned off"
+    && ${label("closed", "its tmux session x-0001 closed, not by asctl (its shell ended, someone closed it, or the tmux server ended)")} === "Tmux session closed (not by asctl)"
+    && ${detail("closed", "its tmux session x-0001 closed, not by asctl")} === "" && ${detail("off", "its claude was ended in its pane (exit 0)")} === ""`);
 check("rc on/off read from its own words, not from a name with off in it",
   `${label("rc", "back-off-0421: rc on, title 'x' from its next start")} === "Remote control on" && ${label("rc", "a-0421: rc off, off now")} === "Remote control off"`);
 check("rc: its name not sent is no switch, and says why",
@@ -112,9 +117,16 @@ check("waiting at a prompt: needs attention, says what Claude Code asks and wher
     && l.why === "Claude Code asks: “2 new MCP servers found in this project”. Answer it in its pane (tmux attach -t =fresh-0007); Off closes it."
     && n.why === "Its claude has not come up: Claude Code may ask something in its pane (tmux attach -t =fresh-0007); Off closes it."; })()`);
 check("ended, its tmux session up: Restart in tmux named, never Turn on", `(() => {
-  const a = look({ state: "ended by a signal (137), tmux up" }), b = look({ state: "tmux up, claude ended (0)" });
-  return a.label === "Ended unexpectedly" && b.label === "Claude ended" && b.why.startsWith("Claude ended (exit 0); its tmux session is still up.")
-    && [a, b].every((l) => l.group === "attention" && l.why.endsWith("Restart in tmux starts it there again; Off closes it.") && !/Turn it on/.test(l.why));
+  const a = look({ state: "ended by a signal (137), tmux up" }), b = look({ state: "tmux up, claude ended (1)" }), c = look({ state: "tmux up, claude ended" });
+  return a.label === "Ended unexpectedly" && b.label === "Claude ended" && b.why.startsWith("Claude ended (exit 1); its tmux session is still up.")
+    && c.why.startsWith("Claude ended; its tmux session")
+    && [a, b, c].every((l) => l.group === "attention" && l.why.endsWith("Restart in tmux starts it there again; Off closes it.") && !/Turn it on/.test(l.why));
+})()`);
+check("ended by you (exit 0), its tmux session up: off, not attention; Restart in tmux and Off named", `(() => {
+  const l = look({ state: "tmux up, claude ended (0)", last_off: 1000 }), t = look({ state: "tmux up, claude ended (10)" });
+  return l.group === "off" && l.dot === "" && l.label === "Ended by you"
+    && l.why === "Ended by you (exit 0); its tmux session is still up. Restart in tmux starts it again; Off closes the session."
+    && t.group === "attention" && t.label === "Claude ended";
 })()`);
 check("a Duplicate: its conversation, not its name; Restart in tmux named", `(() => { const l = look({ state: "duplicate" });
   return l.label === "Duplicate" && l.group === "attention" && !/its name/.test(l.why) && /Restart in tmux ends them all and starts one/.test(l.why); })()`);
