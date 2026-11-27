@@ -1155,7 +1155,7 @@ seen "renamed to talk-$id2; claude's own name not changed now: claude is busy" <
 	&& ok "rename while claude works: the favorite renamed, nothing typed" || bad "rename while claude works: the favorite renamed, nothing typed" "rename while busy: $out"
 rm -f "$HOME/fake-busy"; flagged
 out=$(asctl rename "$id2" talk 2>&1)
-seen 'claude and its claude.ai title too' <<<"$out" && [ "$(claude_in "talk-$id2")" = "$c1" ] && [ "$(sname "$c1")" = "talk-$id2" ] && seen "line: /rename talk-$id2" "$HOME/claude-args.log" \
+seen -F "renamed to talk-$id2, claude too; no claude.ai title (its remote control is off)" <<<"$out" && [ "$(claude_in "talk-$id2")" = "$c1" ] && [ "$(sname "$c1")" = "talk-$id2" ] && seen "line: /rename talk-$id2" "$HOME/claude-args.log" \
 	&& ok "rename of an idle claude: /rename typed, the same claude takes the name" || bad "rename of an idle claude: /rename typed, the same claude takes the name" "live rename: $out / $(sname "$c1")"
 touch "$HOME/fake-menu-on"
 out=$(asctl rename "$id2" talk3 2>&1)
@@ -1260,6 +1260,7 @@ e = registry.find(registry.load(), sys.argv[2])
 with registry.entry_lock(e["id4"]):
     watch._pending_rename({"rename_tries": {}}, e, cli.live_in(e))' "$REPO" "$ido"
 seen "pid=$pb line: /rename outer-$ido" "$HOME/claude-args.log" && [ "$(jq -r --arg i "$ido" '.entries[$i] | "\(.rename_pending) \(.rename_title)"' "$REG")" = "null null" ] \
+	&& [ "$(last rename | jq -r .text)" = "claude took the name outer-$ido now that it is idle, its claude.ai title too" ] \
 	&& ok "the watcher sends it once claude is idle (/rename, though claude has the name), and it is no longer owed" || bad "the watcher sends it once claude is idle (/rename, though claude has the name), and it is no longer owed" "title sent: $(jq -c --arg i "$ido" '.entries[$i]' "$REG")"
 kill "$sc" 2>/dev/null; asctl off "$ido" >/dev/null; asctl forget "$ido" >/dev/null
 }
@@ -2607,7 +2608,102 @@ PY
 asctl forget "$ix" >/dev/null; rm -f "$SD/exit/$ix" "$HOME/other-boot" "$HOME/xo-noboot" "$(tfile "$X1")"; rm -rf "$H"
 }
 
-run_cases asc no_tmux_server version main shared_stale guards on_gates new_session rc_now rc_menu_off rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg restart_copies restart_ended watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot boot_after asctl_setup trust_watch mcp_prompt mcp_trust off_survivor shell_start tmux_silent start_folder exit_off
+case_rc_title() {
+echo "== claude.ai's title claimed only when claude's log of its remote control confirms it; rc renew"
+server_up
+RT=cccccccc-dddd-4eee-8fff-000000000021
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$RT" > "$(tnew "$RT" "$W")"
+asctl fav "$RT" --name rct >/dev/null || stop "a favorite for rc_title"
+ir=$(jq -r --arg s "$RT" '.entries[] | select(.session_id == $s) | .id4' "$REG")
+asctl rc "$ir" on >/dev/null || stop "rc on for rc_title"
+LOG="$SD/rc/$ir/debug.log"
+mkdir -p "$SD/rc/$ir"; echo "a line of the claude before" > "$LOG"
+brid() { jq -r '.bridgeSessionId // ""' "$HOME/.claude/sessions/$1.json"; }
+asctl on "$ir" >/dev/null; cr=$(claude_in "rct-$ir") || stop "a claude for rc_title"
+lastargs | seen -F -- "--remote-control rct-$ir --debug=bridge --debug-file $LOG" && ! seen -F "the claude before" "$LOG" \
+	&& ok "every start: claude's log of its remote control (only those lines), in asctl's folder, cleared first" || bad "every start: claude's log of its remote control (only those lines), in asctl's folder, cleared first" "args: $(lastargs) / $(cat "$LOG" 2>&1)"
+out=$(asctl rename "$ir" rcb 2>&1)
+[ "$out" = "renamed to rcb-$ir, claude and its claude.ai title too" ] && [ "$(sname "$cr")" = "rcb-$ir" ] \
+	&& ok "rename, its claude.ai title confirmed by claude's log: said" || bad "rename, its claude.ai title confirmed by claude's log: said" "rename: $out / $(cat "$LOG")"
+python3 -I - "$REPO" "$ir" "$cr" <<'PY' && ok "title_landed: only a success after a title sent, both after the rename began; not from a claude without the log; rc off" || bad "title_landed: only a success after a title sent, both after the rename began; not from a claude without the log; rc off" "see above"
+import os, sys
+sys.path.insert(0, sys.argv[1]); from asc import cli, registry
+e = registry.find(registry.load(), sys.argv[2]); s = {"pid": int(sys.argv[3])}
+path = cli.rc_log(e["id4"]); sent = cli.TITLE_SENT.decode() + "cse_x\n"; okl = cli.TITLE_OK.decode() + "\n"
+def at(text):
+    with open(path, "w") as f: f.write(text)
+    return os.path.getsize(path)
+def after(text):
+    with open(path, "a") as f: f.write(text)
+land = lambda a: cli.title_landed(e, s, a, wait=0.3)
+a = at(""); after(sent + okl); assert land(a) == "", land(a)
+a = at(sent + okl); assert land(a).startswith("claude's log of its remote control shows no success"), "an older success counted"
+a = at(""); after(sent); assert land(a).startswith("claude's log"), "a title sent with no success counted"
+a = at(""); after(okl); assert land(a).startswith("claude's log"), "a success with no title sent counted"
+a = at(sent); after(okl); assert land(a).startswith("claude's log"), "a title sent before the rename counted"
+me = {"pid": os.getpid()}
+cli.rclive.session = lambda pid: {"rc": True}
+assert cli.title_landed(e, me, 0, wait=0.3).startswith("its claude was started without asctl's log"), "a claude without the log"
+cli.rclive.session = lambda pid: {"rc": False}
+assert cli.title_landed(e, s, 0, wait=0.3) == "its remote control is off"
+PY
+b0=$(brid "$cr")
+out=$(asctl rc "$ir" renew 2>&1); b1=$(brid "$cr")
+[ "$out" = "rcb-$ir: rc renewed: a new claude.ai session, title 'rcb-$ir' (the old one ended)" ] && [ -n "$b1" ] && [ "$b1" != "$b0" ] \
+	&& seen "pid=$cr rc: disconnected" "$HOME/claude-args.log" && seen -F "pid=$cr line: /remote-control rcb-$ir" "$HOME/claude-args.log" && last rc | jq -r .text | seen -F "rc renewed" \
+	&& ok "rc renew: rc off, then on with its title: a new claude.ai session, the same claude" || bad "rc renew: rc off, then on with its title: a new claude.ai session, the same claude" "renew: $out / $b0 -> $b1"
+touch "$HOME/fake-rc-same"
+o=$(errof rc "$ir" renew)
+[ "$o" = "asctl: rcb-$ir: rc renew: its remote control is on again, but on the same claude.ai session; check claude.ai" ] && [ "$(brid "$cr")" = "$b1" ] \
+	&& ok "rc renew that comes back on the same claude.ai session: said, not taken for a new one" || bad "rc renew that comes back on the same claude.ai session: said, not taken for a new one" "renew same: $o"
+rm -f "$HOME/fake-rc-same"
+python3 -I - "$REPO" "$ir" <<'PY' && ok "the watcher's rename: its claude.ai title not claimed when not confirmed" || bad "the watcher's rename: its claude.ai title not claimed when not confirmed" "see above"
+import sys
+sys.path.insert(0, sys.argv[1]); from asc import cli, events, registry, watch
+id4 = sys.argv[2]
+with registry.changing() as d: d["entries"][id4]["rename_pending"] = d["entries"][id4]["tmux"]
+e = registry.find(registry.load(), id4)
+watch.rclive.guard = lambda s: None
+watch.cli.rename_live = lambda e, s, n: (None, "claude's log of its remote control shows no success in 10 s")
+watch._pending_rename({"rename_tries": {}}, e, {"pid": 1, "name": "x"})
+r = events.read(id4, 5)[0]
+assert r["kind"] == "rename" and r["text"] == (f"claude took the name {e['tmux']} now that it is idle; its claude.ai title not confirmed: claude's log "
+    f"of its remote control shows no success in 10 s (asctl rc {id4} renew gives it a new claude.ai session with that title)"), r
+assert registry.find(registry.load(), id4)["rename_pending"] is None
+PY
+touch "$HOME/fake-busy"; flagged
+o=$(errof rc "$ir" renew)
+[ "$o" = "asctl: rcb-$ir: rc renew: claude is busy; nothing was changed" ] && [ "$(brid "$cr")" = "$b1" ] \
+	&& ok "rc renew while claude works: refused, nothing typed" || bad "rc renew while claude works: refused, nothing typed" "renew busy: $o"
+rm -f "$HOME/fake-busy"; flagged
+o=$(errof rc "$ir" renew --title x)
+seen -F "rc renew takes no --title or --next-start" <<<"$o" && ok "rc renew takes no title (it uses its own)" || bad "rc renew takes no title (it uses its own)" "renew --title: $o"
+asctl rc "$ir" off >/dev/null
+o=$(errof rc "$ir" renew)
+[ "$o" = "asctl: rcb-$ir: its remote control is not live; nothing was done (asctl rc $ir on)" ] && [ -z "$(brid "$cr")" ] \
+	&& ok "rc renew with its remote control off: refused" || bad "rc renew with its remote control off: refused" "renew rc off: $o"
+asctl off "$ir" --force >/dev/null
+o=$(errof rc "$ir" renew)
+[ "$o" = "asctl: rcb-$ir: no claude of it runs in its tmux session; nothing was done" ] && ok "rc renew with no claude running: refused" || bad "rc renew with no claude running: refused" "renew off: $o"
+# Last, the two checks that wait out the 10 s (a mutant stops at its own check: the others do not wait).
+# Claude's log first holds a success (its start's title), which a rename that fails must not count.
+asctl rc "$ir" on >/dev/null; asctl on "$ir" >/dev/null; cr=$(claude_in "rcb-$ir") || stop "rcb-<id> again"
+touch "$HOME/fake-title-fail"
+out=$(asctl rename "$ir" rcc 2>&1)
+[ "$out" = "renamed to rcc-$ir, claude too; its claude.ai title not confirmed: claude's log of its remote control shows no success in 10 s (asctl rc $ir renew gives it a new claude.ai session with that title)" ] \
+	&& [ "$(sname "$cr")" = "rcc-$ir" ] && last rename | jq -r .text | seen -F "its claude.ai title not confirmed" \
+	&& ok "rename, claude.ai not confirming the title: claude has the name, the title not claimed, renew named" || bad "rename, claude.ai not confirming the title: claude has the name, the title not claimed, renew named" "rename: $out / $(cat "$LOG")"
+asctl off "$ir" --force >/dev/null
+o=$(asctl on "$ir" 2>&1); cr=$(claude_in "rcc-$ir") || stop "rcc-<id> for the start check"
+rm -f "$HOME/fake-title-fail"
+[ "$o" = "rcc-$ir: its claude.ai title not confirmed: claude's log of its remote control shows no success in 10 s (asctl rc $ir renew gives it a new claude.ai session with that title)
+on: rcc-$ir (claude $cr, session $RT)" ] && [ "$(jq -r --arg i "$ir" '.entries[$i].rename_pending' "$REG")" = null ] \
+	&& ok "a start whose name claude.ai does not confirm as its title: said, not owed again" || bad "a start whose name claude.ai does not confirm as its title: said, not owed again" "on: $o"
+asctl off "$ir" --force >/dev/null
+asctl forget "$ir" >/dev/null; rm -f "$(tfile "$RT")"; rm -rf "${SD:?}/rc/$ir"
+}
+
+run_cases asc no_tmux_server version main shared_stale guards on_gates new_session rc_now rc_menu_off rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg restart_copies restart_ended watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot boot_after asctl_setup trust_watch mcp_prompt mcp_trust off_survivor shell_start tmux_silent start_folder exit_off rc_title
 
 echo "asc: $pass passed, $fail failed"
 [ "$fail" = 0 ]

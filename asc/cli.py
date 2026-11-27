@@ -18,8 +18,9 @@
                                    refused when memory is short (asc/memory.py) unless forced
   asctl off ID [--force]           end it: claude gets SIGTERM, then its tmux session closes
   asctl rename ID NAME [--restart] a new name (the tmux session too, if it runs); a running
-                                   claude, when idle, gets /rename NAME, also its claude.ai title
-                                   (--restart: restart it instead)
+                                   claude, when idle, gets /rename NAME, which claude also sends to
+                                   claude.ai as its title (said only when claude's own log of its
+                                   remote control confirms it) (--restart: restart it instead)
   asctl restart ID [--outside] [--expect STATE] [--force-memory]
                                    its claude once, in its tmux session, on the same conversation,
                                    only when every claude of it is idle and runs no command or
@@ -36,6 +37,9 @@
   asctl rc ID on|off [--title T] [--next-start]
                                    remote control (and its title); a running claude also
                                    now, when idle (asc/rclive.py), unless --next-start
+  asctl rc ID renew                a new claude.ai session for its running claude, with its title:
+                                   rc off, then on, when idle (the old claude.ai link ends; a
+                                   title a moved conversation's claude.ai session kept is replaced)
   asctl resurrect ID on|off        bring it back after a reboot; on turns rc on too, and a
                                    resurrect start always has rc
   asctl note ID TEXT               a note shown with it ("" clears it)
@@ -140,6 +144,95 @@ def exit_file(id4):
     d = os.path.join(registry.state_dir(), "exit")
     os.makedirs(d, mode=0o700, exist_ok=True)
     return os.path.join(d, id4)
+
+
+RC_TITLE_WAIT = 10  # s: claude's log of its remote control confirms a title by then (well under 1 s seen)
+TITLE_SENT = b"[bridge] Updating session title: "
+TITLE_OK = b"[bridge] Session title updated successfully"
+
+
+def rc_log(id4):
+    """Claude's log of its remote control (--debug=bridge, only those lines), in a folder of
+    asctl's own: what claude says of the titles it sends to claude.ai (asctl reads nothing else
+    of it). Claude keeps a link "latest" beside it, never read."""
+    d = os.path.join(registry.state_dir(), "rc", id4)
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    return os.path.join(d, "debug.log")
+
+
+def _log_size(path):
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return 0
+    return st.st_size if stat.S_ISREG(st.st_mode) else 0
+
+
+def _log_since(path, at):
+    """What claude added to its log of its remote control after at bytes (a regular file only,
+    never a link followed; at most 1 MB)."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError:
+        return b""
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return b""
+        os.lseek(fd, at, os.SEEK_SET)
+        return os.read(fd, 1 << 20)
+    finally:
+        os.close(fd)
+
+
+def _logs_to(pid, path):
+    """Whether claude pid was started with --debug-file path (its own command line)."""
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            args = f.read().split(b"\0")
+    except OSError:
+        return False
+    return any(a == b"--debug-file" and i + 1 < len(args) and args[i + 1] == os.fsencode(path) for i, a in enumerate(args))
+
+
+def title_landed(e, s, at, wait=RC_TITLE_WAIT):
+    """After a /rename that claude took: "" when claude's log of its remote control shows that
+    claude.ai took the title (a title sent, then its success, after at bytes), else why it is not
+    known. Claude writes nothing when claude.ai refuses one, and a rename sent to a claude.ai
+    session another machine made (a moved conversation) did not stick: so never claimed unseen."""
+    if not (rclive.session(s["pid"]) or {}).get("rc"):
+        return "its remote control is off"
+    path = rc_log(e["id4"])
+    if not _logs_to(s["pid"], path):
+        return "its claude was started without asctl's log of its remote control (it has one from its next start)"
+
+    def seen():
+        new = _log_since(path, at)
+        i = new.find(TITLE_SENT)
+        return i >= 0 and new.find(TITLE_OK, i) >= 0
+    if rclive.wait_for(seen, wait):
+        return ""
+    return f"claude's log of its remote control shows no success in {wait} s"
+
+
+def rename_live(e, s, name):
+    """/rename NAME in the entry's live claude s (rclive.rename), then whether claude.ai took it
+    as its title (title_landed): (why claude did not take the name or None, why the title is not
+    confirmed or "" or None when not asked)."""
+    at = _log_size(rc_log(e["id4"]))
+    why = rclive.rename(s, name)
+    if why:
+        return why, None
+    return None, title_landed(e, s, at)
+
+
+def title_note(e, title):
+    """claude.ai's title after a rename claude took, in words (title: as title_landed's)."""
+    if title == "":
+        return "its claude.ai title too"
+    if title == "its remote control is off":
+        return "no claude.ai title (its remote control is off)"
+    return (f"its claude.ai title not confirmed: {title} "
+            f"(asctl rc {e['id4']} renew gives it a new claude.ai session with that title)")
 
 
 def last_exit(id4):
@@ -248,7 +341,8 @@ def claude_argv(e, resurrect=False):
     a += ["--name", e["tmux"], "--permission-mode", start_mode(e)]
     if e.get("rc") or (resurrect and e.get("resurrect")):
         a += ["--remote-control", e.get("rc_title") or e["tmux"]]
-    return a
+    # every start (rc may be turned on while it runs): only the lines of its remote control
+    return a + ["--debug=bridge", "--debug-file", rc_log(e["id4"])]
 
 
 # Modes followed from the transcript as claude takes them, every one --permission-mode takes
@@ -876,10 +970,11 @@ def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, r
         e["started"] = True
         e.pop("awaiting_trust", None)
     mode, rc = argv[argv.index("--permission-mode") + 1], "--remote-control" in argv
-    try:
-        os.unlink(exit_file(e["id4"]))
-    except FileNotFoundError:
-        pass
+    for f in (exit_file(e["id4"]), rc_log(e["id4"])):  # each of the claude before (never a link followed)
+        try:
+            os.unlink(f)
+        except FileNotFoundError:
+            pass
     wrap = os.path.join(HERE, "bin", "asctl-wrap")
     if starting:
         starting()
@@ -958,24 +1053,27 @@ def _came_up(e, s, mode, rc, force_memory, loud):
             x["session_id"] = s["session_id"]
         events.log("followed", e, f"session {e['session_id']} is now {s['session_id']} (claude chose it at start)")
     if rc and (e.get("rc_title") or e["tmux"]) == e["tmux"]:
-        why = send_title(s, e["tmux"])
+        why, title = send_title(e, s, e["tmux"])
         if why:  # claude has the name (--name), its claude.ai session not yet: owed to it
             pending(e["id4"], e["tmux"], title=True)
             say("rc", e, f"{e['tmux']}: its name not sent to claude.ai: {why}")
+        elif title:  # sent, and claude took it, but claude.ai's title is not confirmed: said, not sent again
+            say("rc", e, f"{e['tmux']}: {title_note(e, title)}")
     if loud:
         out(f"on: {e['tmux']} (claude {s['pid']}, session {s['session_id']})")
     return 0
 
 
-def send_title(s, name, wait=20):
+def send_title(e, s, name, wait=20):
     """/rename NAME once claude's remote control is up: a resumed conversation reconnects to its
     claude.ai session, which keeps its old title, and an old background-job record of claude's
-    own can put an old name back at each start; only /rename sends a name to claude.ai."""
+    own can put an old name back at each start; only /rename sends a name to claude.ai. As
+    rename_live: (why not typed or taken, why the title is not confirmed)."""
     if not rclive.wait_for(lambda: (rclive.session(s["pid"]) or {}).get("rc"), wait):
-        return "its remote control did not come up"
+        return "its remote control did not come up", None
     if not rclive.wait_for(lambda: rclive.guard(s) is None, 10):
-        return rclive.guard(s) or "claude was not ready"
-    return rclive.rename(s, name)
+        return rclive.guard(s) or "claude was not ready", None
+    return rename_live(e, s, name)
 
 
 def pending(id4, name, title=False):
@@ -1308,13 +1406,14 @@ def cmd_rename(args):
         elif not args.restart:
             # /rename: claude takes the name at once and sends it to its claude.ai session (a
             # restart would not: --resume reconnects to that session, which keeps its title)
-            why = rclive.rename(s, new)
+            why, title = rename_live(e, s, new)
             if why:
                 pending(id4, new)
                 say("rename", e, f"renamed to {new}; claude's own name not changed now: {why}. "
                                  f"The watcher sends it once claude is idle", old=old)
             else:
-                say("rename", e, f"renamed to {new}, claude and its claude.ai title too", old=old)
+                say("rename", e, f"renamed to {new}, claude and {title_note(e, title)}" if title == ""
+                    else f"renamed to {new}, claude too; {title_note(e, title)}", old=old)
         else:
             try:
                 if _restart(id4) != 0:
@@ -1337,8 +1436,12 @@ def cmd_mode(args):
 
 
 def cmd_rc(args):
+    if args.state == "renew":
+        if args.title is not None or args.next_start:
+            raise RegistryError("rc renew takes no --title or --next-start (it uses its title)")
+        return _rc_renew(registry.find(registry.load(), args.id)["id4"])
     if args.state not in ("on", "off"):
-        raise RegistryError("rc is on or off")
+        raise RegistryError("rc is on, off or renew")
     title = registry.check_title(args.title) if args.title is not None else None
     on = args.state == "on"
     id4 = registry.find(registry.load(), args.id)["id4"]
@@ -1357,6 +1460,35 @@ def cmd_rc(args):
         else:
             why = rclive.switch(s, on, e.get("rc_title") or e["tmux"])
             say("rc", e, head + (f" from its next start; not changed now: {why}" if why else (", live now" if on else ", off now")))
+    return 0
+
+
+def _rc_renew(id4):
+    """A new claude.ai session for the entry's running claude, with its title: rc off, then on
+    (each as asctl rc does it now: typed only when claude is idle, checked). The claude.ai session
+    a conversation keeps across restarts and moves keeps its title, and a rename sent to one
+    another machine made did not stick; a new one starts with the title. Its old link ends."""
+    with registry.entry_lock(id4, wait=True):
+        e = registry.find(registry.load(), id4)
+        title = e.get("rc_title") or e["tmux"]
+        s = live_in(e)
+        if not s:
+            raise RegistryError(f"{e['tmux']}: no claude of it runs in its tmux session; nothing was done")
+        was = (rclive.session(s["pid"]) or {}).get("bridge")
+        if not s["rc"] or not was:
+            raise RegistryError(f"{e['tmux']}: its remote control is not live; nothing was done (asctl rc {id4} on)")
+        why = rclive.switch(s, False, title)
+        if why:
+            raise RegistryError(f"{e['tmux']}: rc renew: {why}; nothing was changed")
+        why = rclive.switch(s, True, title)
+        if why:
+            raise ActionFailed(f"{e['tmux']}: rc renew: its remote control is off now, and turning it on again "
+                               f"failed: {why} (asctl rc {id4} on)")
+        now = (rclive.session(s["pid"]) or {}).get("bridge")
+        if not now or now == was:
+            raise ActionFailed(f"{e['tmux']}: rc renew: its remote control is on again, but on the same "
+                               f"claude.ai session; check claude.ai")
+    say("rc", e, f"{e['tmux']}: rc renewed: a new claude.ai session, title {title!r} (the old one ended)")
     return 0
 
 

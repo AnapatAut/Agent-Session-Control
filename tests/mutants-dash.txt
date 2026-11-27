@@ -339,3 +339,8 @@ asc/web/app.js %%%   if (st.startsWith("tmux up") && code === "0") return %%%   
 asc/web/app.js %%%   if (x.kind === "off" && /^its claude was ended in its pane\b/.test(t)) return "Ended by you"; %%%   if (x.kind === "off") return "Ended by you"; %%% page: an end in its pane taken for an Off, and a tmux session closed not by asctl: in words %%% page
 asc/web/app.js %%% /^its claude was ended in its pane\b/ %%% /its claude was ended in its pane\b/ %%% page: an end in its pane taken for an Off, and a tmux session closed not by asctl: in words %%% page
 asc/web/app.js %%% , closed: "Tmux session closed (not by asctl)" }; %%%  }; %%% page: an end in its pane taken for an Off, and a tmux session closed not by asctl: in words %%% page
+asc/dash.py %%%         return ["rc", ref, "renew"] %%%         return ["rc", ref, "on"] %%% New claude.ai session from the page: asctl rc NAME-ID renew %%% rc
+asc/dash.py %%%  "rc_title": e.get("rc_title") or "", %%%  %%% rc on with a title %%% rc
+asc/web/app.js %%%   if (!live) return []; %%%   if (false) return []; %%% page: New claude.ai session: only while its remote control is live; asks first, naming its title (its rc title if set) and the old link; then rc_renew %%% page
+asc/web/app.js %%%     await act({ action: "rc_renew", ...ref }); %%%     await act({ action: "rc", ...ref }); %%% page: New claude.ai session: only while its remote control is live; asks first, naming its title (its rc title if set) and the old link; then rc_renew %%% page
+asc/web/app.js %%% a new session named ${e.rc_title || e.tmux}. %%% a new session named ${e.tmux}. %%% page: New claude.ai session: only while its remote control is live; asks first, naming its title (its rc title if set) and the old link; then rc_renew %%% page

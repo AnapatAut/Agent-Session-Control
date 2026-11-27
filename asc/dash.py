@@ -415,7 +415,7 @@ def _snapshot(tmux_error=""):
         fav_tmux.add(e["tmux"])
         favs.append({
             "id4": e["id4"], "name": e["name"], "tmux": e["tmux"], "cwd": e["cwd"],
-            "session_id": e.get("session_id"), "rc": bool(e.get("rc")),
+            "session_id": e.get("session_id"), "rc": bool(e.get("rc")), "rc_title": e.get("rc_title") or "",
             "rc_live": bool(s and s["rc"]), "claude_name": s["name"] if s else "",  # its name since it started
             "claude_name_kept": bool(s and s["peer_name"]),  # one a restart does not change
             "mode": e.get("mode", "auto"), "resurrect": bool(e.get("resurrect")),
@@ -534,6 +534,8 @@ def action_argv(a):
         if a.get("mode") not in WEB_MODES:
             raise RegistryError("from the page the mode can be auto or manual; skip only with asctl mode ID skip")
         return ["mode", ref, a["mode"]]
+    if kind == "rc_renew":  # New claude.ai session: rc off and on (asctl checks claude is idle)
+        return ["rc", ref, "renew"]
     if kind in ("rc", "resurrect"):
         if not isinstance(a.get("on"), bool):
             raise RegistryError(f"{kind} needs on: true or false")

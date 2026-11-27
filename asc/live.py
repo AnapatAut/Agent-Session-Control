@@ -163,6 +163,8 @@ def read_sessions(home=None):
              "peer_name": raw.get("nameSource") == "peer",
              "status": raw.get("status") if raw.get("status") in ("busy", "idle", "shell", "waiting") else "unknown",
              "rc": bool(raw.get("bridgeSessionId")), "kind": raw.get("kind"),
+             # its claude.ai session (remote control): another one after rc off and on (asctl rc renew)
+             "bridge": raw.get("bridgeSessionId")[:100] if isinstance(raw.get("bridgeSessionId"), str) else None,
              # why claude waits ("dialog open", "input needed", ...), and when its status last changed
              "waiting_for": raw.get("waitingFor")[:40] if isinstance(raw.get("waitingFor"), str) else "",
              "status_at": raw.get("statusUpdatedAt") // 1000 if type(raw.get("statusUpdatedAt")) is int else None,

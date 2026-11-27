@@ -185,6 +185,7 @@ asctl cwd 0421 ~/tools/app  # start it in that folder from now on (checked as fo
                             # only while it is off), as when its folder moved
 asctl rename 0421 db        # db-0421; a running claude, when idle, gets /rename db-0421,
                             # which claude also sends to its claude.ai session (the rc title)
+asctl rc 0421 renew         # a new claude.ai session with its title (rc off and on, when idle)
 asctl restart 0421          # its claude once, in its tmux session (--resume), only when every
                             # claude of it is idle and runs nothing: off and on again; one
                             # outside its tmux session moved into it; a Duplicate: all ended,
@@ -235,6 +236,17 @@ and Restart in tmux) sends `/rename` with its name once rc is up; when it cannot
 rc slow), the name stays owed to claude.ai and the watcher sends it once claude is idle. A
 conversation that once ran as a Claude Code
 background job takes that job's recorded name back at every start (`nameSource: "peer"`).
+
+asctl says claude.ai took a title only when claude says so: every start has
+`--debug=bridge --debug-file` with a file of asctl's own (`rc/ID/debug.log` in its state folder,
+cleared at each start; only the lines of claude's remote control), and a `/rename` counts once
+"Session title updated successfully" follows the title claude sent. Claude writes nothing when
+claude.ai does not take one, so asctl then says the title is not confirmed (also after a start).
+A conversation moved from another machine kept the claude.ai session that machine made, and a
+rename sent there did not stick. `asctl rc ID renew` (the page: New claude.ai session) turns
+remote control off and on again while claude is idle: claude.ai gets a new session with its
+title, and the old link stops working. With `--debug`, claude shows "Debug mode enabled" at the
+top of its pane and "Debug" in its footer.
 
 A restart (`asctl restart`, `rename --restart`) goes ahead only when the
 claude is idle and runs nothing: no command (each runs as a child bash that sources claude's

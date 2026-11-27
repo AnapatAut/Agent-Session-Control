@@ -133,8 +133,27 @@ check("a Duplicate: its conversation, not its name; Restart in tmux named", `(()
 // restartActs and pastSheet with a tiny DOM of plain objects (tag, text, class, children, dataset), so
 // what they show is seen
 run(`var withDom = (f) => { const d = document; document = { createElement: (tag) => ({ tag, textContent: "", className: "", kids: [], dataset: {},
-  append(c) { this.kids.push(c); }, addEventListener() {} }) }; try { return f(); } finally { document = d; } };
+  append(c) { this.kids.push(c); }, addEventListener(t, f) { this.on = f; } }) }; try { return f(); } finally { document = d; } };
 var domShown = (xs) => xs.map((x) => x.className.trim() + ":" + (x.textContent || x.kids.map((k) => k.textContent).join("|")));`);
+check("New claude.ai session: only while its remote control is live; asks first, naming its title (its rc title if set) and the old link; then rc_renew", `(async () => {
+  const ref = { id: "0009", tmux: "d-0009" }, keep = { ask, act }, asked = [], sent = [];
+  const none = withDom(() => renewAct({ tmux: "d-0009", rc_title: "" }, ref, false, false)).length === 0;
+  const [b] = withDom(() => renewAct({ tmux: "d-0009", rc_title: "" }, ref, true, false));
+  const [c] = withDom(() => renewAct({ tmux: "d-0009", rc_title: "My chat" }, ref, true, true));
+  const bOn = b.disabled === false, cOff = c.disabled === true;  // read before a click (which enables it again as it ends)
+  let yes = false;
+  try {
+    ask = async (o) => { asked.push(o); return yes; }; act = async (x) => { sent.push(x); return { ok: true }; };
+    await b.on(); const refused = sent.length === 0;
+    yes = true; await b.on();
+    yes = false; await c.on();
+    return none && b.textContent === "New claude.ai session" && bOn && cOff && refused
+      && asked[0].title === "New claude.ai session for d-0009?" && asked[0].ok === "New session"
+      && asked[0].text === "Remote control goes off and on again: claude.ai gets a new session named d-0009. The old claude.ai link stops working; the conversation goes on. Done only while claude is idle."
+      && asked[2].text.includes("a new session named My chat.")
+      && JSON.stringify(sent) === '[{"action":"rc_renew","id":"0009","tmux":"d-0009"}]' || JSON.stringify([asked, sent]);
+  } finally { ask = keep.ask; act = keep.act; }
+})()`);
 check("Restart in tmux of a Duplicate: a copy busy: a warning naming it, no button; all idle: the button", `(() => {
   const ref = { id: "0009", tmux: "d-0009" };
   const busy = withDom(() => domShown(restartActs({ tmux: "d-0009", copies: [{ pid: 1, where: "its tmux session d-0009", busy: "" },

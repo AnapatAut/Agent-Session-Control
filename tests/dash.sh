@@ -604,7 +604,7 @@ state | jq -e '.favorites[0].claude_name_kept == true' >/dev/null && ok "state: 
 rm -f "$HOME/fake-peer-name"; flagged
 pid0=$(state | jq '.favorites[0].pid')
 out=$(post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"db"}')
-[ "$(tail -1 <<<"$out")" = 200 ] && seen 'claude and its claude.ai title too' <<<"$out" && state | jq -e --argjson p "$pid0" '.favorites[0] | (.tmux | startswith("db-")) and .claude_name == .tmux and .pid == $p' >/dev/null \
+[ "$(tail -1 <<<"$out")" = 200 ] && seen -F 'claude too; no claude.ai title (its remote control is off)' <<<"$out" && state | jq -e --argjson p "$pid0" '.favorites[0] | (.tmux | startswith("db-")) and .claude_name == .tmux and .pid == $p' >/dev/null \
 	&& ok "rename from the page: the same claude takes the name (/rename)" || bad "rename from the page: the same claude takes the name (/rename)" "rename: $out / $(state | jq -c '.favorites[0] | {tmux, claude_name, pid}')"
 TM="db-$id"
 touch "$HOME/fake-busy"; flagged
@@ -612,7 +612,7 @@ post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"db2"}' >/dev/nu
 state | jq -e --arg t "db-$id" '.favorites[0].claude_name == $t' >/dev/null && ok "rename while busy: claude's name not changed" || bad "rename while busy: claude's name not changed" "rename while busy changed claude's name"
 rm -f "$HOME/fake-busy"; flagged
 out=$(post '{"action":"rename","id":"'"$id"'","tmux":"'"$TM"'","name":"db2"}')
-seen 'claude and its claude.ai title too' <<<"$out" && state | jq -e --arg t "$TM" '.favorites[0].claude_name == $t' >/dev/null \
+seen -F 'claude too; no claude.ai title (its remote control is off)' <<<"$out" && state | jq -e --arg t "$TM" '.favorites[0].claude_name == $t' >/dev/null \
 	&& ok "rename to the same name sends it to a claude that goes by another (renamed while busy)" || bad "rename to the same name sends it to a claude that goes by another (renamed while busy)" "same-name rename: $out"
 out=$(post '{"action":"restart","id":"'"$id"'","tmux":"'"$TM"'"}')
 [ "$(tail -1 <<<"$out")" = 400 ] && seen 'needs expect: outside, duplicate or ended' <<<"$out" && [ "$(state | jq '.favorites[0].pid')" = "$pid0" ] \
@@ -901,8 +901,12 @@ case_rc() {
 echo "== rc, resurrect and the memory gate from the page"
 dash_up; trio_fav
 R3='"id":"'"$id3"'","tmux":"trio-'"$id3"'"'
-[ "$(post '{"action":"rc","on":true,"title":"Trio work",'"$R3"'}' | tail -1)" = 200 ] && [ "$(jq -r ".entries[\"$id3\"].rc_title" "$REG")" = "Trio work" ] && ok "rc on with a title" || bad "rc on with a title" "rc on from the page failed"
+[ "$(post '{"action":"rc","on":true,"title":"Trio work",'"$R3"'}' | tail -1)" = 200 ] && [ "$(jq -r ".entries[\"$id3\"].rc_title" "$REG")" = "Trio work" ] \
+	&& state | jq -e --arg i "$id3" '[.favorites[] | select(.id4 == $i)][0].rc_title == "Trio work"' >/dev/null && ok "rc on with a title" || bad "rc on with a title" "rc on from the page failed"
 [ "$(post '{"action":"rc","on":"yes",'"$R3"'}' | tail -1)" = 400 ] && ok "rc on must be a boolean" || bad "rc on must be a boolean" "rc took a non-boolean"
+python3 -I -c 'import sys, json; sys.path.insert(0, sys.argv[1]); from asc import dash
+print(" ".join(dash.action_argv(json.loads(sys.argv[2]))))' "$REPO" '{"action":"rc_renew",'"$R3"'}' | seen -x "rc trio-$id3 renew" \
+	&& ok "New claude.ai session from the page: asctl rc NAME-ID renew" || bad "New claude.ai session from the page: asctl rc NAME-ID renew" "rc_renew argv"
 [ "$(post '{"action":"rc","on":true,"title":"-x",'"$R3"'}' | tail -1)" = 400 ] && ok "an rc title starting with - refused" || bad "an rc title starting with - refused" "an rc title starting with - accepted"
 [ "$(post '{"action":"rc","on":false,'"$R3"'}' | tail -1)" = 200 ] && [ "$(jq -r ".entries[\"$id3\"].rc" "$REG")" = false ] && ok "rc off" || bad "rc off" "rc off failed"
 [ "$(post '{"action":"resurrect","on":true,'"$R3"'}' | tail -1)" = 200 ] && state | jq -e '.favorites[] | select(.id4 == "'"$id3"'") | .resurrect and .rc' >/dev/null && ok "resurrect on turns rc on" || bad "resurrect on turns rc on" "resurrect on from the page"

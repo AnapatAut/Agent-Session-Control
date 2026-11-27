@@ -893,12 +893,26 @@ function favSheet(e) {
       if (name === null || (name === e.name && !drift)) return;
       await act({ action: "rename", name, ...ref });
     }, wait),
+    ...renewAct(e, ref, on && rs === "live", wait),
     btn("Forget", "danger", async () => {
       if (!await ask({ title: `Forget ${e.tmux}?`, text: "A running session is left alone; only the favorite goes.", ok: "Forget", danger: true })) return;
       const j = await act({ action: "forget", ...ref });
       if (j.ok) closeSheet();
     }, wait)));
   return out;
+}
+
+// New claude.ai session (asctl rc ID renew), while its remote control is live: the claude.ai
+// session a conversation keeps across restarts and moves keeps its old title (a rename sent to
+// one another machine made did not stick); a new one starts with its title.
+function renewAct(e, ref, live, wait) {
+  if (!live) return [];
+  return [btn("New claude.ai session", "", async () => {
+    if (!await ask({ title: `New claude.ai session for ${e.tmux}?`, ok: "New session",
+      text: `Remote control goes off and on again: claude.ai gets a new session named ${e.rc_title || e.tmux}. `
+            + "The old claude.ai link stops working; the conversation goes on. Done only while claude is idle." })) return;
+    await act({ action: "rc_renew", ...ref });
+  }, wait)];
 }
 
 // Restart in tmux for a Duplicate (each copy ends, one starts in its tmux session) and for a

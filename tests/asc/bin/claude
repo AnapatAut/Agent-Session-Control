@@ -43,6 +43,12 @@
 # folder of ~/.claude/projects, as asctl does; whether Claude Code looks only in its cwd's is not
 # known. $HOME/fake-exit-at-once: it exits 3 at once. $HOME/fake-slow-start: its REPL (and session
 # file) comes up 1.5 s late, as a claude starting on a busy host.
+# --debug-file PATH: the log of its remote control, as Claude Code 2.1.332 writes it with
+# --debug=bridge: a /rename while rc is live adds "[bridge] Updating session title: cse_..." then
+# "[bridge] Session title updated successfully"; $HOME/fake-title-fail: only the first (claude.ai
+# refused it: claude writes nothing more); $HOME/fake-title-silent: neither. Each rc on is a new
+# claude.ai session (bridgeSessionId session_live_N), as after rc off and on (2.1.332, tried);
+# $HOME/fake-rc-same: rc on again takes up the claude.ai session it left (the same id).
 # Every start is logged to $HOME/claude-args.log. `claude stop JOB` (a background session) sends
 # SIGTERM to the claude whose session file names that jobId, and fails for a job none names
 # ($HOME/fake-stop-fails: it fails anyway).
@@ -61,9 +67,9 @@ fi
 # edited by the terminal (bash's read sets that only while it reads: a BSpace that came between
 # two reads was taken by the terminal's line editing, and lost).
 if [ -t 0 ]; then tty_was=$(stty -g); trap 'stty "$tty_was" 2>/dev/null' EXIT; stty -echo -icanon min 1 time 0; fi
-sid=""; how=""; name=""; prev=""; rc=""
+sid=""; how=""; name=""; prev=""; rc=""; dbg=""; rcn=0
 for a in "$@"; do
-	case $prev in --resume|--session-id) sid=$a how=$prev ;; --name) name=$a ;; --remote-control) rc=session_start ;; esac
+	case $prev in --resume|--session-id) sid=$a how=$prev ;; --name) name=$a ;; --remote-control) rc=session_start ;; --debug-file) dbg=$a ;; esac
 	prev=$a
 done
 [ ! -e "$HOME/fake-exit-at-once" ] || { echo "fake: could not start" >&2; exit 3; }
@@ -239,13 +245,18 @@ enter() {
 	echo "pid=$$ line: $buf" >> "$log"
 	case $buf in
 	"/remote-control")
-		if [ -z "$rc" ]; then rc=session_live; said="/remote-control is active (no name)"
+		if [ -z "$rc" ]; then rcn=$((rcn + 1)); rc=session_live_$rcn; said="/remote-control is active (no name)"
 		elif [ -e "$HOME/fake-slow-dialog" ]; then pend=$(($(now_ms) + 1500)); said="quoted:   ❯ 1. Disconnect this session"
 		else dialog=1; sel=2; fi ;;
 	"/rename "*) [ -e "$HOME/fake-no-rename" ] || { name=${buf#/rename }; src=""; said="Session renamed to: $name"
+		if [ -n "$rc" ] && [ -n "$dbg" ] && [ ! -e "$HOME/fake-title-silent" ]; then
+			printf '%s [DEBUG] [bridge] Updating session title: cse_fake\n' "$(date -u +%FT%T.000Z)" >> "$dbg"
+			[ -e "$HOME/fake-title-fail" ] || printf '%s [DEBUG] [bridge] Session title updated successfully\n' "$(date -u +%FT%T.000Z)" >> "$dbg"
+		fi
 		mkdir -p "$HOME/.claude/projects/-fake"  # claude records its answer in the transcript
 		printf '{"type":"system","subtype":"local_command","content":"<local-command-stdout>%s</local-command-stdout>"}\n' "$said" >> "$HOME/.claude/projects/-fake/$sid.jsonl"; } ;;
-	"/remote-control "*) if [ -z "$rc" ]; then rc=session_live; said="/remote-control is active · ${buf#/remote-control }"; fi ;;
+	"/remote-control "*) if [ -z "$rc" ]; then rcn=$((rcn + 1)); rc=session_live_$rcn; said="/remote-control is active · ${buf#/remote-control }"
+		[ -e "$HOME/fake-rc-same" ] && [ -n "${oldrc-}" ] && rc=$oldrc; fi ;;
 	*) said="> $buf" ;;
 	esac
 	last=$buf; buf=""
@@ -272,7 +283,7 @@ while :; do
 		fi
 	elif [ -z "$k" ]; then
 		if [ $dialog = 1 ]; then
-			[ $sel = 0 ] && { rc=""; said="Remote Control disconnected."; echo "pid=$$ rc: disconnected" >> "$log"; }
+			[ $sel = 0 ] && { oldrc=$rc; rc=""; said="Remote Control disconnected."; echo "pid=$$ rc: disconnected" >> "$log"; }
 			dialog=0
 		else
 			if [[ $buf == /* && $buf != *" "* && -e $HOME/fake-menu-first ]]; then buf=/remote-controller; fi

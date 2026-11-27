@@ -51,7 +51,7 @@ asc/rclive.py %%% |\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)") %%% ") %%% menu detection
 asc/rclive.py %%%     return bool(t) and t[1] == CMD %%%     return bool(t) %%% off: another command marked first in the menu: Enter not pressed, the prompt cleared, what it offered named %%% rc_menu_off
 asc/rclive.py %%%     if not wait_for(lambda: seen() > n and (session(s["pid"]) or {}).get("name") == name, confirm): %%%     if False: %%% rename: typed but not taken by claude: said so %%% new_name
 asc/rclive.py %%%             n += f.read(tail).count(text) %%%             n = 1 %%% rename of an idle claude: /rename typed, the same claude takes the name %%% new_name
-asc/cli.py %%%             why = rclive.rename(s, new) %%%             why = None %%% rename: not when a menu above the box would take Enter %%% rc_menu
+asc/cli.py %%%             why, title = rename_live(e, s, new) %%%             why, title = None, "" %%% rename: not when a menu above the box would take Enter %%% rc_menu
 asc/cli.py %%%     if rc and (e.get("rc_title") %%%     if False and (e.get("rc_title") %%% a start with rc sends its name to claude.ai (/rename, once rc is up) %%% restart_name
 asc/rclive.py %%%     if t is not None and cmd.startswith(t): %%%     if t is not None: %%% the prompt not showing the command as typed: Enter not pressed, text not ours left alone %%% rc_menu
 asc/rclive.py %%%             if not dialog_open(pid, scr) or selected(scr, DISCONNECT): %%%             if not dialog_open(pid, scr): %%% rc off: the dialog, Disconnect selected and confirmed %%% rc_now
@@ -420,3 +420,21 @@ asc/watch.py %%%     if st["up_boot"] != boot: %%%     if False: %%% a session s
 asc/watch.py %%%             "up": {k: v for k, v in d("up").items() if type(v) is int}, %%%             "up": {}, %%% its tmux session closed by someone else: logged %%% exit_off
 asc/boot.py %%%             if cli.off_if_ended_in_pane(registry.find(registry.load(), e["id4"])): %%%             if False: %%% boot: one a person ended in its pane in this boot is turned off, not started %%% exit_off
 asc/events.py %%% "cwd", "closed"} %%% "cwd"} %%% its tmux session closed by someone else: logged %%% exit_off
+asc/cli.py %%%     return a + ["--debug=bridge", "--debug-file", rc_log(e["id4"])] %%%     return a %%% every start: claude's log of its remote control (only those lines), in asctl's folder, cleared first %%% rc_title
+asc/cli.py %%%     for f in (exit_file(e["id4"]), rc_log(e["id4"])): %%%     for f in (exit_file(e["id4"]),): %%% every start: claude's log of its remote control (only those lines), in asctl's folder, cleared first %%% rc_title
+asc/cli.py %%%         return i >= 0 and new.find(TITLE_OK, i) >= 0 %%%         return new.find(TITLE_OK) >= 0 %%% title_landed: only a success after a title sent, both after the rename began; not from a claude without the log; rc off %%% rc_title
+asc/cli.py %%%         new = _log_since(path, at) %%%         new = _log_since(path, 0) %%% title_landed: only a success after a title sent, both after the rename began; not from a claude without the log; rc off %%% rc_title
+asc/cli.py %%%         return "its remote control is off" %%%         pass %%% title_landed: only a success after a title sent, both after the rename began; not from a claude without the log; rc off %%% rc_title
+asc/cli.py %%%     if not _logs_to(s["pid"], path): %%%     if False: %%% title_landed: only a success after a title sent, both after the rename began; not from a claude without the log; rc off %%% rc_title
+asc/cli.py %%%     at = _log_size(rc_log(e["id4"])) %%%     at = 0 %%% rename, claude.ai not confirming the title: claude has the name, the title not claimed, renew named %%% rc_title
+asc/cli.py %%%     if title == "its remote control is off": %%%     if False: %%% rename of an idle claude: /rename typed, the same claude takes the name %%% new_name
+asc/cli.py %%%         elif title:  # sent, and claude took it %%%         elif False:  # sent, and claude took it %%% a start whose name claude.ai does not confirm as its title: said, not owed again %%% rc_title
+asc/cli.py %%%     return rename_live(e, s, name) %%%     return rclive.rename(s, name), "" %%% a start whose name claude.ai does not confirm as its title: said, not owed again %%% rc_title
+asc/cli.py %%%         if not s["rc"] or not was: %%%         if False: %%% rc renew with its remote control off: refused %%% rc_title
+asc/cli.py %%%         why = rclive.switch(s, False, title) %%%         why = None %%% rc renew: rc off, then on with its title: a new claude.ai session, the same claude %%% rc_title
+asc/cli.py %%%         if not now or now == was: %%%         if False: %%% rc renew that comes back on the same claude.ai session: said, not taken for a new one %%% rc_title
+asc/cli.py %%%         if args.title is not None or args.next_start: %%%         if False: %%% rc renew takes no title (it uses its own) %%% rc_title
+asc/cli.py %%%             raise RegistryError(f"{e['tmux']}: no claude of it runs in its tmux session; nothing was done") %%%             pass %%% rc renew with no claude running: refused %%% rc_title
+asc/live.py %%%              "bridge": raw.get("bridgeSessionId")[:100] if isinstance(raw.get("bridgeSessionId"), str) else None, %%%              "bridge": None, %%% rc renew: rc off, then on with its title: a new claude.ai session, the same claude %%% rc_title
+asc/watch.py %%%                    + (", " if title == "" else "; ") + cli.title_note(e, title)) %%%                    + ", its title too") %%% the watcher's rename: its claude.ai title not claimed when not confirmed %%% rc_title
+asc/watch.py %%%     why, title = cli.rename_live(e, s, pend) %%%     why, title = rclive.rename(s, pend), "" %%% the watcher's rename: its claude.ai title not claimed when not confirmed %%% rc_title

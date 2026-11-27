@@ -15,7 +15,8 @@ Each run, one at a time (watch.lock; a run that finds another still going does n
       new folder (/cd);
     - a rename asctl could not send because claude was busy (rename_pending) sent once idle;
       also, after a restart, the name to its claude.ai session (rename_title: a resumed
-      claude.ai session keeps its old title, though claude has the name);
+      claude.ai session keeps its old title, though claude has the name); its claude.ai title
+      claimed only when claude's log of its remote control confirms it (cli.title_landed);
     - an exit record older than that claude dropped (it ended before this claude was started);
     - the mark of a start that left it at a prompt of Claude Code's (awaiting_trust: the trust
       prompt, or another) dropped: the prompt was answered in its pane;
@@ -275,11 +276,12 @@ def _pending_rename(st, e, s):
         return
     if rclive.guard(s) is not None:  # busy, waiting, typing: the next run
         return
-    why = rclive.rename(s, pend)
+    why, title = cli.rename_live(e, s, pend)
     if not why:
         _set(e, {"rename_pending": pend}, done)
         tries.pop(e["id4"], None)
-        events.log("rename", e, f"claude took the name {pend} now that it is idle, its claude.ai title too")
+        events.log("rename", e, f"claude took the name {pend} now that it is idle"
+                   + (", " if title == "" else "; ") + cli.title_note(e, title))
         return
     tries[e["id4"]] = tries.get(e["id4"], 0) + 1
     if tries[e["id4"]] >= RENAME_TRIES:
