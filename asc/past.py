@@ -1,9 +1,12 @@
 """Past conversations: ~/.claude/projects/<folder>/<session id>.jsonl, newest first.
 
 Each transcript is read once per change (cached by mtime and size), and only its first and
-last 64 KB: the folder from the first record that has `cwd`, the title from the last
-`custom-title` or `agent-name` record seen, else the last `ai-title` (claude's own summary, also the
-name the Claude apps list). Search looks at titles and folders, never content.
+last 64 KB: the title from the last `custom-title` or `agent-name` record seen, else the last
+`ai-title` (claude's own summary, also the name the Claude apps list), and the folder claude was
+started in. A record's `cwd` follows claude's shell (a cd into tests/ shows there), so that folder
+is the one whose name, as Claude Code writes it (project_name), is the name of the folder the
+transcript is kept in: a record's cwd, the newest first, else the nearest folder above one. None
+that matches: "" (not known), never a guess. Search looks at titles and folders, never content.
 
 The length of a favorite's conversation (its transcript's lines and bytes) is counted by the
 watcher into lengths.json in the state folder: only what was added since the last count is read
@@ -23,6 +26,7 @@ from . import live, registry
 from .live import UUID_RE
 
 CHUNK = 65536
+NAME_MAX = 200  # Claude Code's longest project folder name before it adds a hash
 LENGTHS = "lengths.json"
 READ_PER_RUN = 64 << 20
 _cache = {}
@@ -55,18 +59,60 @@ def _records(path, size):
                 yield r
 
 
+def project_name(folder):
+    """The name of the folder Claude Code keeps a conversation started in folder in, under
+    ~/.claude/projects (its own rule, Claude Code 2.1): every UTF-16 unit that is not an ASCII
+    letter or digit as "-"; a name over NAME_MAX cut there, with "-" and a hash of the folder
+    (Java's string hash, its absolute value in base 36) after it."""
+    b = folder.encode("utf-16-le", "surrogatepass")
+    units = [int.from_bytes(b[i:i + 2], "little") for i in range(0, len(b), 2)]
+    name = "".join(chr(u) if u < 128 and chr(u).isalnum() else "-" for u in units)
+    if len(name) <= NAME_MAX:
+        return name
+    h = 0
+    for u in units:
+        h = (h * 31 + u) & 0xFFFFFFFF
+    h = abs(h - (1 << 32) if h & 0x80000000 else h)
+    digits = ""
+    while True:
+        h, d = divmod(h, 36)
+        digits = "0123456789abcdefghijklmnopqrstuvwxyz"[d] + digits
+        if not h:
+            break
+    return f"{name[:NAME_MAX]}-{digits}"
+
+
+def start_folder(cwds, kept_in):
+    """The folder a conversation was started in, from its records' cwds (newest first) and the
+    name of the folder its transcript is kept in: a cwd whose project_name is that name, else
+    the nearest folder above one whose is; "" when none is."""
+    cwds = [c for c in dict.fromkeys(cwds) if c.startswith("/")]
+    for c in cwds:
+        if project_name(c) == kept_in:
+            return c
+    for c in cwds:
+        up = os.path.dirname(c)
+        while up != c:
+            if project_name(up) == kept_in:
+                return up
+            c, up = up, os.path.dirname(up)
+    return ""
+
+
 def _read(path, size):
-    cwd = title = ai = None
+    title = ai = None
+    cwds = []
     for r in _records(path, size):
-        if cwd is None and isinstance(r.get("cwd"), str):
-            cwd = r["cwd"]
+        if isinstance(r.get("cwd"), str):
+            cwds.append(r["cwd"])
         if r.get("type") in ("custom-title", "agent-name"):
             t = r.get("customTitle") or r.get("agentName")
             if isinstance(t, str):
                 title = t
         elif r.get("type") == "ai-title" and isinstance(r.get("aiTitle"), str):
             ai = r["aiTitle"]
-    return {"cwd": cwd or "", "title": (title or ai or "")[:200]}
+    cwd = start_folder(reversed(cwds), os.path.basename(os.path.dirname(path)))
+    return {"cwd": cwd, "title": (title or ai or "")[:200]}
 
 
 def _info(path):
@@ -101,6 +147,13 @@ def title(sid, home=None):
     return ""
 
 
+def conversation(sid, home=None):
+    """A past conversation's {cwd, title, mtime}, from its transcript (the one written last),
+    or None when it has none."""
+    p = _transcript(sid, os.path.expanduser("~") if home is None else home)
+    return _info(p) if p else None
+
+
 def conversations(home=None):
     """Every past conversation as {session_id, cwd, title, mtime}, newest first."""
     home = home or os.path.expanduser("~")
@@ -125,7 +178,8 @@ def search(q, exclude=(), limit=50, home=None):
     q = (q or "").strip().lower()
     hits = [c for c in conversations(home) if c["session_id"] not in exclude
             and (not q or q in c["title"].lower() or q in c["cwd"].lower())]
-    return hits[:limit]
+    # gone: its folder no longer exists (Favorite is then refused, as On would be)
+    return [dict(c, gone=bool(c["cwd"]) and not os.path.isdir(c["cwd"])) for c in hits[:limit]]
 
 
 def _transcript(sid, home):

@@ -7,7 +7,8 @@ Built:
 
 - **A session registry.** It lists every running agent session and every past conversation.
   The ones you care about become favorites. A favorite keeps its folder, session id, names,
-  remote-control setting and permission mode, refreshed as it runs (`asctl`).
+  remote-control setting and permission mode, refreshed as it runs (`asctl`). A past
+  conversation comes back in the folder it was started in, as Claude Code records it.
 - **On and off.** Off: the agent exits and its tmux session closes. On: a new tmux session in
   its folder, with the same conversation resumed. A busy session is not turned off unless
   forced. Rename works while it runs; a restart only while it is idle. Restart in tmux brings

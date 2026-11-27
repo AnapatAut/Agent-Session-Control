@@ -387,3 +387,20 @@ asc/cli.py %%%     if why:⏎        raise RegistryError(f"claude cannot start a
 asc/cli.py %%%                again=f"asctl restart {e['id4']} --force-memory") %%%                ) %%% restart past memory: refused, the command that forces it named %%% restart_ended
 asc/cli.py %%%         r = _restart(e["id4"], args.outside, args.expect, args.force_memory) %%%         r = _restart(e["id4"], args.outside, None, args.force_memory) %%% restart --expect: another state now: refused, none ended %%% restart_copies
 asc/cli.py %%%         r = _restart(e["id4"], args.outside, args.expect, args.force_memory) %%%         r = _restart(e["id4"], args.outside, args.expect, False) %%% restart of one that ended (exit 0): claude again in the same pane, on the same conversation (forced past memory) %%% restart_ended
+asc/past.py %%%         if project_name(c) == kept_in: %%%         if True: %%% fav: the folder it was started in, not an older one or a subfolder its shell went to %%% start_folder
+asc/past.py %%%             if project_name(up) == kept_in: %%%             if False: %%% project_name and start_folder: Claude Code's rule; a subfolder, a move, a name two folders share, none %%% start_folder
+asc/past.py %%%         h = (h * 31 + u) & 0xFFFFFFFF %%%         h = (h * 37 + u) & 0xFFFFFFFF %%% project_name and start_folder: Claude Code's rule; a subfolder, a move, a name two folders share, none %%% start_folder
+asc/past.py %%%     units = [int.from_bytes(b[i:i + 2], "little") for i in range(0, len(b), 2)] %%%     units = [ord(x) for x in folder] %%% project_name and start_folder: Claude Code's rule; a subfolder, a move, a name two folders share, none %%% start_folder
+asc/past.py %%%     if len(name) <= NAME_MAX: %%%     if len(name) < NAME_MAX: %%% project_name and start_folder: Claude Code's rule; a subfolder, a move, a name two folders share, none %%% start_folder
+asc/past.py %%%     cwds = [c for c in dict.fromkeys(cwds) if c.startswith("/")] %%%     cwds = list(dict.fromkeys(cwds)) %%% project_name and start_folder: Claude Code's rule; a subfolder, a move, a name two folders share, none %%% start_folder
+asc/past.py %%%     cwd = start_folder(reversed(cwds), %%%     cwd = start_folder(cwds, %%% fav: of two folders whose names Claude Code writes the same, the newest record's %%% start_folder
+asc/past.py %%%     return max(sorted(paths), key=mtime) if paths else None %%%     return min(sorted(paths), key=mtime) if paths else None %%% fav: of two copies of a transcript, the one written last %%% start_folder
+asc/cli.py %%%             if not cwd: %%%             if False: %%% fav: its folder not known: refused, the command to give it named, nothing stored %%% start_folder
+asc/cli.py %%%             if not os.path.isdir(cwd): %%%             if False: %%% fav: its folder gone: refused, the command to give another named %%% start_folder
+asc/cli.py %%%     given = new_folder(args.cwd) if args.cwd is not None else None %%%     given = args.cwd if args.cwd is not None else None %%% fav --cwd: checked as for new (a hidden folder refused) %%% start_folder
+asc/cli.py %%%             cwd, title, started = given or got["cwd"], got["title"], True %%%             cwd, title, started = got["cwd"], got["title"], True %%% fav --cwd: the folder given is stored %%% start_folder
+asc/cli.py %%%     if s and args.cwd is not None: %%%     if False: %%% fav --cwd of a running claude refused (its folder is its own) %%% main
+asc/cli.py %%%         if not st.startswith("off"): %%%         if False: %%% cwd: refused while it is not off (its tmux session up) %%% start_folder
+asc/cli.py %%%     folder = new_folder(args.folder) %%%     folder = args.folder %%% cwd: checked as for new (outside the home refused, nothing changed) %%% start_folder
+asc/cli.py %%%             was, e["cwd"] = e["cwd"], folder %%%             was = e["cwd"] %%% cwd: changed while off, and logged %%% start_folder
+asc/cli.py %%%  (asctl cwd {e['id4']} FOLDER gives it another) %%%  %%% on: its folder gone: refused, the command to give another named %%% start_folder

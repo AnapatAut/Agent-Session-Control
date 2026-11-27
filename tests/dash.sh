@@ -145,6 +145,9 @@ claude_in() {
 }
 W="$T/work"; mkdir -p "$W"
 printf '%s\n' "$W" > "$HOME/fake-trusted"
+# The folder Claude Code keeps the transcripts of a conversation started in folder $1 in (its
+# name as asc/past.py project_name writes it; these paths are ASCII), made. Prints it.
+pdir() { local d; d="$HOME/.claude/projects/$(printf '%s' "$1" | LC_ALL=C sed 's/[^A-Za-z0-9]/-/g')"; mkdir -p "$d" && printf '%s\n' "$d"; }
 SID=11111111-2222-4333-8444-555555555555
 PREFIX=
 # A refusal is exit 1 at once; a server that starts anyway is cut off by timeout (124).
@@ -730,18 +733,25 @@ rm -f "$HOME/fake-mcp-done"
 case_past() {
 echo "== past conversations"
 dash_up
-mkdir -p "$HOME/.claude/projects/-x"
 P1=22222222-3333-4444-8555-666666666666 P2=33333333-4444-4555-8666-777777777777
-printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n{"type":"custom-title","customTitle":"first name"}\n{"type":"custom-title","customTitle":"<b>Old</b> & talk"}\n{"type":"ai-title","aiTitle":"not this"}\n' "$W" "$P1" > "$HOME/.claude/projects/-x/$P1.jsonl"
-{ printf '{"type":"user","cwd":"/srv/api","sessionId":"%s"}\n' "$P2"; head -c 200000 /dev/zero | tr '\0' ' '; printf '\n{"type":"agent-name","agentName":"api work"}\n'; } > "$HOME/.claude/projects/-x/$P2.jsonl"
-touch -d '1 hour ago' "$HOME/.claude/projects/-x/$P2.jsonl"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n{"type":"custom-title","customTitle":"first name"}\n{"type":"custom-title","customTitle":"<b>Old</b> & talk"}\n{"type":"ai-title","aiTitle":"not this"}\n' "$W" "$P1" > "$(pdir "$W")/$P1.jsonl"
+{ printf '{"type":"user","cwd":"/srv/api","sessionId":"%s"}\n' "$P2"; head -c 200000 /dev/zero | tr '\0' ' '; printf '\n{"type":"agent-name","agentName":"api work"}\n'; } > "$(pdir /srv/api)/$P2.jsonl"
+touch -d '1 hour ago' "$(pdir /srv/api)/$P2.jsonl"
 P4=44444444-5555-4666-8777-000000000004
-printf '{"type":"user","cwd":"/srv/x","sessionId":"%s"}\n{"type":"ai-title","aiTitle":"Old summary"}\n{"type":"ai-title","aiTitle":"Earlyoom setup"}\n' "$P4" > "$HOME/.claude/projects/-x/$P4.jsonl"
-touch -d '2 hours ago' "$HOME/.claude/projects/-x/$P4.jsonl"
+printf '{"type":"user","cwd":"/srv/x","sessionId":"%s"}\n{"type":"ai-title","aiTitle":"Old summary"}\n{"type":"ai-title","aiTitle":"Earlyoom setup"}\n' "$P4" > "$(pdir /srv/x)/$P4.jsonl"
+touch -d '2 hours ago' "$(pdir /srv/x)/$P4.jsonl"
+# started in $W, its shell then in a subfolder; and one kept where none of its folders is named
+P5=55555555-6666-4777-8888-000000000005 P6=55555555-6666-4777-8888-000000000006
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n{"type":"user","cwd":"%s/tests","sessionId":"%s"}\n' "$W" "$P5" "$W" "$P5" > "$(pdir "$W")/$P5.jsonl"
+mkdir -p "$HOME/.claude/projects/-x"; printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$P6" > "$HOME/.claude/projects/-x/$P6.jsonl"
+touch -d '3 hours ago' "$(pdir "$W")/$P5.jsonl" "$HOME/.claude/projects/-x/$P6.jsonl"
 pj=$(dc "http://x/api/past")
 jq -e --arg a "$P1" --arg b "$P2" '[.past[].session_id] | index($a) < index($b)' <<<"$pj" >/dev/null && ok "past: newest first" || bad "past: newest first" "past: order wrong: $pj"
 jq -e --arg a "$P1" '.past[] | select(.session_id == $a) | .title == "<b>Old</b> & talk"' <<<"$pj" >/dev/null && ok "past: the latest title, sent as raw text (the page sets it as text)" || bad "past: the latest title, sent as raw text (the page sets it as text)" "past: title changed"
 jq -e --arg b "$P2" '.past[] | select(.session_id == $b) | .title == "api work" and .cwd == "/srv/api"' <<<"$pj" >/dev/null && ok "past: title from the end of a big transcript, folder from its start" || bad "past: title from the end of a big transcript, folder from its start" "past: big transcript read wrong"
+jq -e --arg e "$P5" --arg w "$W" '.past[] | select(.session_id == $e) | .cwd == $w and .gone == false' <<<"$pj" >/dev/null && ok "past: the folder it was started in, not a subfolder its shell went to" || bad "past: the folder it was started in, not a subfolder its shell went to" "past: $(jq -c --arg e "$P5" '.past[] | select(.session_id == $e)' <<<"$pj")"
+jq -e --arg a "$P1" --arg b "$P2" '[.past[] | select(.session_id == $a or .session_id == $b) | .gone] == [false, true]' <<<"$pj" >/dev/null && ok "past: a folder that no longer exists is marked gone" || bad "past: a folder that no longer exists is marked gone" "past: gone wrong: $pj"
+jq -e --arg f "$P6" '.past[] | select(.session_id == $f) | .cwd == "" and .gone == false' <<<"$pj" >/dev/null && ok "past: none of its folders named where it is kept: not known (never a guess), not gone" || bad "past: none of its folders named where it is kept: not known (never a guess), not gone" "past: $(jq -c --arg f "$P6" '.past[] | select(.session_id == $f)' <<<"$pj")"
 jq -e --arg d "$P4" '.past[] | select(.session_id == $d) | .title == "Earlyoom setup"' <<<"$pj" >/dev/null && ok "past: without a title given, claude's own (the last ai-title)" || bad "past: without a title given, claude's own (the last ai-title)" "past: ai-title not used"
 jq -e '.past | length == 2' <<<"$(dc "http://x/api/past?q=SRV")" >/dev/null && ok "past: search by folder, any case" || bad "past: search by folder, any case" "past: search wrong"
 tm new-session -d -s dev2 -c "$W" -- "$ASC_CLAUDE" --resume "$P2"
@@ -853,7 +863,7 @@ ln -s /dev/zero "$HOME/.claude/projects/-y/88888888-9999-4aaa-8bbb-cccccccccccc.
 [ "$(dc -m 10 -o /dev/null -w '%{http_code}' http://x/api/state)" = 200 ] && ok "state: deep JSON and a FIFO in the session files neither hang nor crash it" || bad "state: deep JSON and a FIFO in the session files neither hang nor crash it" "state hangs or crashes on odd session files"
 dc http://x/api/past | jq -e '[.past[].session_id] | (index("77777777-8888-4999-8aaa-bbbbbbbbbbbb") == null and index("88888888-9999-4aaa-8bbb-cccccccccccc") == null)' >/dev/null && ok "past: a FIFO or a symlink is not listed" || bad "past: a FIFO or a symlink is not listed" "past lists a FIFO or a symlink"
 "$REPO/bin/asctl" fav 66666666-7777-4888-8999-aaaaaaaaaaaa 2>"$T/err" >/dev/null
-seen 'no conversation' "$T/err" && ! seen Traceback "$T/err" && ok "fav of a deep-JSON transcript: a clean refusal" || bad "fav of a deep-JSON transcript: a clean refusal" "fav of a deep-JSON transcript: $(tail -1 "$T/err")"
+seen 'is not known' "$T/err" && ! seen Traceback "$T/err" && ok "fav of a deep-JSON transcript: a clean refusal" || bad "fav of a deep-JSON transcript: a clean refusal" "fav of a deep-JSON transcript: $(tail -1 "$T/err")"
 state | jq -e '.unknown_files >= 2' >/dev/null && ok "state: they count as session files in an unknown format" || bad "state: they count as session files in an unknown format" "odd session files not counted"
 timeout 10 "$REPO/bin/asctl" live >/dev/null && ok "asctl live too" || bad "asctl live too" "asctl live hangs or crashes on them"
 rm -f "$HOME/.claude/projects/-y/"* "$HOME/.claude/sessions/4000001.json" "$HOME/.claude/sessions/4000002.json"

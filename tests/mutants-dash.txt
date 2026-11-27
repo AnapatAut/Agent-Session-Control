@@ -325,3 +325,13 @@ asc/web/app.js %%%   if (dup && e.copies) { %%%   if (dup) { %%% page: Restart i
 asc/web/app.js %%%   if (ended && typeof e.again === "string") { %%%   if (ended) { %%% page: Restart in tmux of one that ended: again empty (it can): the button; a reason: a warning and Off; not known: nothing %%% page
 asc/web/app.js %%%     if (e.again) { %%%     if (false) { %%% page: Restart in tmux of one that ended: again empty (it can): the button; a reason: a warning and Off; not known: nothing %%% page
 asc/web/app.js %%% its tmux session is still up. Restart in tmux starts it there again; Off closes it.` };⏎  if (st === "waiting for trust") %%% its tmux session is still up. Turn it on.` };⏎  if (st === "waiting for trust") %%% page: ended, its tmux session up: Restart in tmux named, never Turn on %%% page
+asc/past.py %%%         if project_name(c) == kept_in: %%%         if True: %%% past: the folder it was started in, not a subfolder its shell went to %%% past
+asc/past.py %%% gone=bool(c["cwd"]) and not os.path.isdir(c["cwd"]) %%% gone=False %%% past: a folder that no longer exists is marked gone %%% past
+asc/past.py %%% gone=bool(c["cwd"]) and not os.path %%% gone=not os.path %%% past: none of its folders named where it is kept: not known (never a guess), not gone %%% past
+asc/web/app.js %%% favoriteButton(c.session_id, !!why) %%% favoriteButton(c.session_id, false) %%% page: a past conversation: its folder; not known, or gone: a warning with the command to use, Favorite off %%% page
+asc/web/app.js %%%     : c.gone ? "Its folder no longer exists." : ""; %%%     : ""; %%% page: a past conversation: its folder; not known, or gone: a warning with the command to use, Favorite off %%% page
+asc/web/app.js %%% el("div", c.cwd ? tilde(c.cwd) : "Folder not known", "s2 mono") %%% el("div", tilde(c.cwd), "s2 mono") %%% page: a past conversation: its folder; not known, or gone: a warning with the command to use, Favorite off %%% page
+asc/web/app.js %%%   }, off || pending.has(sid)); %%%   }, pending.has(sid)); %%% page: a past conversation: its folder; not known, or gone: a warning with the command to use, Favorite off %%% page
+asc/web/app.js %%%   prompt: "Waiting at a prompt", cwd: "Folder changed" }; %%%   prompt: "Waiting at a prompt" }; %%% page: folder changed (asctl cwd): its label, the new folder; its refusal without the command's prefix %%% page
+asc/web/app.js %%%     return m ? "Now " + tilde(m[1]) : ""; %%%     return ""; %%% page: folder changed (asctl cwd): its label, the new folder; its refusal without the command's prefix %%% page
+asc/web/app.js %%% |fav|new|note|cwd|start again %%% |fav|new|note|start again %%% page: folder changed (asctl cwd): its label, the new folder; its refusal without the command's prefix %%% page

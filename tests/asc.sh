@@ -130,6 +130,12 @@ printf '%s\n' "$W" > "$HOME/fake-trusted"
 SID=11111111-2222-4333-8444-555555555555
 
 # Helpers more than one case uses.
+# A new fake transcript of session $1 started in folder $2, kept where Claude Code keeps it: under
+# the folder's name as Claude Code writes it (asc/past.py project_name; these paths are ASCII), any
+# older copy gone. Prints its path. tfile: the path of session $1's transcript (not the fake
+# claude's own copy in -fake, where it records what a typed command printed).
+tnew() { local d; rm -f "$HOME"/.claude/projects/*/"$1.jsonl"; d="$HOME/.claude/projects/$(printf '%s' "$2" | LC_ALL=C sed 's/[^A-Za-z0-9]/-/g')"; mkdir -p "$d" && printf '%s/%s.jsonl\n' "$d" "$1"; }
+tfile() { compgen -G "$HOME/.claude/projects/*/$1.jsonl" | grep -v '/-fake/' | head -1; }
 start_of() { awk '{ sub(/.*\) /, ""); print $20 }' "/proc/$1/stat"; }
 sfile() { printf '{"pid":%s,"sessionId":"%s","cwd":"/","procStart":"%s"%s}\n' "$1" "$2" "$3" "${4:-}" > "$HOME/.claude/sessions/$1.json"; }
 live_has() { asctl live | seen "$1"; }
@@ -171,6 +177,7 @@ server_up
 tm new-session -d -s dev -c "$W" -- "$ASC_CLAUDE" --session-id "$SID" --name dev
 pid=$(claude_in dev) && ok "a hand-started claude is up" || bad "a hand-started claude is up" "the hand-started claude did not come up"
 asctl live | seen "$SID.*dev" && ok "live: lists it with its tmux session" || bad "live: lists it with its tmux session" "live: does not list it"
+errof fav "$pid" --cwd "$W" | seen -F -- '--cwd is for a past conversation' && ok "fav --cwd of a running claude refused (its folder is its own)" || bad "fav --cwd of a running claude refused (its folder is its own)" "fav --cwd of a live claude accepted"
 asctl fav "$pid" --name das >/dev/null && ok "fav by pid" || bad "fav by pid" "fav by pid failed"
 id=$(jqe '.entries | keys[0]')
 [[ $id =~ ^[0-9]{4}$ ]] && ok "the id is 4 digits" || bad "the id is 4 digits" "bad id: $id"
@@ -230,9 +237,8 @@ tm has-session -t "=das-${id}x" 2>/dev/null && ok "off left das-<id>x alone" || 
 tm kill-session -t "=das-${id}x"
 asctl fav "$(cat /proc/sys/kernel/random/uuid)" >/dev/null 2>&1 && bad "fav of an unknown session id refused" "fav of an unknown session id accepted" || ok "fav of an unknown session id refused"
 SID2=22222222-3333-4444-8555-666666666666
-mkdir -p "$HOME/.claude/projects/-x"
 mkdir -p "$HOME/talk"  # in the home: asctl trusts only a folder New session would take
-printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n{"type":"agent-name","agentName":"Old Talk"}\n' "$HOME/talk" "$SID2" > "$HOME/.claude/projects/-x/$SID2.jsonl"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n{"type":"agent-name","agentName":"Old Talk"}\n' "$HOME/talk" "$SID2" > "$(tnew "$SID2" "$HOME/talk")"
 asctl fav "$SID2" >/dev/null && ok "fav of a past conversation" || bad "fav of a past conversation" "fav of a past conversation failed"
 id2=$(jq -r --arg s "$SID2" '.entries[] | select(.session_id == $s) | .id4' "$REG")
 [ "$(jqe ".entries[\"$id2\"].tmux")" = "old-talk-$id2" ] && ok "named from its title: old-talk-<id>" || bad "named from its title: old-talk-<id>" "name: $(jqe ".entries[\"$id2\"].tmux")"
@@ -251,7 +257,7 @@ lastargs | grep -q -- '--permission-mode bypassPermissions' && ok "mode skip sta
 asctl off "$id2" >/dev/null
 asctl mode "$id2" sudo >/dev/null 2>&1 && bad "an unknown mode refused" "an unknown mode accepted" || ok "an unknown mode refused"
 # A start follows the mode the conversation last ran in (its transcript's last permissionMode).
-pm() { printf '{"type":"%s","permissionMode":"%s","sessionId":"%s"}\n' "${2:-permission-mode}" "$1" "$SID2" >> "$HOME/.claude/projects/-x/$SID2.jsonl"; }
+pm() { printf '{"type":"%s","permissionMode":"%s","sessionId":"%s"}\n' "${2:-permission-mode}" "$1" "$SID2" >> "$(tfile "$SID2")"; }
 started_with() { asctl on "$id2" >/dev/null; lastargs | grep -o -- '--permission-mode [A-Za-z]*' | cut -d' ' -f2; asctl off "$id2" --force >/dev/null; }
 pm acceptEdits; [ "$(started_with)" = acceptEdits ] && ok "mode: follows the transcript (acceptEdits, set inside claude)" || bad "mode: follows the transcript (acceptEdits, set inside claude)" "mode not followed"
 pm bypassPermissions; [ "$(started_with)" = bypassPermissions ] && ok "mode: last ran in skip, the favorite set to skip: skip" || bad "mode: last ran in skip, the favorite set to skip: skip" "skip with mode skip"
@@ -265,7 +271,7 @@ pm manual user; [ "$(started_with)" = manual ] && ok "mode: the last message's p
 # writes its mode only with a message), then the --permission-mode it was started with.
 modenow() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import cli, live
 print(next(cli.mode_now(s) for s in live.live() if s["session_id"] == sys.argv[2]))' "$REPO" "$SID2"; }
-ts() { printf '{"type":"user","timestamp":"%s","sessionId":"%s"}\n' "$1" "$SID2" >> "$HOME/.claude/projects/-x/$SID2.jsonl"; }
+ts() { printf '{"type":"user","timestamp":"%s","sessionId":"%s"}\n' "$1" "$SID2" >> "$(tfile "$SID2")"; }
 pm acceptEdits; asctl on "$id2" >/dev/null
 claude_in "chat-$id2" >/dev/null && ok "mode now: claude up after on" || bad "mode now: claude up after on" "no claude in chat-$id2"
 ts 2020-01-01T00:00:00.000Z; pm bypassPermissions
@@ -280,8 +286,7 @@ case_shared_stale() {
 # Setup: as main has it at this point, a favorite (id), started and then off.
 server_up
 SS=22222222-3333-4444-8555-00000000003a
-mkdir -p "$HOME/.claude/projects/-x"
-printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SS" > "$HOME/.claude/projects/-x/$SS.jsonl"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SS" > "$(tnew "$SS" "$W")"
 asctl fav "$SS" --name das >/dev/null || stop "a favorite for the shared session tests"
 id=$(jq -r --arg s "$SS" '.entries[] | select(.session_id == $s) | .id4' "$REG")
 asctl on "$id" >/dev/null && claude_in "das-$id" >/dev/null || stop "the favorite started"
@@ -336,8 +341,7 @@ tm kill-session -t =userwork
 chat_setup() {
 server_up
 SID2=$1
-mkdir -p "$HOME/.claude/projects/-x"
-printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SID2" > "$HOME/.claude/projects/-x/$SID2.jsonl"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SID2" > "$(tnew "$SID2" "$W")"
 asctl fav "$SID2" --name chat >/dev/null || stop "a favorite for the guards"
 id2=$(jq -r --arg s "$SID2" '.entries[] | select(.session_id == $s) | .id4' "$REG")
 }
@@ -432,7 +436,7 @@ chat_setup 22222222-3333-4444-8555-000000000039
 echo "== a folder name with tmux format characters"
 SID3=33333333-aaaa-4bbb-8ccc-eeeeeeeeeeee
 W3="$T/w#{pane_id}#(true)"; mkdir -p "$W3"; printf '%s\n' "$W3" >> "$HOME/fake-trusted"
-printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W3" "$SID3" > "$HOME/.claude/projects/-x/$SID3.jsonl"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W3" "$SID3" > "$(tnew "$SID3" "$W3")"
 asctl fav "$SID3" --name fmt >/dev/null; id7=$(jq -r '.entries[] | select(.name == "fmt") | .id4' "$REG")
 asctl on "$id7" >/dev/null && grep -qF "cwd=$W3 " "$HOME/claude-args.log" && ok "claude started in the literal folder (tmux formats not expanded)" || bad "claude started in the literal folder (tmux formats not expanded)" "the folder was expanded by tmux: $(lastargs)"
 lastargs | seen -- "--resume $SID3 " && ok "a conversation with a transcript: started with --resume" || bad "a conversation with a transcript: started with --resume" "wrong args: $(lastargs)"
@@ -696,8 +700,7 @@ grep -qx seen <<<"$rs" && ok "a real 2.1.318 screen: on and rename see that menu
 server_up
 : > "$HOME/claude-args.log"
 SR=22222222-3333-4444-8555-000000000033
-mkdir -p "$HOME/.claude/projects/-x"
-printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SR" > "$HOME/.claude/projects/-x/$SR.jsonl"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SR" > "$(tnew "$SR" "$W")"
 asctl fav "$SR" --name rcnow >/dev/null || stop "a favorite for rc now"
 idr=$(jq -r --arg s "$SR" '.entries[] | select(.session_id == $s) | .id4' "$REG")
 { asctl rc "$idr" on --title "My chat" && asctl rc "$idr" off; } >/dev/null || stop "rc off, the title My chat saved"
@@ -736,8 +739,7 @@ case_rc_menu_off() {
 server_up
 : > "$HOME/claude-args.log"
 SR=22222222-3333-4444-8555-000000000034
-mkdir -p "$HOME/.claude/projects/-x"
-printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SR" > "$HOME/.claude/projects/-x/$SR.jsonl"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SR" > "$(tnew "$SR" "$W")"
 asctl fav "$SR" --name rcnow2 >/dev/null || stop "a favorite for rc off through a menu"
 idr=$(jq -r --arg s "$SR" '.entries[] | select(.session_id == $s) | .id4' "$REG")
 asctl rc "$idr" on --next-start >/dev/null && asctl on "$idr" >/dev/null && claude_in "rcnow2-$idr" >/dev/null || stop "a claude with rc live for rc off through a menu"
@@ -780,8 +782,7 @@ case_rc_menu() {
 server_up
 : > "$HOME/claude-args.log"
 SM=22222222-3333-4444-8555-000000000034
-mkdir -p "$HOME/.claude/projects/-x"
-printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SM" > "$HOME/.claude/projects/-x/$SM.jsonl"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SM" > "$(tnew "$SM" "$W")"
 asctl fav "$SM" --name rcmenu >/dev/null || stop "a favorite for rc menus"
 idr=$(jq -r --arg s "$SM" '.entries[] | select(.session_id == $s) | .id4' "$REG")
 { asctl rc "$idr" on --title "My chat" && asctl rc "$idr" off; } >/dev/null || stop "rc off for rc menus, the title My chat saved"
@@ -829,8 +830,7 @@ case_events() {
 # an on past the memory gate, off, rename, mode, resurrect, rc (its last); its claude off.
 server_up
 SE=22222222-3333-4444-8555-000000000032
-mkdir -p "$HOME/.claude/projects/-x"
-printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SE" > "$HOME/.claude/projects/-x/$SE.jsonl"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SE" > "$(tnew "$SE" "$W")"
 asctl fav "$SE" --name evx >/dev/null || stop "a favorite for the event log"
 ide=$(jq -r --arg s "$SE" '.entries[] | select(.session_id == $s) | .id4' "$REG")
 mem 32000000 1600000
@@ -1018,8 +1018,7 @@ slow_setup() {
 server_up
 : > "$HOME/claude-args.log"
 SL=$1
-mkdir -p "$HOME/.claude/projects/-x"
-printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SL" > "$HOME/.claude/projects/-x/$SL.jsonl"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SL" > "$(tnew "$SL" "$W")"
 asctl fav "$SL" --name slow >/dev/null || stop "a favorite for a slow claude"
 ids=$(jq -r --arg s "$SL" '.entries[] | select(.session_id == $s) | .id4' "$REG")
 asctl on "$ids" >/dev/null && cs=$(claude_in "slow-$ids") || stop "a claude for a slow prompt"
@@ -1136,8 +1135,7 @@ asctl off "$ids" --force >/dev/null; asctl forget "$ids" >/dev/null
 name_setup() {
 server_up
 SID2=$1
-mkdir -p "$HOME/.claude/projects/-x"
-printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SID2" > "$HOME/.claude/projects/-x/$SID2.jsonl"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SID2" > "$(tnew "$SID2" "$W")"
 asctl fav "$SID2" --name chat >/dev/null || stop "a favorite for a new name"
 id2=$(jq -r --arg s "$SID2" '.entries[] | select(.session_id == $s) | .id4' "$REG")
 }
@@ -1181,7 +1179,7 @@ out=$(asctl rename "$id2" talk2 --restart 2>&1)
 seen 'not restarted now: busy: .* runs a command' <<<"$out" && [ "$(claude_in "talk2-$id2")" = "$c1" ] && ok "rename --restart: not while claude runs a command (a background one too)" || bad "rename --restart: not while claude runs a command (a background one too)" "restart with a command running: $out"
 asctl off "$id2" >/dev/null 2>&1 && bad "off refused while claude runs a command" "off went ahead while claude runs a command" || ok "off refused while claude runs a command"
 rm -f "$HOME/fake-task"; flagged
-AG="$HOME/.claude/projects/-x/$SID2/subagents"; mkdir -p "$AG"
+AG="$(dirname "$(tfile "$SID2")")/$SID2/subagents"; mkdir -p "$AG"
 printf '{"type":"user","message":{"role":"user","content":"go"}}\n' > "$AG/agent-a1.jsonl"
 out=$(errof restart "$id2"); seen 'runs a subagent' <<<"$out" && ok "restart: not while a subagent runs" || bad "restart: not while a subagent runs" "restart with a subagent: $out"
 printf '{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[]}}\n' >> "$AG/agent-a1.jsonl"
@@ -1218,8 +1216,7 @@ OS=$1
 tm new-session -d -s outer -c "$W" -- "$ASC_CLAUDE" --session-id "$OS"
 po=$(claude_in outer) || stop "a claude in outer"
 # its first message written: a transcript, so a start takes the conversation up (--resume)
-mkdir -p "$HOME/.claude/projects/-x"
-printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$OS" > "$HOME/.claude/projects/-x/$OS.jsonl"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$OS" > "$(tnew "$OS" "$W")"
 asctl fav "$po" --name outer >/dev/null; ido=$(jq -r --arg s "$OS" '.entries[] | select(.session_id == $s) | .id4' "$REG")
 asctl off "$ido" >/dev/null; asctl rc "$ido" on --next-start >/dev/null
 # $1: anything: it ignores SIGTERM
@@ -1312,8 +1309,7 @@ server_up
 CS=$1
 tm new-session -d -s rcp0 -c "$W" -- "$ASC_CLAUDE" --session-id "$CS"
 pc=$(claude_in rcp0) || stop "a claude in rcp0"
-mkdir -p "$HOME/.claude/projects/-x"
-printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$CS" > "$HOME/.claude/projects/-x/$CS.jsonl"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$CS" > "$(tnew "$CS" "$W")"
 asctl fav "$pc" --name rcp >/dev/null || stop "a favorite of the claude in rcp0"
 idc=$(jq -r --arg s "$CS" '.entries[] | select(.session_id == $s) | .id4' "$REG")
 asctl off "$idc" >/dev/null; asctl on "$idc" >/dev/null  # its claude asctl's (asctl-wrap: its pane stays when it ends)
@@ -1422,12 +1418,11 @@ case_watcher_memory() {
 # transcript (its length counted).
 server_up
 SID2=22222222-3333-4444-8555-000000000022 NT=22222222-3333-4444-8555-000000000023
-mkdir -p "$HOME/.claude/projects/-x"
-printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SID2" > "$HOME/.claude/projects/-x/$SID2.jsonl"
-printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$NT" > "$HOME/.claude/projects/-x/$NT.jsonl"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SID2" > "$(tnew "$SID2" "$W")"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$NT" > "$(tnew "$NT" "$W")"
 asctl fav "$SID2" --name held >/dev/null || stop "a favorite holding SID2"
 asctl fav "$NT" --name nolen >/dev/null || stop "a favorite with no transcript"
-rm -f "$HOME/.claude/projects/-x/$NT.jsonl"
+rm -f "$(tfile "$NT")"
 echo "== watcher: memory samples, conversation lengths"
 # memory.steady() and memory.evidence(), and live.busy_reason(), on values set by hand
 python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from asc import memory
@@ -1483,8 +1478,7 @@ case_watcher_follow() {
 # favorite holds"), as watcher_memory's are.
 server_up
 SH=22222222-3333-4444-8555-000000000038
-mkdir -p "$HOME/.claude/projects/-x"
-printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SH" > "$HOME/.claude/projects/-x/$SH.jsonl"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$SH" > "$(tnew "$SH" "$W")"
 asctl fav "$SH" --name heldb >/dev/null || stop "a favorite holding SH"
 echo "== watcher: memory warnings, following, a pending rename, duplicates"
 m0=$(evn memory); asctl start-limit 70 >/dev/null; mem 32000000 3200000; watch; watch
@@ -1545,8 +1539,7 @@ WS2=$1 OT=$2
 tm new-session -d -s wend -c "$W" -- "$ASC_CLAUDE" --session-id "$WS2"
 pw=$(claude_in wend) || stop "a claude in wend"
 # its first message written: a transcript, so a start takes the conversation up (--resume)
-mkdir -p "$HOME/.claude/projects/-x"
-printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$WS2" > "$HOME/.claude/projects/-x/$WS2.jsonl"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$WS2" > "$(tnew "$WS2" "$W")"
 asctl fav "$pw" --name wat2 >/dev/null || stop "a favorite of the claude in wend"
 idw=$(jq -r --arg s "$WS2" '.entries[] | select(.session_id == $s) | .id4' "$REG")
 asctl off "$idw" >/dev/null; asctl on "$idw" >/dev/null
@@ -1556,8 +1549,7 @@ moved_in() { watch; [ "$(jq -r ".entries[\"$idw\"].cwd" "$REG")" = "$T/moved" ];
 poll 5 moved_in || stop "wat2-<id> followed to its folder"
 rm -f "$HOME/fake-cd-$WS2"
 printf '%s\n' "$T/moved" >> "$HOME/fake-trusted"  # its folder trusted: a start answers no prompt
-mkdir -p "$HOME/.claude/projects/-x"
-printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$OT" > "$HOME/.claude/projects/-x/$OT.jsonl"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$OT" > "$(tnew "$OT" "$W")"
 asctl fav "$OT" --name wother >/dev/null || stop "a second favorite for the watcher"
 }
 # One more OOM kill seen: the counter only grows, as the kernel's does (from the cases before too)
@@ -1781,8 +1773,7 @@ case_boot() {
 # resurrect off").
 server_up
 B1=bbbbbbbb-0000-4000-8000-000000000001 B2=bbbbbbbb-0000-4000-8000-000000000002 B3=bbbbbbbb-0000-4000-8000-000000000003
-mkdir -p "$HOME/.claude/projects/-boot"
-for x in "$B1" "$B2" "$B3"; do printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$x" > "$HOME/.claude/projects/-boot/$x.jsonl"; done
+for x in "$B1" "$B2" "$B3"; do printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$x" > "$(tnew "$x" "$W")"; done
 asctl fav "$B1" --name wat3 >/dev/null || stop "boot's favorite"
 asctl fav "$B2" --name bootx >/dev/null || stop "a favorite boot leaves alone"
 asctl fav "$B3" --name booty >/dev/null || stop "another favorite boot leaves alone"
@@ -1851,8 +1842,7 @@ for x in $(jq -r '.entries[].id4' "$REG"); do asctl off "$x" --force >/dev/null 
 case_boot_after() {
 server_up
 B4=bbbbbbbb-0000-4000-8000-000000000004 B5=bbbbbbbb-0000-4000-8000-000000000005 B6=bbbbbbbb-0000-4000-8000-000000000006
-mkdir -p "$HOME/.claude/projects/-boot"
-for x in "$B4" "$B5" "$B6"; do printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$x" > "$HOME/.claude/projects/-boot/$x.jsonl"; done
+for x in "$B4" "$B5" "$B6"; do printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$x" > "$(tnew "$x" "$W")"; done
 asctl fav "$B4" --name wat3 >/dev/null || stop "boot's favorite, for boot after its waits"
 asctl fav "$B5" --name bootx >/dev/null || stop "a favorite boot leaves alone, after its waits"
 asctl fav "$B6" --name booty >/dev/null || stop "another favorite boot leaves alone, after its waits"
@@ -2405,8 +2395,7 @@ while True: s.accept()[0].close()' "$QS" & qp=$!
 silent_up() { [ -S "$QS" ]; }
 poll 5 silent_up || stop "a tmux socket that hangs up"
 S1=cccccccc-0000-4000-8000-000000000001
-mkdir -p "$HOME/.claude/projects/-silent"
-printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$S1" > "$HOME/.claude/projects/-silent/$S1.jsonl"
+printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$W" "$S1" > "$(tnew "$S1" "$W")"
 asctl fav "$S1" --name quiet >/dev/null || stop "a favorite for the silent tmux"
 idq=$(jq -r --arg s "$S1" '.entries[] | select(.session_id == $s) | .id4' "$REG")
 q() { ASC_TMUX_SOCKET=$Q "$REPO/bin/asctl" "$@"; }
@@ -2460,7 +2449,81 @@ kill -CONT "$srv"
 asctl forget "$idq" >/dev/null
 }
 
-run_cases asc no_tmux_server version main shared_stale guards on_gates new_session rc_now rc_menu_off rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg restart_copies restart_ended watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot boot_after asctl_setup trust_watch mcp_prompt mcp_trust off_survivor shell_start tmux_silent
+# A past conversation's folder: the one it was started in, the folder Claude Code keeps its
+# transcript in being named after it (asc/past.py project_name, start_folder); asctl fav --cwd
+# when that is not known or gone, asctl cwd for a favorite's folder while it is off.
+case_start_folder() {
+echo "== a past conversation's folder: the one it was started in"
+python3 -I - "$REPO" <<'PY' && ok "project_name and start_folder: Claude Code's rule; a subfolder, a move, a name two folders share, none" || bad "project_name and start_folder: Claude Code's rule; a subfolder, a move, a name two folders share, none" "see above"
+import sys
+sys.path.insert(0, sys.argv[1]); from asc import past
+pn, sf = past.project_name, past.start_folder
+assert pn("/data/u/my_app.v2") == "-data-u-my-app-v2", pn("/data/u/my_app.v2")
+assert pn("/tmp/\U0001F600\u65e5") == "-tmp----", pn("/tmp/\U0001F600\u65e5")  # an emoji is two UTF-16 units
+c199 = "/" + "c" * 199
+assert pn(c199) == "-" + "c" * 199, pn(c199)  # 200: no hash yet
+long = "/data/a/" + "b" * 300
+assert pn(long) == "-data-a-" + "b" * 192 + "-d282zg", pn(long)[190:]  # Claude Code 2.1.332's own name for it
+k = pn("/data/u/app")
+assert sf(["/data/u/app/tests", "/data/u/app"], k) == "/data/u/app"  # its shell went into tests/
+assert sf(["/data/u/app/tests/unit"], k) == "/data/u/app"  # only a subfolder read: the folder above it
+assert sf(["/data/u/new/app", "/data/u/app"], pn("/data/u/new/app")) == "/data/u/new/app"  # moved
+assert sf(["/data/u/a/b/x", "/data/u/a-b"], pn("/data/u/a-b")) == "/data/u/a-b"  # a record's own folder before one above
+assert sf(["/srv/other", "relative/data/u/app"], k) == "" and sf([], k) == ""  # none: not known, never a guess
+assert sf([" data/u/app"], k) == "", sf([" data/u/app"], k)  # not a path from /, though written the same: never
+PY
+H="$HOME/sf"; mkdir -p "$H/app/tests" "$H/new" "$H/.hidden" "$H/a-b" "$H/a/b"
+tline() { printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n' "$2" "$1"; }
+# moved from a folder now gone, then its shell went into tests/: the folder it was last started in
+F1=cccccccc-dddd-4eee-8fff-000000000001
+{ tline "$F1" "$H/gone"; tline "$F1" "$H/app"; tline "$F1" "$H/app/tests"; } > "$(tnew "$F1" "$H/app")"
+asctl fav "$F1" --name sfa >/dev/null; id1=$(jq -r --arg s "$F1" '.entries[] | select(.session_id == $s) | .id4' "$REG")
+[ "$(jqe ".entries[\"$id1\"].cwd")" = "$H/app" ] && ok "fav: the folder it was started in, not an older one or a subfolder its shell went to" || bad "fav: the folder it was started in, not an older one or a subfolder its shell went to" "cwd: $(jqe ".entries[\"$id1\"].cwd")"
+# two folders with the same name in Claude Code's way of writing it: the newest record's
+F5=cccccccc-dddd-4eee-8fff-000000000005
+{ tline "$F5" "$H/a-b"; tline "$F5" "$H/a/b"; } > "$(tnew "$F5" "$H/a-b")"
+asctl fav "$F5" --name sfe >/dev/null
+[ "$(jq -r --arg s "$F5" '.entries[] | select(.session_id == $s) | .cwd' "$REG")" = "$H/a/b" ] && ok "fav: of two folders whose names Claude Code writes the same, the newest record's" || bad "fav: of two folders whose names Claude Code writes the same, the newest record's" "cwd: $(jq -r --arg s "$F5" '.entries[] | select(.session_id == $s) | .cwd' "$REG")"
+# kept where no folder of its records is named: not known; --cwd gives it, checked as for new
+F2=cccccccc-dddd-4eee-8fff-000000000002
+mkdir -p "$HOME/.claude/projects/-x"; tline "$F2" "$H/app" > "$HOME/.claude/projects/-x/$F2.jsonl"
+out=$(errof fav "$F2")
+seen -F "the folder conversation $F2 was started in is not known" <<<"$out" && seen -F "asctl fav $F2 --cwd FOLDER" <<<"$out" && ! jq -e --arg s "$F2" 'any(.entries[]; .session_id == $s)' "$REG" >/dev/null \
+	&& ok "fav: its folder not known: refused, the command to give it named, nothing stored" || bad "fav: its folder not known: refused, the command to give it named, nothing stored" "fav: $out"
+out=$(errof fav "$F2" --cwd "$H/.hidden")
+seen 'hidden folder' <<<"$out" && ! jq -e --arg s "$F2" 'any(.entries[]; .session_id == $s)' "$REG" >/dev/null && ok "fav --cwd: checked as for new (a hidden folder refused)" || bad "fav --cwd: checked as for new (a hidden folder refused)" "fav --cwd hidden: $out"
+asctl fav "$F2" --cwd "$H/new" --name sfb >/dev/null && [ "$(jq -r --arg s "$F2" '.entries[] | select(.session_id == $s) | .cwd' "$REG")" = "$H/new" ] \
+	&& ok "fav --cwd: the folder given is stored" || bad "fav --cwd: the folder given is stored" "fav --cwd: $(jq -c --arg s "$F2" '.entries[] | select(.session_id == $s)' "$REG")"
+# started in a folder that is gone: refused, the same command named
+F3=cccccccc-dddd-4eee-8fff-000000000003
+tline "$F3" "$H/gone" > "$(tnew "$F3" "$H/gone")"
+out=$(errof fav "$F3")
+seen -F "conversation $F3 was started in $H/gone, which no longer exists: asctl fav $F3 --cwd FOLDER" <<<"$out" && ! jq -e --arg s "$F3" 'any(.entries[]; .session_id == $s)' "$REG" >/dev/null \
+	&& ok "fav: its folder gone: refused, the command to give another named" || bad "fav: its folder gone: refused, the command to give another named" "fav: $out"
+# two copies after a move (the older one sorts first): the one written last
+F4=cccccccc-dddd-4eee-8fff-000000000004
+t4=$(tnew "$F4" "$H/app"); tline "$F4" "$H/app" > "$t4"
+d4="$HOME/.claude/projects/$(printf '%s' "$H/aold" | LC_ALL=C sed 's/[^A-Za-z0-9]/-/g')"; mkdir -p "$d4"
+tline "$F4" "$H/aold" > "$d4/$F4.jsonl"; touch -d '1 hour ago' "$d4/$F4.jsonl"
+asctl fav "$F4" --name sfd >/dev/null && [ "$(jq -r --arg s "$F4" '.entries[] | select(.session_id == $s) | .cwd' "$REG")" = "$H/app" ] \
+	&& ok "fav: of two copies of a transcript, the one written last" || bad "fav: of two copies of a transcript, the one written last" "cwd: $(jq -r --arg s "$F4" '.entries[] | select(.session_id == $s) | .cwd' "$REG")"
+echo "== asctl cwd: a favorite's folder, only while off"
+asctl cwd "$id1" "$H/new" >/dev/null && [ "$(jqe ".entries[\"$id1\"].cwd")" = "$H/new" ] && jq -e -s --arg i "$id1" 'any(.kind == "cwd" and .id4 == $i)' "$HOME/.local/state/agent-session-control/events.jsonl" >/dev/null \
+	&& ok "cwd: changed while off, and logged" || bad "cwd: changed while off, and logged" "cwd: $(jqe ".entries[\"$id1\"].cwd")"
+out=$(errof cwd "$id1" /tmp)
+seen 'not in your home folder' <<<"$out" && [ "$(jqe ".entries[\"$id1\"].cwd")" = "$H/new" ] && ok "cwd: checked as for new (outside the home refused, nothing changed)" || bad "cwd: checked as for new (outside the home refused, nothing changed)" "cwd /tmp: $out"
+server_up; tm new-session -d -s "sfa-$id1" -- sleep 300
+out=$(errof cwd "$id1" "$H/app")
+seen 'its folder changes only while it is off' <<<"$out" && [ "$(jqe ".entries[\"$id1\"].cwd")" = "$H/new" ] && ok "cwd: refused while it is not off (its tmux session up)" || bad "cwd: refused while it is not off (its tmux session up)" "cwd while up: $out"
+tm kill-session -t "=sfa-$id1"
+rmdir "$H/new"
+out=$(errof on "$id1")
+seen -F "folder $H/new does not exist (asctl cwd $id1 FOLDER gives it another)" <<<"$out" && ok "on: its folder gone: refused, the command to give another named" || bad "on: its folder gone: refused, the command to give another named" "on: $out"
+for x in $(jq -r '.entries[] | select(.session_id | startswith("cccccccc-")) | .id4' "$REG"); do asctl forget "$x" >/dev/null; done
+rm -f "$HOME"/.claude/projects/*/cccccccc-dddd-4eee-8fff-00000000000?.jsonl; rm -rf "$H"
+}
+
+run_cases asc no_tmux_server version main shared_stale guards on_gates new_session rc_now rc_menu_off rc_menu events rc_slow rc_slow_seen rc_slow_typed new_name restart_name outside outside_hold outside_bg restart_copies restart_ended watcher_memory watcher_follow watcher_ended watcher_reasons watcher_others boot boot_after asctl_setup trust_watch mcp_prompt mcp_trust off_survivor shell_start tmux_silent start_folder
 
 echo "asc: $pass passed, $fail failed"
 [ "$fail" = 0 ]

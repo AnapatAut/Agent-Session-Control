@@ -399,7 +399,7 @@ function draw() {
 function renderPast() { keepFocus(drawPast); }
 function drawPast() {
   $("past").replaceChildren(...past.map((c) => rowEl("past:" + c.session_id, () => openSheet("past", c.session_id), "blank", c.title || "Untitled", "",
-    tilde(c.cwd), [el("span", ago(c.mtime))], "", "", "")));
+    c.cwd ? tilde(c.cwd) : "Folder not known", [el("span", ago(c.mtime))], "", "", "")));
   sweepRows("past:");
 }
 
@@ -720,7 +720,7 @@ const EV_KIND = { on: "Turned on", off: "Turned off", restart: "Restarted", rest
   ended: "Claude ended", refused: "Refused", failed: "Failed", followed: "Followed", rename: "Renamed", resurrect: "Resurrect",
   rc: "Remote control", fav: "Favorited", mode: "Permissions", waiting: "Waiting", duplicate: "Two claudes", setting: "Setting",
   new: "Created", trusted: "Folder trusted", untrusted: "Waiting for trust", mcp: "MCP server not used",
-  prompt: "Waiting at a prompt" };
+  prompt: "Waiting at a prompt", cwd: "Folder changed" };
 const EV_BY = { cli: "asctl", page: "page", watch: "watcher", boot: "boot" };
 const UUID_G = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 function evLabel(x) {
@@ -744,6 +744,10 @@ function evLabel(x) {
 // pids, session ids, tmux commands and the home folder taken out.
 function evDetail(x) {
   let t = x.text || "";
+  if (x.kind === "cwd") {
+    const m = t.match(/: folder (.+?) \(was /);
+    return m ? "Now " + tilde(m[1]) : "";
+  }
   if (x.kind === "followed") {
     const m = t.match(/moved to (.+?) \(was /);
     if (m) return "Now " + tilde(m[1]);
@@ -752,7 +756,7 @@ function evDetail(x) {
   const named = x.kind === "rc" && !/: rc (on|off)\b/.test(t);  // its name not sent to claude.ai, and why
   if (!named && !["refused", "failed", "waiting", "ended", "restarted", "duplicate", "mode", "prompt"].includes(x.kind)) return "";
   if (x.kind === "ended") t = t.split(";")[0].replace(/^claude ended, /, "");
-  t = t.replace(/^(?:(?:boot|watch|on|off|rename|rc|resurrect|mode|forget|restart|fav|new|note|start again after exit \d+)(?: [\w.-]+)?: |[a-z0-9][a-z0-9-]*-\d{4}: )+/, "");
+  t = t.replace(/^(?:(?:boot|watch|on|off|rename|rc|resurrect|mode|forget|restart|fav|new|note|cwd|start again after exit \d+)(?: [\w.-]+)?: |[a-z0-9][a-z0-9-]*-\d{4}: )+/, "");
   t = t.replace(/^\d{4} is being started or stopped by another asctl; try again$/, "busy with another start or stop");
   t = t.replace(/ \(see: [^)]*\)/g, "").replace(/ \((?:pids? )?[\d, ]{3,}\)/g, "").replace(/\bclaude \d{3,}\b/g, "claude")
        .replace(UUID_G, "…");
@@ -937,11 +941,11 @@ async function trustFolder(e) {
   return act({ action: "trust", id: e.id4, tmux: e.tmux });
 }
 
-function favoriteButton(sid) {
+function favoriteButton(sid, off) {
   return btn("☆ Favorite", "p", async () => {
     const j = await act({ action: "fav", ref: sid });
     if (j.ok) { closeSheet(); loadPast(); }
-  }, pending.has(sid));
+  }, off || pending.has(sid));
 }
 
 function activeSheet(x) {
@@ -955,11 +959,16 @@ function activeSheet(x) {
     kids(el("div", null, "acts"), favoriteButton(x.session_id))];
 }
 
+// A past conversation's folder: the one it was started in (asc/past.py). Not known, or gone: the
+// page cannot favorite it, asctl fav --cwd can, with the folder to use.
 function pastSheet(c) {
-  return [el("h2", c.title || "Untitled"), el("div", tilde(c.cwd), "s2 mono"),
+  const why = !c.cwd ? "The folder it was started in is not known."
+    : c.gone ? "Its folder no longer exists." : "";
+  return [el("h2", c.title || "Untitled"), el("div", c.cwd ? tilde(c.cwd) : "Folder not known", "s2 mono"),
+    why ? el("div", `${why} Favorite it from a terminal with the folder to use: asctl fav ${c.session_id} --cwd FOLDER`, "warn bad") : null,
     el("span", "CONVERSATION", "lab"), kv([["Last active", full(c.mtime)], ["Session id", c.session_id]]),
     el("div", "Favorite it to resume it in its own tmux session.", "res"),
-    kids(el("div", null, "acts"), favoriteButton(c.session_id))];
+    kids(el("div", null, "acts"), favoriteButton(c.session_id, !!why))];
 }
 
 // --- a new session: a favorite in a folder pasted by path, started at once (asctl new) -------

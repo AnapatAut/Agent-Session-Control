@@ -118,8 +118,9 @@ check("ended, its tmux session up: Restart in tmux named, never Turn on", `(() =
 })()`);
 check("a Duplicate: its conversation, not its name; Restart in tmux named", `(() => { const l = look({ state: "duplicate" });
   return l.label === "Duplicate" && l.group === "attention" && !/its name/.test(l.why) && /Restart in tmux ends them all and starts one/.test(l.why); })()`);
-// restartActs with a tiny DOM of plain objects (tag, text, class, children), so what it shows is seen
-run(`var withDom = (f) => { const d = document; document = { createElement: (tag) => ({ tag, textContent: "", className: "", kids: [],
+// restartActs and pastSheet with a tiny DOM of plain objects (tag, text, class, children, dataset), so
+// what they show is seen
+run(`var withDom = (f) => { const d = document; document = { createElement: (tag) => ({ tag, textContent: "", className: "", kids: [], dataset: {},
   append(c) { this.kids.push(c); }, addEventListener() {} }) }; try { return f(); } finally { document = d; } };
 var domShown = (xs) => xs.map((x) => x.className.trim() + ":" + (x.textContent || x.kids.map((k) => k.textContent).join("|")));`);
 check("Restart in tmux of a Duplicate: a copy busy: a warning naming it, no button; all idle: the button", `(() => {
@@ -137,6 +138,20 @@ check("Restart in tmux of one that ended: again empty (it can): the button; a re
   return JSON.stringify(r) === JSON.stringify([["acts:Restart in tmux"],
     ["warn:Restart in tmux is not possible: its tmux session has 2 panes. Off closes its tmux session; then turn it on."], [], []]) || JSON.stringify(r);
 })()`);
+check("a past conversation: its folder; not known, or gone: a warning with the command to use, Favorite off", `(() => {
+  const sid = "cccccccc-dddd-4eee-8fff-000000000001";
+  const at = (o) => withDom(() => pastSheet(Object.assign({ session_id: sid, title: "t", mtime: T, cwd: "${HOME}/app", gone: false }, o))).filter(Boolean);
+  const shown = (o) => domShown(at(o)).filter((x) => /^(s2 mono|warn bad):/.test(x));
+  const off = (o) => at(o).find((x) => x.className === "acts").kids[0].disabled;
+  const how = "Favorite it from a terminal with the folder to use: asctl fav " + sid + " --cwd FOLDER";
+  const r = [shown({}), shown({ cwd: "" }), shown({ gone: true })];
+  return JSON.stringify(r) === JSON.stringify([["s2 mono:~/app"], ["s2 mono:Folder not known", "warn bad:The folder it was started in is not known. " + how],
+    ["s2 mono:~/app", "warn bad:Its folder no longer exists. " + how]])
+    && off({}) === false && off({ cwd: "" }) === true && off({ gone: true }) === true || JSON.stringify([r, off({}), off({ cwd: "" }), off({ gone: true })]);
+})()`);
+check("folder changed (asctl cwd): its label, the new folder; its refusal without the command's prefix",
+  `${label("cwd", "x-0421: folder " + HOME + "/new (was " + HOME + "/old)")} === "Folder changed" && ${detail("cwd", "x-0421: folder " + HOME + "/new (was " + HOME + "/old)")} === "Now ~/new"
+  && ${detail("refused", "cwd: x-0421 is on: its folder changes only while it is off")} === "X-0421 is on: its folder changes only while it is off"`);
 check("unknown (tmux did not answer): needs attention, says nothing is changed", `(() => { const l = look({ state: "unknown" });
   return l.group === "attention" && l.label === "Unknown" && !isOn({ state: "unknown" })
     && l.why === "tmux did not answer, so whether it runs is not known. Nothing is changed until tmux answers."; })()`);

@@ -153,6 +153,10 @@ asctl --version             # asctl 1.4.0 (release <id>): asc/VERSION and the re
                             # from, or (checkout); the dashboard's Settings says the same
 asctl live                  # running claudes: pid, session id, tmux session, folder
 asctl fav 12345 --name das  # favorite one (by pid, session id or pane %N); its tmux session becomes das-0421
+asctl fav <session id>      # a past conversation, in the folder it was started in: the one its
+                            # transcript's folder under ~/.claude/projects is named after (not a
+                            # subfolder claude's shell went to later); refused when that is not
+                            # known or gone: --cwd FOLDER gives one, checked as for `asctl new`
 asctl list                  # favorites and their state
 asctl new ~/projects/app --name app
                             # a new favorite in that folder (in your home, not hidden; it and the
@@ -177,6 +181,8 @@ asctl rc 0421 on --title "DB work"   # remote control: a running claude at once 
                             # else from its next start (--next-start: only the setting)
 asctl resurrect 0421 on     # bring it back after a reboot (turns rc on; a resurrect start always has rc)
 asctl note 0421 "talks to the API"
+asctl cwd 0421 ~/tools/app  # start it in that folder from now on (checked as for `asctl new`;
+                            # only while it is off), as when its folder moved
 asctl rename 0421 db        # db-0421; a running claude, when idle, gets /rename db-0421,
                             # which claude also sends to its claude.ai session (the rc title)
 asctl restart 0421          # its claude once, in its tmux session (--resume), only when every
@@ -317,7 +323,9 @@ not run for 5 min. The gear by Refresh opens Settings: the start limit (a slider
 the orange mark on the memory bar), the out-of-memory auto-restart switch, and under them the
 version its server runs (`asctl --version`'s, as of the server's start). New session makes a
 favorite from its name and a folder pasted by path (`asctl new`), in auto mode, Remote control on
-unless turned off there. Opened inside another installed app on this machine (such as the serve
+unless turned off there. A past conversation's sheet names the folder it was started in; when
+that is not known or no longer exists, it says so with the `asctl fav --cwd` to run, and Favorite
+is off. Opened inside another installed app on this machine (such as the serve
 dashboard's, with this serve set to open in "This app"), the page shows Back above its title: a
 tap goes back to that app. A claude that Claude Code asks whether to
 trust its folder waits at that prompt, its card "Waiting for trust": Trust folder, after the

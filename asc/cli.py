@@ -3,9 +3,11 @@
   asctl --version                  asc/VERSION, and the release it runs from (or "checkout")
   asctl live                       running claudes: pid, session id, tmux, folder, favorite
   asctl list                       favorites and their state
-  asctl fav REF [--name N] [--whole-session]
+  asctl fav REF [--name N] [--whole-session] [--cwd FOLDER]
                                    favorite a running claude (REF: its pid, session id or
                                    tmux pane %N), or a past conversation (REF: its session id)
+                                   in the folder it was started in (--cwd: in FOLDER, checked as
+                                   for new; needed when that folder is not known or gone)
   asctl new FOLDER --name N [--mode auto|manual|skip] [--rc] [--force-memory]
                                    a new favorite in FOLDER (a path in your home, ~/ too: not
                                    hidden; it and the folders above it yours, writable by no one
@@ -37,6 +39,8 @@
   asctl resurrect ID on|off        bring it back after a reboot; on turns rc on too, and a
                                    resurrect start always has rc
   asctl note ID TEXT               a note shown with it ("" clears it)
+  asctl cwd ID FOLDER              start it in FOLDER from now on (checked as for new; only
+                                   while it is off)
   asctl forget ID                  drop the favorite; a running session is left alone
   asctl events [ID] [--limit N]    what happened, oldest first (the last 50; 200 kept per favorite)
   asctl watch                      one watcher run (asctl-watch.timer, every 30 s; asc/watch.py)
@@ -71,7 +75,7 @@ import sys
 import time
 import uuid
 
-from . import events, live, memory, rclive, registry, tmuxctl
+from . import events, live, memory, past, rclive, registry, tmuxctl
 from .registry import RegistryError
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -129,7 +133,7 @@ def refusals(e, what):
 
 
 # Commands that change a session or a favorite: each is logged when refused or failed (main).
-ACTIONS = {"fav", "new", "trust", "on", "off", "rename", "restart", "mode", "rc", "resurrect", "forget"}
+ACTIONS = {"fav", "new", "trust", "on", "off", "rename", "restart", "mode", "rc", "resurrect", "forget", "cwd"}
 
 
 def exit_file(id4):
@@ -306,31 +310,6 @@ def live_for(e, lv=None):
     return live_in(e, lv) or next((s for s in lv if s["session_id"] == e.get("session_id")), None)
 
 
-def past_conversation(sid):
-    """Folder and title of a past conversation, from its transcript (first lines only)."""
-    for path in glob.glob(os.path.expanduser(f"~/.claude/projects/*/{sid}.jsonl")):
-        cwd = title = None
-        f = live.open_regular(path)
-        if f is None:
-            continue
-        with f:
-            for i, line in enumerate(f):
-                if i > 200:
-                    break
-                try:
-                    r = json.loads(line.decode("utf-8", "replace"))
-                except (ValueError, RecursionError):
-                    continue
-                if not isinstance(r, dict):
-                    continue
-                cwd = cwd or (r.get("cwd") if isinstance(r.get("cwd"), str) else None)
-                if r.get("type") in ("custom-title", "agent-name"):
-                    title = r.get("customTitle") or r.get("agentName") or title
-        if cwd:
-            return cwd, title
-    return None
-
-
 # --- commands ---------------------------------------------------------------------------
 
 def cmd_live(args):
@@ -384,6 +363,9 @@ def cmd_fav(args):
     ref, name, whole = args.ref, args.name, args.whole_session
     lv = live.live()
     s = next((x for x in lv if ref in (str(x["pid"]), x["session_id"], (x["pane"] or {}).get("pane_id"))), None)
+    if s and args.cwd is not None:
+        raise RegistryError("--cwd is for a past conversation: a running claude's folder is its own")
+    given = new_folder(args.cwd) if args.cwd is not None else None
     with registry.changing() as data:
         sid = s["session_id"] if s else ref
         if any(e.get("session_id") == sid for e in data["entries"].values()):
@@ -393,10 +375,16 @@ def cmd_fav(args):
         else:
             if not live.UUID_RE.fullmatch(ref):
                 raise RegistryError(f"no live claude {ref!r}, and it is not a session id")
-            past = past_conversation(ref)
-            if not past:
+            got = past.conversation(ref)
+            if not got:
                 raise RegistryError(f"no conversation {ref} under ~/.claude/projects")
-            (cwd, title), started = past, True
+            cwd, title, started = given or got["cwd"], got["title"], True
+            if not cwd:
+                raise RegistryError(f"the folder conversation {ref} was started in is not known (none in its "
+                                    f"transcript matches where Claude Code keeps it): asctl fav {ref} --cwd FOLDER")
+            if not os.path.isdir(cwd):
+                raise RegistryError(f"conversation {ref} was started in {cwd}, which no longer exists: "
+                                    f"asctl fav {ref} --cwd FOLDER")
         name = registry.check_name(name) if name else registry.slug(title or os.path.basename(cwd))
         taken = tmuxctl.sessions()
         id4 = registry.new_id4(data, taken)
@@ -843,7 +831,7 @@ def _on(id4, force_memory, loud=True, pane=None, pane_pid=None, starting=None, r
         raise RegistryError(f"session file(s) asctl cannot read or check may belong to a claude holding this "
                             f"session: {', '.join(blockers)}; on refused")
     if not os.path.isdir(e["cwd"]):
-        raise RegistryError(f"folder {e['cwd']} does not exist")
+        raise RegistryError(f"folder {e['cwd']} does not exist (asctl cwd {e['id4']} FOLDER gives it another)")
     if not force_memory:
         why = memory.gate(e.get("rss_kb"))
         if why:
@@ -1360,6 +1348,21 @@ def cmd_note(args):
     return 0
 
 
+def cmd_cwd(args):
+    folder = new_folder(args.folder)
+    id4 = registry.find(registry.load(), args.id)["id4"]
+    with registry.entry_lock(id4, wait=True):  # after a start or stop that is running
+        e = registry.find(registry.load(), id4)
+        st, _ = state_of(e, live.live())
+        if not st.startswith("off"):
+            raise RegistryError(f"{e['tmux']} is {st}: its folder changes only while it is off")
+        with registry.changing() as data:
+            e = registry.find(data, id4)
+            was, e["cwd"] = e["cwd"], folder
+    say("cwd", e, f"{e['tmux']}: folder {folder} (was {was})")
+    return 0
+
+
 def cmd_forget(args):
     id4 = registry.find(registry.load(), args.id)["id4"]
     with registry.entry_lock(id4, wait=True), registry.changing() as data:
@@ -1466,6 +1469,7 @@ def main(argv=None):
     a.add_argument("ref")
     a.add_argument("--name")
     a.add_argument("--whole-session", action="store_true")
+    a.add_argument("--cwd", help="a past conversation's folder, when the one it was started in is not known or gone")
     a.set_defaults(f=cmd_fav)
     a = sub.add_parser("new")
     a.add_argument("folder")
@@ -1498,6 +1502,10 @@ def main(argv=None):
     a.add_argument("id")
     a.add_argument("text")
     a.set_defaults(f=cmd_note)
+    a = sub.add_parser("cwd")
+    a.add_argument("id")
+    a.add_argument("folder")
+    a.set_defaults(f=cmd_cwd)
     a = sub.add_parser("off")
     a.add_argument("id")
     a.add_argument("--force", action="store_true")
