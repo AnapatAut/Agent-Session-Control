@@ -14,10 +14,13 @@ Built:
   forced. Rename works while it runs; a restart only while it is idle. Restart in tmux brings
   a favorite back to one claude in its own tmux session: one that runs elsewhere, two or more
   holding its conversation, or one that ended with its tmux session still up.
+- **Remote control.** A favorite's claude.ai session follows its name; asctl says the title
+  changed only when Claude Code confirms it, and `asctl rc ID renew` gives it a new claude.ai
+  session when the old one does not take it.
 - **Restore per session.** After a reboot, only favorites that were on and have resurrect on come
   back, one at a time (`asctl-boot.service`), with no login needed (`asctl setup` turns linger
-  on). One you ended yourself (`/exit` in its pane) counts as off. tmux-resurrect and tmux-continuum are not needed (setup refuses while continuum's
-  restore or boot is on).
+  on). One you ended yourself (`/exit` in its pane) counts as off. tmux-resurrect and
+  tmux-continuum are not needed (setup refuses while continuum's restore or boot is on).
 - **Memory-aware starts.** A session starts only under a memory limit of your own (60 to 85%
   used) with room for its size (a restart excepted); boot and the watcher also wait for memory
   to be steady. A session that a kernel out-of-memory kill ended can come back by itself (a first

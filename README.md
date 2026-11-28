@@ -44,8 +44,8 @@ own (a folder or `/usr/local/bin/asctl` it did not make, a unit file it did not 
 file changed since: keep a change in a drop-in, `<unit>.d/`), when the folder is not a whole
 release (one of its six unit files, or `asc/VERSION`, missing), when the code does not compile
 or start, or when a release it would use again has changed. It says the version it installed
-(`asctl 1.4.0: /usr/local/bin/asctl`) and, when it changed, the one before (`version 1.3.0 ->
-1.4.0`; an older one is installed too, said so: a rollback is one command). Every write is
+(`asctl 1.5.0: /usr/local/bin/asctl`) and, when it changed, the one before (`version 1.4.0 ->
+1.5.0`; an older one is installed too, said so: a rollback is one command). Every write is
 flushed to disk and renamed into place, every delete renames first: an install or uninstall
 stopped at any point (a kill, Ctrl-C) is finished by running it again, with no `--force`. Users'
 managers read changed units at their next `systemctl --user daemon-reload`. Tests:
@@ -149,7 +149,7 @@ starts again as new on the same session id (`--session-id`), as `--resume` would
 A claude that ends at once is said in seconds, with its exit code (on stderr: the page shows it).
 
 ```bash
-asctl --version             # asctl 1.4.0 (release <id>): asc/VERSION and the release it runs
+asctl --version             # asctl 1.5.0 (release <id>): asc/VERSION and the release it runs
                             # from, or (checkout); the dashboard's Settings says the same
 asctl live                  # running claudes: pid, session id, tmux session, folder
 asctl fav 12345 --name das  # favorite one (by pid, session id or pane %N); its tmux session becomes das-0421
